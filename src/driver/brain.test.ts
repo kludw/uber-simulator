@@ -547,7 +547,32 @@ describe("decideDriverShard carrying the rider", () => {
 		expect(outputs).toEqual([]);
 	});
 
-	test("driver carrying the rider ignores a cancellation of its trip", () => {
+	test("cancellation of the trip a driver is carrying is rejected, state unchanged", () => {
+		const random = scriptedRandom([5, 4]);
+		const pickedUp = decideDriverShard(
+			waitingAtPickup(random),
+			{ type: "trip.picked_up", tick: tick(2), tripId: t1, driverId: d1 },
+			random,
+		);
+		const cancelled: DriverShardInput = {
+			type: "trip.cancelled",
+			tick: tick(3),
+			tripId: t1,
+			driverId: d1,
+		};
+		expect(decideDriverShard(pickedUp.state, cancelled, random)).toEqual({
+			state: pickedUp.state,
+			outputs: [
+				{
+					type: "input_rejected",
+					reason: "trip_already_picked_up",
+					input: cancelled,
+				},
+			],
+		});
+	});
+
+	test("driver carrying the rider ignores a cancellation of another trip", () => {
 		const random = scriptedRandom([5, 4]);
 		const pickedUp = decideDriverShard(
 			waitingAtPickup(random),
@@ -556,20 +581,13 @@ describe("decideDriverShard carrying the rider", () => {
 		);
 		const cancelled = decideDriverShard(
 			pickedUp.state,
-			{ type: "trip.cancelled", tick: tick(3), tripId: t1, driverId: d1 },
+			{ type: "trip.cancelled", tick: tick(3), tripId: t2, driverId: d1 },
 			random,
 		);
-		const { outputs } = decideDriverShard(
-			cancelled.state,
-			{ type: "clock.ticked", tick: tick(4) },
-			random,
-		);
-		expect(outputs).toEqual([
-			{ type: "driver.moved", tick: tick(4), driverId: d1, cell: cell(6, 5) },
-		]);
+		expect(cancelled).toEqual({ state: pickedUp.state, outputs: [] });
 	});
 
-	test("driver waiting at the dropoff ignores a late offer expiry for its trip", () => {
+	test("offer expiry of the trip a driver is waiting at the dropoff for is rejected, state unchanged", () => {
 		const random = scriptedRandom([5, 4]);
 		const pickedUp = decideDriverShard(
 			waitingAtPickup(random, cell(6, 5)),
@@ -581,17 +599,22 @@ describe("decideDriverShard carrying the rider", () => {
 			{ type: "clock.ticked", tick: tick(3) },
 			random,
 		);
-		const expired = decideDriverShard(
-			arrived.state,
-			{ type: "trip.offer_expired", tick: tick(4), tripId: t1, driverId: d1 },
-			random,
-		);
-		const { outputs } = decideDriverShard(
-			expired.state,
-			{ type: "clock.ticked", tick: tick(5) },
-			random,
-		);
-		expect(outputs).toEqual([]);
+		const expired: DriverShardInput = {
+			type: "trip.offer_expired",
+			tick: tick(4),
+			tripId: t1,
+			driverId: d1,
+		};
+		expect(decideDriverShard(arrived.state, expired, random)).toEqual({
+			state: arrived.state,
+			outputs: [
+				{
+					type: "input_rejected",
+					reason: "trip_already_picked_up",
+					input: expired,
+				},
+			],
+		});
 	});
 
 	test("driver whose trip is completed goes back to wandering from the dropoff", () => {
