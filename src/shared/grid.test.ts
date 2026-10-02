@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { type Cell, cellIn, distance, type Grid, stepToward } from "./grid.ts";
+import {
+	type Cell,
+	cellIn,
+	distance,
+	type Grid,
+	randomCell,
+	stepToward,
+} from "./grid.ts";
+import { createRandom } from "./random.ts";
 
 const grid: Grid = { width: 500, height: 500 };
 
@@ -93,5 +101,20 @@ describe("stepToward", () => {
 			position = stepToward(position, target);
 		}
 		expect(position).toEqual(target);
+	});
+});
+
+describe("randomCell", () => {
+	test("is always inside the grid", () => {
+		const small: Grid = { width: 3, height: 2 };
+		const random = createRandom(11);
+		const cells = Array.from({ length: 1_000 }, () =>
+			randomCell(small, random),
+		);
+		expect(
+			cells.every(
+				(drawn) => drawn.x >= 0 && drawn.x < 3 && drawn.y >= 0 && drawn.y < 2,
+			),
+		).toBe(true);
 	});
 });
