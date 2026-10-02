@@ -17,5 +17,8 @@
 		"noFallthroughCasesInSwitch": true,
 		"noUncheckedIndexedAccess": true,
 		"noImplicitOverride": true
-	}
+	},
+	// Browser code type-checks with DOM types via src/ui/tsconfig.json; keeping
+	// them out of here stops server code from using browser globals.
+	"exclude": ["src/ui", "node_modules"]
 }
