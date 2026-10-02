@@ -2,16 +2,19 @@ import * as z from "zod";
 import { Cell } from "./grid.ts";
 import type { Result } from "./result.ts";
 
-export const DriverId = z.string().min(1).brand<"DriverId">();
+// IDs are valid NATS subject tokens (sim.offers.<driverId>, ADR 0028).
+const idToken = z.string().regex(/^[A-Za-z0-9_-]+$/);
+
+export const DriverId = idToken.brand<"DriverId">();
 export type DriverId = z.infer<typeof DriverId>;
 
 export const Tick = z.int().nonnegative().brand<"Tick">();
 export type Tick = z.infer<typeof Tick>;
 
-export const TripId = z.string().min(1).brand<"TripId">();
+export const TripId = idToken.brand<"TripId">();
 export type TripId = z.infer<typeof TripId>;
 
-export const RiderId = z.string().min(1).brand<"RiderId">();
+export const RiderId = idToken.brand<"RiderId">();
 export type RiderId = z.infer<typeof RiderId>;
 
 export const ClockTicked = z.object({
