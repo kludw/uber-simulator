@@ -11,6 +11,7 @@ import { checkInvariants } from "./invariants.ts";
 
 const grid: Grid = { width: 10, height: 10 };
 const d1 = DriverId.parse("d-1");
+const d2 = DriverId.parse("d-2");
 const t1 = TripId.parse("t-1");
 const t2 = TripId.parse("t-2");
 const r1 = RiderId.parse("r-1");
@@ -101,6 +102,103 @@ describe("checkInvariants", () => {
 				tripId: t1,
 				from: "requested",
 				event: "trip.completed",
+			},
+		]);
+	});
+
+	test("a matched trip completed without a pickup is flagged", () => {
+		const log = [
+			wentOnline(d1, cell(2, 0)),
+			requested(t1, 1),
+			tripEvent("trip.offered", t1, d1, 1),
+			tripEvent("trip.matched", t1, d1, 1),
+			tripEvent("trip.completed", t1, d1, 2),
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([
+			{
+				type: "illegal_trip_transition",
+				tick: tick(2),
+				tripId: t1,
+				from: "matched",
+				event: "trip.completed",
+			},
+		]);
+	});
+
+	test("a matched trip cancelled without naming its driver is flagged", () => {
+		const log: Message[] = [
+			requested(t1, 1),
+			tripEvent("trip.offered", t1, d1, 1),
+			tripEvent("trip.matched", t1, d1, 1),
+			{ type: "trip.cancelled", tick: tick(2), tripId: t1, driverId: null },
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([
+			{
+				type: "cancel_names_wrong_driver",
+				tick: tick(2),
+				tripId: t1,
+				driverId: null,
+				expectedDriverId: d1,
+			},
+		]);
+	});
+
+	test("a matched trip cancelled naming an earlier-offered driver is flagged", () => {
+		const log: Message[] = [
+			requested(t1, 1),
+			tripEvent("trip.offered", t1, d2, 1),
+			tripEvent("trip.offer_declined", t1, d2, 1),
+			tripEvent("trip.offered", t1, d1, 2),
+			tripEvent("trip.matched", t1, d1, 2),
+			{ type: "trip.cancelled", tick: tick(3), tripId: t1, driverId: d2 },
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([
+			{
+				type: "cancel_names_wrong_driver",
+				tick: tick(3),
+				tripId: t1,
+				driverId: d2,
+				expectedDriverId: d1,
+			},
+		]);
+	});
+
+	test("a trip cancelled with a pending offer without naming the offered driver is flagged", () => {
+		const log: Message[] = [
+			requested(t1, 1),
+			tripEvent("trip.offered", t1, d1, 1),
+			{ type: "trip.cancelled", tick: tick(2), tripId: t1, driverId: null },
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([
+			{
+				type: "cancel_names_wrong_driver",
+				tick: tick(2),
+				tripId: t1,
+				driverId: null,
+				expectedDriverId: d1,
+			},
+		]);
+	});
+
+	test("a trip cancelled with no pending offer naming an earlier-offered driver is flagged", () => {
+		const log: Message[] = [
+			requested(t1, 1),
+			tripEvent("trip.offered", t1, d1, 1),
+			tripEvent("trip.offer_expired", t1, d1, 4),
+			{ type: "trip.cancelled", tick: tick(5), tripId: t1, driverId: d1 },
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([
+			{
+				type: "cancel_names_wrong_driver",
+				tick: tick(5),
+				tripId: t1,
+				driverId: d1,
+				expectedDriverId: null,
 			},
 		]);
 	});

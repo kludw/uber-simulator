@@ -27,7 +27,6 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Runner**: starts all services and drives ticks; in-process, it is the clock (0027).
 - **Event log**: every published message of a run, in publish order.
 - **Input rejected**: brain output for an input addressed to one of its entities but invalid for that entity's state. Logged by the shell, never published.
-- **Event log**: every message published on the bus, in publish order.
 - **Violation**: a broken spec invariant (`docs/spec.md`) found in an event log, tagged by `type` (e.g. `illegal_trip_transition`).
 - **Clock**: service publishing ticks.
 - **Shard**: fixed set of drivers owned by one driver service instance.

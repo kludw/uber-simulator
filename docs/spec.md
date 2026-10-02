@@ -48,6 +48,7 @@ Idle drivers wander: pick a random target cell, drive there, repeat. All 100 dri
 - A driver moves at most 1 cell per tick and stays inside the grid.
 - Every completed trip was matched and picked up.
 - A `trip.cancelled` naming a driver comes after that trip's `trip.offered` to that driver (else the driver could get stuck).
+- A `trip.cancelled` names the driver to free: the matched driver, else the driver holding the pending offer, else null.
 
 Checked from the event log alone by `checkInvariants` (`src/sim/invariants.ts`), independent of brain code.
 

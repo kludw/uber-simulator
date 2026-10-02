@@ -4,6 +4,7 @@ import type {
 	DriverMoved,
 	Message,
 	Tick,
+	TripCancelled,
 	TripCompleted,
 	TripId,
 	TripPickedUp,
@@ -33,6 +34,14 @@ export type Violation =
 			tick: Tick;
 			tripId: TripId;
 			driverId: DriverId;
+	  }
+	// expectedDriverId: matched driver, else pending-offer driver, else null.
+	| {
+			type: "cancel_names_wrong_driver";
+			tick: Tick;
+			tripId: TripId;
+			driverId: DriverId | null;
+			expectedDriverId: DriverId | null;
 	  }
 	| {
 			type: "driver_has_two_active_trips";
@@ -127,6 +136,43 @@ function checkMove(log: LogState, move: DriverMoved): Violation[] {
 	];
 }
 
+// A cancel must name the driver to free: the matched one, else the one holding
+// the pending offer, else null. A driver never offered the trip is reported as
+// cancelled_before_offer alone, the more specific violation.
+function checkCancel(
+	log: LogState,
+	trip: TripView,
+	cancel: TripCancelled,
+): Violation[] {
+	const { tick, tripId, driverId } = cancel;
+	if (driverId !== null && !log.offeredDrivers.get(tripId)?.has(driverId)) {
+		return [{ type: "cancelled_before_offer", tick, tripId, driverId }];
+	}
+	const expectedDriverId = driverToFree(trip);
+	if (driverId === expectedDriverId) return [];
+	return [
+		{
+			type: "cancel_names_wrong_driver",
+			tick,
+			tripId,
+			driverId,
+			expectedDriverId,
+		},
+	];
+}
+
+function driverToFree(trip: TripView): DriverId | null {
+	switch (trip.state) {
+		case "requested":
+			return trip.offeredTo;
+		case "matched":
+		case "picked_up":
+			return trip.driverId;
+		default:
+			return null;
+	}
+}
+
 function checkTripEvent(log: LogState, event: TripEvent): Violation[] {
 	const violations: Violation[] = [];
 	const trip = log.trips.get(event.tripId);
@@ -135,17 +181,8 @@ function checkTripEvent(log: LogState, event: TripEvent): Violation[] {
 			.getOrInsertComputed(event.tripId, () => new Set())
 			.add(event.driverId);
 	}
-	if (
-		event.type === "trip.cancelled" &&
-		event.driverId !== null &&
-		!log.offeredDrivers.get(event.tripId)?.has(event.driverId)
-	) {
-		violations.push({
-			type: "cancelled_before_offer",
-			tick: event.tick,
-			tripId: event.tripId,
-			driverId: event.driverId,
-		});
+	if (event.type === "trip.cancelled" && trip !== undefined) {
+		violations.push(...checkCancel(log, trip, event));
 	}
 	const next = transition(trip, event);
 	if (next === null) {
