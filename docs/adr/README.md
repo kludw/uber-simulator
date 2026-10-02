@@ -32,3 +32,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0026 | [Brains reject invalid inputs with `input_rejected` outputs](0026-brains-reject-invalid-inputs.md) | Accepted |
 | 0027 | [In-process bus, service shell, runner](0027-in-process-bus-and-runner.md) | Accepted |
 | 0028 | [NATS bus: subjects and delivery](0028-nats-bus-subjects-and-delivery.md) | Accepted |
+| 0029 | [Event persistence](0029-event-persistence.md)                           | Accepted |
