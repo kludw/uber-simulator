@@ -26,6 +26,7 @@ Prompt contains only: PR number, linked issue number, "load the `review-pr` skil
    - `[blocking]`: bug, rule violation, missing/weak test, missing docs. Must be fixed.
    - `[nit]`: optional improvement. Never blocks.
 5. Never edit code, push, approve, or merge.
+6. Never run `git checkout`/`git switch`/`gh pr checkout` in the main checkout. To run code: `git fetch` then `git worktree add <scratchpad dir> origin/<branch>`, `bun install` there, `git worktree remove` afterwards.
 
 ## Posting
 
