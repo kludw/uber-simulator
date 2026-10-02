@@ -54,9 +54,41 @@ export function driverPosition(
 	};
 }
 
+// When clock.ticked messages arrived, in performance.now() milliseconds. The
+// duration between the last two arrivals paces the animation: measured, not
+// configured, so it follows the clock's speed.
+type TickTiming =
+	| { seen: "none" }
+	| { seen: "one"; tick: Tick; arrivedAt: number }
+	| { seen: "paced"; tick: Tick; arrivedAt: number; duration: number };
+
+export const noTickTiming: TickTiming = { seen: "none" };
+
+// The latest tick seen again (an unchanged view) is not a new arrival.
+export function observeTick(
+	timing: TickTiming,
+	tick: Tick,
+	now: number,
+): TickTiming {
+	if (timing.seen === "none") return { seen: "one", tick, arrivedAt: now };
+	if (tick === timing.tick) return timing;
+	return {
+		seen: "paced",
+		tick,
+		arrivedAt: now,
+		duration: now - timing.arrivedAt,
+	};
+}
+
+// Share of the current tick elapsed, for driverPosition. 1 (drivers at their
+// cells) until a duration is known, and while the next tick is late.
+export function tickFraction(timing: TickTiming, now: number): number {
+	if (timing.seen !== "paced") return 1;
+	return Math.min(1, (now - timing.arrivedAt) / timing.duration);
+}
+
 // Draws the latest view on every animation frame. Call show() with each new
-// view; a changed tick marks a clock.ticked arrival, and the time between the
-// last two arrivals is the tick duration that paces the animation.
+// view.
 export function startRenderer(
 	canvas: HTMLCanvasElement,
 	grid: Grid,
@@ -64,25 +96,18 @@ export function startRenderer(
 	const context = canvas.getContext("2d");
 	if (context === null) throw new Error("canvas 2D context unavailable");
 	let view = emptyView();
-	let tickArrivedAt: number | null = null;
-	let tickDuration: number | null = null;
+	let timing = noTickTiming;
 
 	const frame = (now: number) => {
-		const fraction =
-			tickArrivedAt === null || tickDuration === null
-				? 1
-				: (now - tickArrivedAt) / tickDuration;
-		draw(context, view, grid, fraction);
+		draw(context, view, grid, tickFraction(timing, now));
 		requestAnimationFrame(frame);
 	};
 	requestAnimationFrame(frame);
 
 	return {
 		show(next) {
-			if (next.tick !== view.tick) {
-				const now = performance.now();
-				if (tickArrivedAt !== null) tickDuration = now - tickArrivedAt;
-				tickArrivedAt = now;
+			if (next.tick !== null) {
+				timing = observeTick(timing, next.tick, performance.now());
 			}
 			view = next;
 		},

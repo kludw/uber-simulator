@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { Cell } from "../shared/grid.ts";
 import type { Tick } from "../shared/messages.ts";
-import { cellToPixel, driverPosition } from "./render.ts";
+import {
+	cellToPixel,
+	driverPosition,
+	noTickTiming,
+	observeTick,
+	tickFraction,
+} from "./render.ts";
 import type { DriverView } from "./view.ts";
 
 const grid = { width: 500, height: 500 };
@@ -67,5 +73,31 @@ describe("driverPosition", () => {
 
 	test("is at the current cell before any tick is seen", () => {
 		expect(driverPosition(driver, null, 0)).toEqual({ x: 11, y: 20 });
+	});
+});
+
+describe("tickFraction", () => {
+	test("is 1 after the first tick, before a tick duration is known", () => {
+		const timing = observeTick(noTickTiming, 1 as Tick, 1000);
+		expect(tickFraction(timing, 1500)).toBe(1);
+	});
+
+	test("is the share of the last tick duration elapsed since the latest tick", () => {
+		const first = observeTick(noTickTiming, 1 as Tick, 1000);
+		const timing = observeTick(first, 2 as Tick, 2000);
+		expect(tickFraction(timing, 2250)).toBe(0.25);
+	});
+
+	test("stays at 1 while the next tick is late", () => {
+		const first = observeTick(noTickTiming, 1 as Tick, 1000);
+		const timing = observeTick(first, 2 as Tick, 2000);
+		expect(tickFraction(timing, 3500)).toBe(1);
+	});
+
+	test("ignores the latest tick seen again", () => {
+		const first = observeTick(noTickTiming, 1 as Tick, 1000);
+		const second = observeTick(first, 2 as Tick, 2000);
+		const timing = observeTick(second, 2 as Tick, 2100);
+		expect(tickFraction(timing, 2250)).toBe(0.25);
 	});
 });
