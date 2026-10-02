@@ -36,3 +36,13 @@ export function cellIn(
 export function distance(a: Cell, b: Cell): number {
 	return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
+
+// Stays a valid Cell without a grid check: the step lands between two in-grid cells.
+export function stepToward(from: Cell, target: Cell): Cell {
+	const dx = target.x - from.x;
+	const dy = target.y - from.y;
+	if (Math.abs(dy) > Math.abs(dx)) {
+		return { ...from, y: from.y + Math.sign(dy) };
+	}
+	return { ...from, x: from.x + Math.sign(dx) };
+}
