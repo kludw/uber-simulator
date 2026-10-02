@@ -3,6 +3,7 @@ import {
 	connect,
 	type Msg,
 	type NatsConnection,
+	RequestError,
 } from "@nats-io/transport-node";
 import { type Message, parseMessage } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
@@ -113,7 +114,11 @@ export async function connectNatsBus(options: {
 				closing ??= connection
 					.drain()
 					.catch((error: unknown) => {
-						if (!(error instanceof ClosedConnectionError)) throw error;
+						if (error instanceof ClosedConnectionError) return;
+						// Disconnected: drain's flush fails on the next failed
+						// reconnect. Nothing reaches the server now; just close.
+						if (error instanceof RequestError) return connection.close();
+						throw error;
 					})
 					.then(() => Promise.all([delivering, watching]))
 					.then(() => {});

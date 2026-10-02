@@ -184,6 +184,24 @@ describe("connectNatsBus", () => {
 		});
 	}, 10_000);
 
+	test("closing a bus while it is reconnecting resolves", async () => {
+		// Hangs up on the first publish and stops listening, so the client
+		// keeps reconnecting.
+		const server = fakeNatsServer((socket, text) => {
+			if (text.includes("PUB ")) {
+				socket.end();
+				server.stop();
+				return;
+			}
+			pong(socket, text);
+		});
+		const bus = await connectFake(server.url, () => {});
+		bus.publish({ type: "cancel_trip", tripId: TripId.parse("t-1") });
+		await Bun.sleep(100);
+
+		await expect(bus.close()).resolves.toBeUndefined();
+	}, 10_000);
+
 	test("closing a bus whose connection the server closed resolves", async () => {
 		// Rejects the connection as unauthorized on its first publish, and every
 		// reconnect too, so the client gives up and closes the connection.
