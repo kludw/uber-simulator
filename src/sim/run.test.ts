@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { checkInvariants } from "./invariants.ts";
 import { runInProcess } from "./run.ts";
 
 const quietConfig = {
@@ -15,6 +16,16 @@ const busyConfig = {
 	ticks: 300,
 	grid: { width: 10, height: 10 },
 	driverShards: { count: 2, driversPerShard: 1 },
+	requestsPerMinute: 30,
+};
+
+// Two drivers, far more requests than they can serve: riders lose patience
+// while queued, offered, and matched.
+const scarceConfig = {
+	seed: 1,
+	ticks: 600,
+	grid: { width: 20, height: 20 },
+	driverShards: { count: 1, driversPerShard: 2 },
 	requestsPerMinute: 30,
 };
 
@@ -40,6 +51,36 @@ describe("runInProcess", () => {
 	// FIFO delivery leaves no stale or out-of-order inputs in process.
 	test("a busy run rejects no inputs", () => {
 		expect(runInProcess(busyConfig).rejected).toEqual([]);
+	});
+
+	test("a 600-tick run at spec defaults breaks no invariant", () => {
+		const grid = { width: 500, height: 500 };
+		const { eventLog } = runInProcess({
+			seed: 1,
+			ticks: 600,
+			grid,
+			driverShards: { count: 2, driversPerShard: 50 },
+			requestsPerMinute: 10,
+		});
+
+		expect(checkInvariants(eventLog, grid)).toEqual([]);
+	});
+
+	test("a scarce-supply run breaks no invariant", () => {
+		const { eventLog } = runInProcess(scarceConfig);
+
+		expect(checkInvariants(eventLog, scarceConfig.grid)).toEqual([]);
+	});
+
+	// Guards the test above: it must exercise cancels that free a driver.
+	test("a scarce-supply run cancels trips that name a driver to free", () => {
+		const { eventLog } = runInProcess(scarceConfig);
+
+		const freeingDriver = eventLog.filter(
+			(message) =>
+				message.type === "trip.cancelled" && message.driverId !== null,
+		);
+		expect(freeingDriver).not.toBeEmpty();
 	});
 
 	test("publishes clock.ticked for ticks 1..N in order", () => {
