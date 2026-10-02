@@ -26,6 +26,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Bus**: messaging port; in-memory or NATS adapter.
 - **Runner**: starts all services and drives ticks; in-process, it is the clock (0027).
 - **Event log**: every published message of a run, in publish order.
+- **Summary**: a run's headline numbers (trip counts, mean ticks from request to pickup, rejected inputs, invariant violations), computed from its event log.
 - **Input rejected**: brain output for an input addressed to one of its entities but invalid for that entity's state. Logged by the shell, never published.
 - **Violation**: a broken spec invariant (`docs/spec.md`) found in an event log, tagged by `type` (e.g. `illegal_trip_transition`).
 - **Clock**: service publishing ticks.
