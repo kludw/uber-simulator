@@ -1,8 +1,14 @@
-// Headless CLI: one seeded in-process run, summary on stdout.
-// Exit codes: 0 ok, 1 invariant violated, 2 invalid args.
+// Headless CLI: one seeded run, in process or over NATS, summary on stdout.
+// Exit codes: 0 ok, 1 invariant violated, 2 invalid args or NATS_URL,
+// 3 NATS unreachable.
 import { parseArgs } from "node:util";
 import * as z from "zod";
-import { runInProcess } from "./run.ts";
+import {
+	type RunConfig,
+	type RunResult,
+	runInProcess,
+	runOverNats,
+} from "./run.ts";
 import { summarize } from "./summary.ts";
 
 const integerArg = z
@@ -19,6 +25,7 @@ const Args = z.strictObject({
 			.max(2 ** 32 - 1),
 	),
 	ticks: integerArg.pipe(z.int().positive()),
+	bus: z.enum(["in-memory", "nats"]),
 });
 
 function readArgs(): ReturnType<typeof parseArgs>["values"] {
@@ -29,6 +36,7 @@ function readArgs(): ReturnType<typeof parseArgs>["values"] {
 				seed: { type: "string", default: "1" },
 				// 1 simulated hour.
 				ticks: { type: "string", default: "3600" },
+				bus: { type: "string", default: "in-memory" },
 			},
 			strict: true,
 		}).values;
@@ -48,13 +56,14 @@ if (!args.success) {
 
 // Spec defaults (docs/spec.md): 500 x 500 grid, 2 shards x 50 drivers,
 // 10 trip requests/min.
+const { bus, ...runArgs } = args.data;
 const config = {
-	...args.data,
+	...runArgs,
 	grid: { width: 500, height: 500 },
 	driverShards: { count: 2, driversPerShard: 50 },
 	requestsPerMinute: 10,
 };
-const summary = summarize(config, runInProcess(config));
+const summary = summarize(config, await run(config));
 
 console.log(`seed: ${summary.seed}`);
 console.log(`ticks: ${summary.ticks}`);
@@ -71,3 +80,20 @@ for (const violation of summary.violations) {
 	console.log(JSON.stringify(violation));
 }
 if (summary.violations.length > 0) process.exitCode = 1;
+
+async function run(config: RunConfig): Promise<RunResult> {
+	if (bus === "in-memory") return runInProcess(config);
+	const url = z.url().safeParse(Bun.env.NATS_URL);
+	if (!url.success) {
+		console.error(`NATS_URL: ${z.prettifyError(url.error)}`);
+		process.exit(2);
+	}
+	const result = await runOverNats({ ...config, url: url.data });
+	if (!result.ok) {
+		console.error(
+			`cannot connect to NATS at ${url.data}: ${String(result.error.cause)}`,
+		);
+		process.exit(3);
+	}
+	return result.value;
+}
