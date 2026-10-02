@@ -25,3 +25,5 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0019 | [One package, entrypoint per service](0019-single-package-multiple-entrypoints.md) | Accepted |
 | 0020 | [Browser UI: canvas, NATS over WebSocket](0020-browser-ui-canvas-nats-websocket.md) | Accepted |
 | 0021 | [Development workflow](0021-development-workflow.md)                   | Accepted |
+| 0022 | [Source layout and brain shape](0022-source-layout-and-brain-shape.md) | Accepted |
+| 0023 | [Small in-house seeded PRNG](0023-own-seeded-prng.md)                    | Accepted |
