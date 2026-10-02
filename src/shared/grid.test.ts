@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type Cell, cellIn, distance, type Grid } from "./grid.ts";
+import { type Cell, cellIn, distance, type Grid, stepToward } from "./grid.ts";
 
 const grid: Grid = { width: 500, height: 500 };
 
@@ -61,5 +61,37 @@ describe("distance", () => {
 	test("from a cell to itself is zero", () => {
 		const a = cell(3, 8);
 		expect(distance(a, a)).toBe(0);
+	});
+});
+
+describe("stepToward", () => {
+	test("moves along x when x has more remaining distance", () => {
+		expect(stepToward(cell(0, 0), cell(3, 1))).toEqual(cell(1, 0));
+	});
+
+	test("moves along y when y has more remaining distance", () => {
+		expect(stepToward(cell(0, 0), cell(1, 3))).toEqual(cell(0, 1));
+	});
+
+	test("moves along x when both axes have equal remaining distance", () => {
+		expect(stepToward(cell(2, 2), cell(4, 4))).toEqual(cell(3, 2));
+	});
+
+	test("moves in the negative direction toward a target behind", () => {
+		expect(stepToward(cell(5, 5), cell(5, 2))).toEqual(cell(5, 4));
+	});
+
+	test("stays on the target cell when already there", () => {
+		expect(stepToward(cell(7, 3), cell(7, 3))).toEqual(cell(7, 3));
+	});
+
+	test("reaches the target in exactly distance steps", () => {
+		const from = cell(9, 2);
+		const target = cell(4, 6);
+		let position = from;
+		for (let step = 0; step < 9; step++) {
+			position = stepToward(position, target);
+		}
+		expect(position).toEqual(target);
 	});
 });
