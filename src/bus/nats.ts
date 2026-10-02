@@ -1,4 +1,5 @@
 import {
+	ClosedConnectionError,
 	connect,
 	type Msg,
 	type NatsConnection,
@@ -20,6 +21,12 @@ export type DroppedMessage = {
 	error: { type: "invalid_json"; cause: unknown } | ParseMessageError;
 };
 
+// Connection lifecycle after setup, for the service's log.
+export type ConnectionStatus =
+	| { type: "nats_disconnected"; server: string }
+	| { type: "nats_reconnected"; server: string }
+	| { type: "nats_closed" };
+
 export type NatsConnectError = {
 	type: "nats_connect_failed";
 	url: string;
@@ -32,6 +39,7 @@ export type NatsConnectError = {
 export async function connectNatsBus(options: {
 	url: string;
 	log: (dropped: DroppedMessage) => void;
+	logStatus: (status: ConnectionStatus) => void;
 }): Promise<Result<NatsBus, NatsConnectError>> {
 	const failed = (cause: unknown): Result<never, NatsConnectError> => ({
 		ok: false,
@@ -53,6 +61,28 @@ export async function connectNatsBus(options: {
 		await connection.close();
 		return failed(cause);
 	}
+	const watching = (async () => {
+		// Other statuses (pings, reconnect attempts, ...) are client chatter.
+		for await (const status of connection.status()) {
+			switch (status.type) {
+				case "disconnect":
+					options.logStatus({
+						type: "nats_disconnected",
+						server: status.server,
+					});
+					break;
+				case "reconnect":
+					options.logStatus({
+						type: "nats_reconnected",
+						server: status.server,
+					});
+					break;
+				case "close":
+					options.logStatus({ type: "nats_closed" });
+					break;
+			}
+		}
+	})();
 	const subscribers: ((message: Message) => void)[] = [];
 	const delivering = (async () => {
 		for await (const received of subscription) {
@@ -64,7 +94,9 @@ export async function connectNatsBus(options: {
 			for (const deliver of subscribers) deliver(parsed.value);
 		}
 	})();
-	// drain() throws once closed; every close() shares the first one.
+	// drain() rejects on a connection already closed, by an earlier close()
+	// or by the client giving up reconnecting: nothing left to drain then.
+	// Every close() shares the first one.
 	let closing: Promise<void> | undefined;
 	return {
 		ok: true,
@@ -78,7 +110,13 @@ export async function connectNatsBus(options: {
 				});
 			},
 			close() {
-				closing ??= connection.drain().then(() => delivering);
+				closing ??= connection
+					.drain()
+					.catch((error: unknown) => {
+						if (!(error instanceof ClosedConnectionError)) throw error;
+					})
+					.then(() => Promise.all([delivering, watching]))
+					.then(() => {});
 				return closing;
 			},
 		},

@@ -11,6 +11,7 @@ import {
 	TripId,
 } from "../shared/messages.ts";
 import {
+	type ConnectionStatus,
 	connectNatsBus,
 	type DroppedMessage,
 	type NatsBus,
@@ -140,6 +141,7 @@ describe("connectNatsBus", () => {
 		const result = await connectNatsBus({
 			url: "nats://127.0.0.1:1",
 			log: () => {},
+			logStatus: () => {},
 		});
 
 		expect(result).toMatchObject({
@@ -149,52 +151,136 @@ describe("connectNatsBus", () => {
 	});
 
 	test("gives up the connection when the server drops it during setup", async () => {
-		// Fake server: completes every handshake (INFO, then PONG to the first
-		// PING) but hangs up on the first connection's next PING, the bus's
-		// flush after SUB. Later connections (reconnects) stay up.
-		let connections = 0;
-		let openSockets = 0;
-		const server = Bun.listen<{ connection: number; pings: number }>({
-			hostname: "127.0.0.1",
-			port: 0,
-			socket: {
-				open(socket) {
-					connections++;
-					openSockets++;
-					socket.data = { connection: connections, pings: 0 };
-					socket.write(
-						'INFO {"server_id":"fake","version":"2.15.0","max_payload":1048576}\r\n',
-					);
-				},
-				data(socket, chunk) {
-					for (const _ of chunk.toString().matchAll(/PING\r\n/g)) {
-						socket.data.pings++;
-						if (socket.data.connection === 1 && socket.data.pings > 1) {
-							socket.end();
-							return;
-						}
-						socket.write("PONG\r\n");
-					}
-				},
-				close() {
-					openSockets--;
-				},
-			},
+		// Completes every handshake (PONG to the first PING) but hangs up on the
+		// first connection's next PING, the bus's flush after SUB. Later
+		// connections (reconnects) stay up.
+		let firstConnectionPings = 0;
+		const server = fakeNatsServer((socket, text, connection) => {
+			for (const _ of text.matchAll(/PING\r\n/g)) {
+				if (connection === 1 && ++firstConnectionPings > 1) {
+					socket.end();
+					return;
+				}
+				socket.write("PONG\r\n");
+			}
 		});
-		const url = `nats://127.0.0.1:${server.port}`;
 
-		const result = await connectNatsBus({ url, log: () => {} });
+		const result = await connectNatsBus({
+			url: server.url,
+			log: () => {},
+			logStatus: () => {},
+		});
 		// A client left behind reconnects after its 2 s reconnect wait.
 		await Bun.sleep(2500);
-		const leftOpen = openSockets;
-		server.stop(true);
+		const leftOpen = server.openSockets();
+		server.stop();
 
 		expect({ result, leftOpen }).toMatchObject({
-			result: { ok: false, error: { type: "nats_connect_failed", url } },
+			result: {
+				ok: false,
+				error: { type: "nats_connect_failed", url: server.url },
+			},
 			leftOpen: 0,
 		});
 	}, 10_000);
+
+	test("closing a bus whose connection the server closed resolves", async () => {
+		// Rejects the connection as unauthorized on its first publish, and every
+		// reconnect too, so the client gives up and closes the connection.
+		const server = fakeNatsServer((socket, text, connection) => {
+			if (connection > 1 || text.includes("PUB ")) {
+				socket.write("-ERR 'Authorization Violation'\r\n");
+				return;
+			}
+			pong(socket, text);
+		});
+		const bus = await connectFake(server.url, () => {});
+		bus.publish({ type: "cancel_trip", tripId: TripId.parse("t-1") });
+		// One reconnect after its 2 s wait, rejected again: connection closed.
+		await Bun.sleep(3000);
+		server.stop();
+
+		await expect(bus.close()).resolves.toBeUndefined();
+	}, 10_000);
+
+	test("logs the connection dropping, coming back, and closing", async () => {
+		// Hangs up the first connection on its first publish; the reconnect
+		// stays up.
+		const server = fakeNatsServer((socket, text, connection) => {
+			if (connection === 1 && text.includes("PUB ")) {
+				socket.end();
+				return;
+			}
+			pong(socket, text);
+		});
+		const statuses: ConnectionStatus[] = [];
+		const bus = await connectFake(server.url, (status) =>
+			statuses.push(status),
+		);
+		bus.publish({ type: "cancel_trip", tripId: TripId.parse("t-1") });
+		// Reconnects after its 2 s wait.
+		await Bun.sleep(2500);
+		await bus.close();
+		server.stop();
+
+		expect(statuses).toEqual([
+			{ type: "nats_disconnected", server: server.address },
+			{ type: "nats_reconnected", server: server.address },
+			{ type: "nats_closed" },
+		]);
+	}, 10_000);
 });
+
+type FakeSocket = Bun.Socket<{ connection: number }>;
+
+// Fake NATS server on a free port: greets each connection with INFO and
+// hands every chunk the client sends to `respond`, with the connection's
+// number (1 = first, later ones are reconnects).
+function fakeNatsServer(
+	respond: (socket: FakeSocket, text: string, connection: number) => void,
+) {
+	let connections = 0;
+	let openSockets = 0;
+	const server = Bun.listen<{ connection: number }>({
+		hostname: "127.0.0.1",
+		port: 0,
+		socket: {
+			open(socket) {
+				connections++;
+				openSockets++;
+				socket.data = { connection: connections };
+				socket.write(
+					'INFO {"server_id":"fake","version":"2.15.0","max_payload":1048576}\r\n',
+				);
+			},
+			data(socket, chunk) {
+				respond(socket, chunk.toString(), socket.data.connection);
+			},
+			close() {
+				openSockets--;
+			},
+		},
+	});
+	return {
+		url: `nats://127.0.0.1:${server.port}`,
+		address: `127.0.0.1:${server.port}`,
+		openSockets: () => openSockets,
+		stop: () => server.stop(true),
+	};
+}
+
+function pong(socket: FakeSocket, text: string): void {
+	for (const _ of text.matchAll(/PING\r\n/g)) socket.write("PONG\r\n");
+}
+
+async function connectFake(
+	url: string,
+	logStatus: (status: ConnectionStatus) => void,
+): Promise<NatsBus> {
+	const result = await connectNatsBus({ url, log: () => {}, logStatus });
+	if (!result.ok) throw new Error("fake server unreachable", { cause: result });
+	return result.value;
+}
 
 // Integration tests need a real server: `docker compose up -d --wait`, then
 // NATS_URL from .env (Bun loads it) or the environment.
@@ -214,7 +300,11 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 	});
 
 	async function connectBus(log: (dropped: DroppedMessage) => void = () => {}) {
-		const result = await connectNatsBus({ url: natsUrl ?? "", log });
+		const result = await connectNatsBus({
+			url: natsUrl ?? "",
+			log,
+			logStatus: () => {},
+		});
 		if (!result.ok) throw new Error("NATS unavailable", { cause: result });
 		open.push(result.value);
 		return result.value;
