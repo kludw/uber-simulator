@@ -1,13 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import * as z from "zod";
 import { Cell } from "../shared/grid.ts";
 import {
+	type CancelTrip,
 	DriverId,
 	type Message,
 	RiderId,
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
-import { subjectFor } from "./nats.ts";
+import { connectNatsBus, type NatsBus, subjectFor } from "./nats.ts";
 
 const tick = Tick.parse(1);
 const tripId = TripId.parse("t-1");
@@ -126,5 +128,73 @@ describe("subjectFor", () => {
 
 	test.each(cases)("%p goes on %s", (message, subject) => {
 		expect(subjectFor(message)).toBe(subject);
+	});
+});
+
+describe("connectNatsBus", () => {
+	test("returns an error when no server listens at the url", async () => {
+		// Port 1 is privileged and unused, so the connection is refused.
+		const result = await connectNatsBus({
+			url: "nats://127.0.0.1:1",
+			log: () => {},
+		});
+
+		expect(result).toMatchObject({
+			ok: false,
+			error: { type: "nats_connect_failed", url: "nats://127.0.0.1:1" },
+		});
+	});
+});
+
+// Integration tests need a real server: `docker compose up -d --wait`, then
+// NATS_URL from .env (Bun loads it) or the environment.
+const natsUrl = z.url().optional().parse(Bun.env.NATS_URL);
+if (!natsUrl) {
+	console.warn("NATS_URL unset: skipping NATS bus integration tests");
+}
+
+describe.skipIf(!natsUrl)("NATS bus", () => {
+	// Other runs may share the server: each test uses its own trip IDs and
+	// accepts only those.
+	const runId = crypto.randomUUID();
+	const open: NatsBus[] = [];
+
+	afterEach(async () => {
+		await Promise.all(open.splice(0).map((bus) => bus.close()));
+	});
+
+	async function connectBus(log: (dropped: unknown) => void = () => {}) {
+		const result = await connectNatsBus({ url: natsUrl ?? "", log });
+		if (!result.ok) throw new Error("NATS unavailable", { cause: result });
+		open.push(result.value);
+		return result.value;
+	}
+
+	function cancelTrip(n: number): CancelTrip {
+		return { type: "cancel_trip", tripId: TripId.parse(`${runId}-${n}`) };
+	}
+
+	function isOwnCancelTrip(message: Message): message is CancelTrip {
+		return message.type === "cancel_trip" && message.tripId.startsWith(runId);
+	}
+
+	async function waitFor(condition: () => boolean): Promise<void> {
+		for (let attempt = 0; attempt < 100; attempt++) {
+			if (condition()) return;
+			await Bun.sleep(20);
+		}
+	}
+
+	test("a subscriber on another connection receives messages in publish order", async () => {
+		const publisher = await connectBus();
+		const subscriber = await connectBus();
+		const received: Message[] = [];
+		subscriber.subscribe(isOwnCancelTrip, (message) => received.push(message));
+		const sent = Array.from({ length: 50 }, (_, n) => cancelTrip(n));
+
+		for (const message of sent) publisher.publish(message);
+		await waitFor(() => received.length >= sent.length);
+
+		expect(received).toEqual(sent);
 	});
 });
