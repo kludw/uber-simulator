@@ -1,3 +1,4 @@
+import type { Random } from "./random.ts";
 import type { Result } from "./result.ts";
 
 export type Grid = { width: number; height: number };
@@ -35,6 +36,12 @@ export function cellIn(
 
 export function distance(a: Cell, b: Cell): number {
 	return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+export function randomCell(grid: Grid, random: Random): Cell {
+	const x = random.int(0, grid.width - 1);
+	const y = random.int(0, grid.height - 1);
+	return { x, y } as Cell;
 }
 
 // Stays a valid Cell without a grid check: the step lands between two in-grid cells.
