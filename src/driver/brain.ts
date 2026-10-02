@@ -7,6 +7,7 @@ import {
 } from "../shared/grid.ts";
 import type {
 	ClockTicked,
+	DriverArrivedAtPickup,
 	DriverId,
 	DriverMoved,
 	DriverWentOnline,
@@ -14,7 +15,9 @@ import type {
 	OfferAccepted,
 	OfferDeclined,
 	Tick,
+	TripCancelled,
 	TripId,
+	TripOfferExpired,
 } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 
@@ -27,18 +30,30 @@ type Driver =
 			tripId: TripId;
 			pickup: Cell;
 			dropoff: Cell;
+	  }
+	// Position is the pickup: no separate cell.
+	| {
+			state: "at_pickup";
+			id: DriverId;
+			tripId: TripId;
+			pickup: Cell;
+			dropoff: Cell;
 	  };
 
 // Drivers kept sorted by ID: outputs and random draws follow that order.
 export type DriverShardState = { grid: Grid; drivers: Driver[] };
 
-export type DriverShardInput = ClockTicked | Offer;
+export type DriverShardInput =
+	| ClockTicked
+	| Offer
+	| TripCancelled
+	| TripOfferExpired;
 
 export function startDriverShard(
 	config: { grid: Grid; driverIds: DriverId[]; tick: Tick },
 	random: Random,
 ): { state: DriverShardState; outputs: DriverWentOnline[] } {
-	const drivers: Driver[] = config.driverIds.toSorted().map((id) => ({
+	const drivers: IdleDriver[] = config.driverIds.toSorted().map((id) => ({
 		state: "idle",
 		id,
 		cell: randomCell(config.grid, random),
@@ -53,7 +68,11 @@ export function startDriverShard(
 	return { state: { grid: config.grid, drivers }, outputs };
 }
 
-type DriverShardOutput = DriverMoved | OfferAccepted | OfferDeclined;
+type DriverShardOutput =
+	| DriverMoved
+	| DriverArrivedAtPickup
+	| OfferAccepted
+	| OfferDeclined;
 
 type Decision = { state: DriverShardState; outputs: DriverShardOutput[] };
 
@@ -67,6 +86,9 @@ export function decideDriverShard(
 			return onTick(state, input, random);
 		case "offer":
 			return onOffer(state, input);
+		case "trip.cancelled":
+		case "trip.offer_expired":
+			return onTripEnded(state, input);
 		default: {
 			const unhandled: never = input;
 			throw new Error(`unhandled driver shard input: ${unhandled}`);
@@ -97,7 +119,7 @@ function onOffer(state: DriverShardState, offer: Offer): Decision {
 				? {
 						state: "en_route",
 						id: driver.id,
-						cell: driver.cell,
+						cell: offered.cell,
 						tripId: offer.tripId,
 						pickup: offer.pickup,
 						dropoff: offer.dropoff,
@@ -116,6 +138,19 @@ function onOffer(state: DriverShardState, offer: Offer): Decision {
 	};
 }
 
+function onTripEnded(
+	state: DriverShardState,
+	ended: TripCancelled | TripOfferExpired,
+): Decision {
+	const drivers = state.drivers.map((driver): Driver => {
+		if (driver.id !== ended.driverId || driver.state === "idle") return driver;
+		if (driver.tripId !== ended.tripId) return driver;
+		const cell = driver.state === "at_pickup" ? driver.pickup : driver.cell;
+		return { state: "idle", id: driver.id, cell, wanderTarget: null };
+	});
+	return { state: { ...state, drivers }, outputs: [] };
+}
+
 function onTick(
 	state: DriverShardState,
 	input: ClockTicked,
@@ -124,28 +159,70 @@ function onTick(
 	const outputs: DriverShardOutput[] = [];
 	const drivers: Driver[] = [];
 	for (const driver of state.drivers) {
-		if (driver.state !== "idle") {
-			drivers.push(driver);
-			continue;
+		switch (driver.state) {
+			case "idle":
+				drivers.push(wander(driver, state.grid, input.tick, random, outputs));
+				break;
+			case "en_route":
+				drivers.push(driveToPickup(driver, input.tick, outputs));
+				break;
+			case "at_pickup":
+				drivers.push(driver);
+				break;
+			default: {
+				const unhandled: never = driver;
+				throw new Error(`unhandled driver state: ${unhandled}`);
+			}
 		}
-		const wanderTarget = driver.wanderTarget ?? randomCell(state.grid, random);
-		if (distance(driver.cell, wanderTarget) === 0) {
-			drivers.push({ ...driver, wanderTarget: null });
-			continue;
-		}
-		const cell = stepToward(driver.cell, wanderTarget);
-		outputs.push({
-			type: "driver.moved",
-			tick: input.tick,
-			driverId: driver.id,
-			cell,
-		});
-		const arrived = distance(cell, wanderTarget) === 0;
-		drivers.push({
-			...driver,
-			cell,
-			wanderTarget: arrived ? null : wanderTarget,
-		});
 	}
 	return { state: { ...state, drivers }, outputs };
+}
+
+type IdleDriver = Extract<Driver, { state: "idle" }>;
+type EnRouteDriver = Extract<Driver, { state: "en_route" }>;
+
+function wander(
+	driver: IdleDriver,
+	grid: Grid,
+	tick: Tick,
+	random: Random,
+	outputs: DriverShardOutput[],
+): IdleDriver {
+	const wanderTarget = driver.wanderTarget ?? randomCell(grid, random);
+	if (distance(driver.cell, wanderTarget) === 0) {
+		return { ...driver, wanderTarget: null };
+	}
+	const cell = stepToward(driver.cell, wanderTarget);
+	outputs.push({ type: "driver.moved", tick, driverId: driver.id, cell });
+	const arrived = distance(cell, wanderTarget) === 0;
+	return { ...driver, cell, wanderTarget: arrived ? null : wanderTarget };
+}
+
+function driveToPickup(
+	driver: EnRouteDriver,
+	tick: Tick,
+	outputs: DriverShardOutput[],
+): Driver {
+	let cell = driver.cell;
+	if (distance(cell, driver.pickup) > 0) {
+		cell = stepToward(cell, driver.pickup);
+		outputs.push({ type: "driver.moved", tick, driverId: driver.id, cell });
+	}
+	if (distance(cell, driver.pickup) > 0) {
+		return { ...driver, cell };
+	}
+	outputs.push({
+		type: "driver.arrived_at_pickup",
+		tick,
+		driverId: driver.id,
+		tripId: driver.tripId,
+		cell,
+	});
+	return {
+		state: "at_pickup",
+		id: driver.id,
+		tripId: driver.tripId,
+		pickup: driver.pickup,
+		dropoff: driver.dropoff,
+	};
 }

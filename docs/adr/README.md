@@ -19,7 +19,7 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0013 | [ClickHouse client for Bun](0013-clickhouse-client.md)                   | Accepted |
 | 0014 | [JetStream vs core NATS](0014-jetstream-vs-core-nats.md)                 | Accepted |
 | 0015 | [NATS subject scheme](0015-nats-subject-scheme.md)                       | Accepted |
-| 0016 | [Initial domain model](0016-initial-domain-model.md)                     | Accepted |
+| 0016 | [Initial domain model](0016-initial-domain-model.md)                     | Accepted (driver states superseded by 0024) |
 | 0017 | [Independent actor services with pure brains](0017-independent-actor-services-with-pure-brains.md) | Accepted |
 | 0018 | [Dispatch matching via offers](0018-dispatch-matching-via-offers.md)     | Accepted |
 | 0019 | [One package, entrypoint per service](0019-single-package-multiple-entrypoints.md) | Accepted |
@@ -27,3 +27,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0021 | [Development workflow](0021-development-workflow.md)                   | Accepted |
 | 0022 | [Source layout and brain shape](0022-source-layout-and-brain-shape.md) | Accepted |
 | 0023 | [Small in-house seeded PRNG](0023-own-seeded-prng.md)                    | Accepted |
+| 0024 | [Add `at_pickup` driver state](0024-driver-at-pickup-state.md)           | Accepted |
