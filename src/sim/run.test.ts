@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import * as z from "zod";
 import { checkInvariants } from "./invariants.ts";
-import { runInProcess } from "./run.ts";
+import {
+	type RunConfig,
+	type RunResult,
+	runInProcess,
+	runOverNats,
+} from "./run.ts";
 
 const quietConfig = {
 	seed: 1,
@@ -136,4 +142,46 @@ describe("runInProcess", () => {
 			"d-11",
 		]);
 	});
+});
+
+// Integration tests need a real server: `docker compose up -d --wait`, then
+// NATS_URL from .env (Bun loads it) or the environment. The runs publish on
+// sim.>, so nothing else (e.g. `bun run dev`) may run on the same server.
+const natsUrl = z.url().optional().parse(Bun.env.NATS_URL);
+if (!natsUrl) {
+	console.warn("NATS_URL unset: skipping distributed run tests");
+}
+
+describe.skipIf(!natsUrl)("runOverNats", () => {
+	async function runOnServer(config: RunConfig): Promise<RunResult> {
+		const result = await runOverNats({ ...config, url: natsUrl ?? "" });
+		if (!result.ok) throw new Error("NATS unavailable", { cause: result });
+		return result.value;
+	}
+
+	const specDefaultConfig = {
+		seed: 1,
+		ticks: 600,
+		grid: { width: 500, height: 500 },
+		driverShards: { count: 2, driversPerShard: 50 },
+		requestsPerMinute: 10,
+	};
+
+	test("a 600-tick run at spec defaults breaks no invariant and completes trips", async () => {
+		const { eventLog } = await runOnServer(specDefaultConfig);
+
+		expect({
+			violations: checkInvariants(eventLog, specDefaultConfig.grid),
+			completed: eventLog.some((message) => message.type === "trip.completed"),
+		}).toEqual({ violations: [], completed: true });
+	}, 60_000);
+
+	test("a scarce-supply run breaks no invariant and cancels trips", async () => {
+		const { eventLog } = await runOnServer(scarceConfig);
+
+		expect({
+			violations: checkInvariants(eventLog, scarceConfig.grid),
+			cancelled: eventLog.some((message) => message.type === "trip.cancelled"),
+		}).toEqual({ violations: [], cancelled: true });
+	}, 60_000);
 });
