@@ -22,15 +22,19 @@ import { createRandom } from "../shared/random.ts";
 
 type Rejected = { service: string; rejected: InputRejected<Message, string> };
 
-// Runs every service over one in-memory bus, the runner acting as clock
-// (ADR 0027). Same config gives the same eventLog.
-export function runInProcess(config: {
+export type RunConfig = {
 	seed: number;
 	ticks: number;
 	grid: Grid;
 	driverShards: { count: number; driversPerShard: number };
 	requestsPerMinute: number;
-}): { eventLog: Message[]; rejected: Rejected[] } {
+};
+
+export type RunResult = { eventLog: Message[]; rejected: Rejected[] };
+
+// Runs every service over one in-memory bus, the runner acting as clock
+// (ADR 0027). Same config gives the same eventLog.
+export function runInProcess(config: RunConfig): RunResult {
 	const bus = createInMemoryBus();
 	const eventLog: Message[] = [];
 	const rejected: Rejected[] = [];

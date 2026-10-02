@@ -1,6 +1,6 @@
 import type { Tick, TripId } from "../shared/messages.ts";
 import { checkInvariants, type Violation } from "./invariants.ts";
-import type { runInProcess } from "./run.ts";
+import type { RunConfig, RunResult } from "./run.ts";
 
 export type Summary = {
 	seed: number;
@@ -13,10 +13,7 @@ export type Summary = {
 	violations: Violation[];
 };
 
-export function summarize(
-	config: Parameters<typeof runInProcess>[0],
-	result: ReturnType<typeof runInProcess>,
-): Summary {
+export function summarize(config: RunConfig, result: RunResult): Summary {
 	const trips = { requested: 0, completed: 0, cancelled: 0 };
 	const requestedAt = new Map<TripId, Tick>();
 	let pickups = 0;

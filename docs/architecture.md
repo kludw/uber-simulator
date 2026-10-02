@@ -11,7 +11,7 @@ Current state: milestone 2, everything in one process over an in-memory bus. NAT
 | Shared domain | `src/shared/` | grid and cells, message types (`Message` union), branded IDs, `Result`, seeded PRNG | [0016](adr/0016-initial-domain-model.md), [0009](adr/0009-result-type-for-expected-failures.md), [0023](adr/0023-own-seeded-prng.md) |
 | Driver brain | `src/driver/brain.ts` | one shard of drivers: placement, wandering, offers, driving to pickup/dropoff | [0022](adr/0022-source-layout-and-brain-shape.md), [0025](adr/0025-driver-at-dropoff-state.md) |
 | Dispatch brain | `src/dispatch/brain.ts`, `trip.ts` | owns every trip: queue, offers, matching, pickup, completion, cancel | [0018](adr/0018-dispatch-matching-via-offers.md) |
-| Rider brain | `src/rider/brain.ts` | demand generator, riders, patience, cancels | [0022](adr/0022-source-layout-and-brain-shape.md) |
+| Rider brain | `src/rider/brain.ts` | demand generator, riders, patience, cancels | [0016](adr/0016-initial-domain-model.md), [0022](adr/0022-source-layout-and-brain-shape.md) |
 | Bus port | `src/bus/bus.ts` | `publish` / `subscribe` by type-guard predicate | [0027](adr/0027-in-process-bus-and-runner.md) |
 | In-memory bus | `src/bus/in-memory.ts` | FIFO queue, `drain()` delivers in publish order | [0027](adr/0027-in-process-bus-and-runner.md) |
 | Service shell | `src/bus/service.ts` | runs any brain on the bus: feeds accepted messages to `decide`, publishes outputs, logs `input_rejected` | [0026](adr/0026-brains-reject-invalid-inputs.md), [0027](adr/0027-in-process-bus-and-runner.md) |
@@ -20,7 +20,7 @@ Current state: milestone 2, everything in one process over an in-memory bus. NAT
 | Summary | `src/sim/summary.ts` | run result -> counts, mean ticks to pickup, violations | - |
 | CLI | `src/sim/main.ts` (`bun run sim`) | parses args (Zod), runs, prints summary, sets exit code | [0005](adr/0005-use-zod-for-validation.md), [0019](adr/0019-single-package-multiple-entrypoints.md) |
 
-Brains are the functional core: pure, seeded, no I/O ([0017](adr/0017-independent-actor-services-with-pure-brains.md), `simulation` skill). Everything in `src/bus/` and `src/sim/main.ts` is shell. Dependencies point inward: brains import only `src/shared/`.
+Brains are the functional core: pure, seeded, no I/O ([0017](adr/0017-independent-actor-services-with-pure-brains.md), `simulation` skill). Shell: `src/bus/`, `src/sim/run.ts`, `src/sim/main.ts`. Invariant checker and summary are pure but not brains. Dependencies point inward: brains import only `src/shared/`.
 
 ## Data flow
 
