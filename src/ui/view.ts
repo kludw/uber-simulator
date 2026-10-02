@@ -165,13 +165,17 @@ function withDriverState(
 }
 
 // An unknown driver (UI joined mid-run) appears at the arrival cell; a known
-// one is already there, its driver.moved comes first.
+// one is already there, its driver.moved comes first. A known idle driver's
+// arrival is late: over NATS it can follow dispatch's event that freed the
+// driver (offer expired, trip cancelled; ADR 0028), so it is ignored.
 function withArrival(
 	view: View,
 	arrival: DriverArrivedAtPickup | DriverArrivedAtDropoff,
 	state: DriverState,
 ): View {
-	if (view.drivers.has(arrival.driverId)) {
+	const driver = view.drivers.get(arrival.driverId);
+	if (driver?.state === "idle") return view;
+	if (driver !== undefined) {
 		return withDriverState(view, arrival.driverId, state);
 	}
 	return withDriver(view, arrival.driverId, {

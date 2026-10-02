@@ -261,6 +261,29 @@ describe("joining mid-run", () => {
 	});
 });
 
+// Over NATS only per-publisher order holds (ADR 0028): a driver's arrival can
+// reach the UI after dispatch's event that freed it.
+describe("late arrivals", () => {
+	test("an arrival after the driver's offer expired leaves it idle", () => {
+		const view = viewOf([
+			...trip.slice(0, 2),
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d1 },
+			trip[3] as SimEvent,
+			{ type: "trip.offer_expired", tick: tick(5), tripId: t1, driverId: d1 },
+		]);
+		expect(view.drivers.get(d1)?.state).toBe("idle");
+	});
+
+	test("an arrival after the trip was cancelled leaves the driver idle", () => {
+		const view = viewOf([
+			...trip.slice(0, 3),
+			cancelled(t1, d1, 5),
+			trip[3] as SimEvent,
+		]);
+		expect(view.drivers.get(d1)?.state).toBe("idle");
+	});
+});
+
 describe("offers", () => {
 	test("offer events leave the view unchanged", () => {
 		const view = viewOf(trip.slice(0, 2));
