@@ -54,6 +54,10 @@ gh api repos/kludw/uber-simulator/pulls/<n>/reviews --input <review.json>
 2. Fixed threads: resolve them. Get thread IDs via GraphQL `repository.pullRequest(number).reviewThreads { nodes { id isResolved comments(first:1){nodes{body}} } }`, then `gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}' -f id=<threadId>`.
 3. `[nit]` threads: resolve too once reported (they never block). Merge requires all conversations resolved.
 
+## After posting (every round)
+
+Resolve your own `[nit]` threads right after posting: they never block, and unresolved threads block merge.
+
 ## Return to caller
 
 Verdict (`clean` / `changes needed`), list of `[blocking]` findings (path:line + one line each), count of nits, review URL.

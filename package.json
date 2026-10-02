@@ -3,7 +3,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"test": "bun test --pass-with-no-tests",
+		"test": "bun test",
 		"typecheck": "tsc",
 		"lint": "biome ci",
 		"check": "biome check --write"
