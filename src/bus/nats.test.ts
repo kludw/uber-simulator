@@ -227,6 +227,14 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		]);
 	});
 
+	test("closing an already closed bus resolves", async () => {
+		const bus = await connectBus();
+
+		await bus.close();
+
+		await expect(bus.close()).resolves.toBeUndefined();
+	});
+
 	test("handlers run one at a time, even when a handler publishes", async () => {
 		const bus = await connectBus();
 		const trace: string[] = [];

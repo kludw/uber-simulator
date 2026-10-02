@@ -46,6 +46,8 @@ export async function connectNatsBus(options: {
 				for (const deliver of subscribers) deliver(parsed.value);
 			}
 		})();
+		// drain() throws once closed; every close() shares the first one.
+		let closing: Promise<void> | undefined;
 		return {
 			ok: true,
 			value: {
@@ -57,9 +59,9 @@ export async function connectNatsBus(options: {
 						if (accepts(message)) handle(message);
 					});
 				},
-				async close() {
-					await connection.drain();
-					await delivering;
+				close() {
+					closing ??= connection.drain().then(() => delivering);
+					return closing;
 				},
 			},
 		};
