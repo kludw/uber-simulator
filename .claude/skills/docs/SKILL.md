@@ -10,11 +10,12 @@ Docs are part of the change, not a follow-up. Change not done until docs that it
 ## What lives where
 
 1. `README.md`: what the project is, prerequisites, setup, run, test, lint commands. Every command copy-paste runnable; verify by running it.
-2. `docs/architecture.md`: components, how they connect, data flow (sim -> NATS -> ClickHouse / UI), where each design decision lives. Update when a component, flow, or boundary changes.
-3. `docs/adr/NNNN-kebab-title.md`: one file per architecture decision. Index in `docs/adr/README.md` (number, title, status).
-4. `.claude/skills/*`, `CLAUDE.md`: rules for Claude. Convention changes -> update the skill in the same change, and the ADR if one covers it.
-5. Code comments: *why* and non-obvious contracts only (see `design` skill).
-6. Don't duplicate: link to the single source (ADR, skill, official docs) instead of copying.
+2. `docs/spec.md`: what v1 does - world, services, trip lifecycle, invariants, milestones. Update when behavior or scope changes.
+3. `docs/architecture.md`: components, how they connect, data flow (services <-> NATS -> ClickHouse / UI), where each design decision lives. Update when a component, flow, or boundary changes.
+4. `docs/adr/NNNN-kebab-title.md`: one file per architecture decision. Index in `docs/adr/README.md` (number, title, status).
+5. `.claude/skills/*`, `CLAUDE.md`: rules for Claude. Convention changes -> update the skill in the same change, and the ADR if one covers it.
+6. Code comments: *why* and non-obvious contracts only (see `design` skill).
+7. Don't duplicate: link to the single source (ADR, skill, official docs) instead of copying.
 
 ## When an ADR is required
 

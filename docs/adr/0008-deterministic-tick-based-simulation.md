@@ -1,6 +1,6 @@
 # 0008. Deterministic, tick-based simulation core
 
-- Status: Accepted
+- Status: Superseded by 0017
 - Date: 2026-10-02
 
 ## Context

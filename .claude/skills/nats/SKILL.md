@@ -11,14 +11,14 @@ Snapshot verified against nats.js READMEs/migration.md + docs.nats.io on 2026-10
 
 ## Role
 
-1. NATS = transport for domain events and commands between sim, persistence, UI. Core never imports NATS (see `simulation` skill). Only the messaging adapter does.
+1. NATS = transport between services (clock, driver, rider, dispatch, persister) and UI (0017). Brains never import NATS (see `simulation` skill). Only the bus adapter does; an in-memory bus implements the same port.
 2. Adapter failures (connect, timeout, no responders) -> typed `Result` errors (see `errors` skill).
 
 ## Packages
 
 1. `bun add @nats-io/transport-node` (README: "compatible with Bun"; re-exports `@nats-io/nats-core`). JetStream: `@nats-io/jetstream`. KV: `@nats-io/kv`.
 2. Never `nats` (deprecated: "Package moved").
-3. Browser UI later: `wsconnect()` from core (needs server websocket enabled, check docs then).
+3. Browser UI: `wsconnect()` from core, direct to NATS (0020). Needs server websocket listener enabled; check docs when wiring.
 
 ## Core API
 
@@ -36,13 +36,13 @@ Snapshot verified against nats.js READMEs/migration.md + docs.nats.io on 2026-10
 1. `jetstreamManager(nc)` -> `jsm.streams.add({ name, subjects })`, `jsm.consumers.add(stream, { durable_name, ack_policy: AckPolicy.Explicit })`.
 2. `jetstream(nc)` -> `js.publish(subject, data, { msgID })` (msgID = dedupe), `js.consumers.get(stream, consumer)` -> `consume()` -> `for await (const m of messages) { m.ack() }`.
 3. `nc.jetstream()`, `JetStreamClient#subscribe()/fetch()` removed. Use the above.
-4. **Decision pending (ask me):** which flows need JetStream (e.g. events -> ClickHouse writer, so nothing is lost) vs core NATS (e.g. live UI fan-out, fire-and-forget).
+4. Which flow uses what (0014): core pub/sub for `clock.ticked` + domain events (services, UI); core request/reply for commands to dispatch and offers to drivers; JetStream only for events -> ClickHouse writer.
 
 ## Subjects
 
 1. Dot-delimited tokens, case-sensitive. Tokens: letters, digits, `-`, `_` only. Never start with `$` (reserved).
 2. Wildcards subscriber-only: `*` = exactly one token, `>` = one or more, last token only.
-3. Scheme (draft, confirm before first use): `sim.events.<entity>.<verb>` for domain events (names from `domain` skill, e.g. `sim.events.trip.requested`), `sim.commands.<name>` for inbound commands (e.g. UI injecting a ride request). All events: `sim.events.>`.
+3. Scheme (0015): `sim.events.<entity>.<verb>` for domain events incl. `sim.events.clock.ticked` (names from `domain` skill). `sim.commands.<name>` for commands to dispatch (`request_trip`, `cancel_trip`). `sim.offers.<driverId>` for offers (request/reply). All events: `sim.events.>`.
 
 ## Local setup
 

@@ -1,43 +1,60 @@
 ---
 name: domain
-description: Domain glossary for the uber-simulator - world, grid, riders, drivers, trips, states, events. Use whenever naming types, functions, tests, events, NATS subjects, or ClickHouse tables/columns, or discussing simulation behavior.
+description: Domain glossary for the uber-simulator - world, grid, services, riders, drivers, dispatch, trips, offers, states, events, commands. Use whenever naming types, functions, tests, events, NATS subjects, or ClickHouse tables/columns, or discussing simulation behavior.
 ---
 
 # Domain
 
 Code, tests, events, subjects, tables all use these exact terms. No synonyms (`passenger`, `car`, `ride`, `job` are not terms here).
 
-Living document. New concept in code = add term here in same change. Meaning shifts = update here and rename in code. Draft entries marked (draft): confirm with me before relying on them.
+Living document. New concept in code = add term here in same change. Meaning shifts = update here and rename in code. Entries marked (draft): confirm with me before relying on them.
 
 ## World
 
-- **World**: whole simulation state at a tick.
-- **Grid**: synthetic square grid, `width × height` cells. No real maps for now.
+- **World**: the simulated city. No single owner; each service owns its part, views built from events (0017).
+- **Grid**: synthetic square grid, `width × height` cells (v1: 500 × 500, 1 cell = 10 m). No real maps for now.
 - **Cell**: one grid square, integer `x`, `y`. Origin top-left, `0 ≤ x < width`, `0 ≤ y < height`.
 - **Position**: an entity's current cell.
-- **Distance**: Manhattan distance between cells, `|x1 - x2| + |y1 - y2|`. (draft)
-- **Move**: one step to a 4-neighbor cell (no diagonals). Max one move per tick per driver. (draft)
-- **Tick**: one discrete simulation step. See `simulation` skill.
+- **Distance**: Manhattan distance between cells, `|x1 - x2| + |y1 - y2|`.
+- **Move**: one step to a 4-neighbor cell (no diagonals). Max one move per tick per driver. Toward a target: larger remaining axis first.
+- **Tick**: one discrete simulation step, 1 s sim time, published by the clock. See `simulation` skill.
+
+## Services
+
+- **Service**: independent process owning part of the world, talking only via the bus (0017).
+- **Brain**: a service's pure, seeded decision logic. **Shell**: its I/O around the brain.
+- **Bus**: messaging port; in-memory or NATS adapter.
+- **Clock**: service publishing ticks.
+- **Shard**: fixed set of drivers owned by one driver service instance.
+- **Dispatch**: service owning all trips; matches trips to drivers (0018).
+- **Demand generator**: part of the rider service; spawns riders (Poisson).
 
 ## Actors
 
-- **Rider**: requests trips.
-- **Driver**: fulfills trips. States (draft):
-  - `offline` -> `idle` (available) -> `en_route` (heading to pickup) -> `on_trip` (rider aboard) -> `idle`.
-  - `idle` -> `offline`.
+- **Rider**: requests one trip, then is removed (after `completed` or `cancelled`). States: `waiting` -> `riding`.
+- **Patience**: ticks a rider waits for pickup before cancelling.
+- **Driver**: fulfills trips. States:
+  - `offline` -> `idle` (available) -> `en_route` (heading to pickup, then waiting there for confirmation) -> `on_trip` (rider aboard) -> `idle`.
+  - `idle` -> `offline`. (v1: all drivers stay online.)
+- **Wander target**: random cell an idle driver drives toward; new one picked on arrival.
 
 ## Trip
 
-- **Trip**: one rider's journey from pickup cell to dropoff cell. States (draft):
+- **Trip**: one rider's journey from pickup cell to dropoff cell. States:
   - `requested` -> `matched` -> `picked_up` -> `completed`.
   - `requested` | `matched` -> `cancelled`.
 - **Pickup** / **Dropoff**: trip start / end cells.
-- **Matching**: assigning an idle driver to a requested trip. Strategy TBD (start: nearest idle driver).
+- **Matching**: assigning an idle driver to a requested trip. v1: nearest known-idle driver, ties by driver ID.
+- **Offer**: dispatch asking one driver to take a trip; driver accepts or declines, or the offer expires (3 ticks).
+- **Command**: request to the owner of some state (`request_trip`, `cancel_trip` to dispatch). Events are facts; commands may be rejected.
 - **ETA**: ticks until a driver reaches a cell.
 
 ## Events
 
-1. Named `<entity>.<past-tense-verb>`: `trip.requested`, `trip.matched`, `trip.picked_up`, `trip.completed`, `trip.cancelled`, `driver.moved`, `driver.went_online`, `driver.went_offline`. (draft)
+1. Named `<entity>.<past-tense-verb>`:
+   - `clock.ticked`
+   - `trip.requested`, `trip.offered`, `trip.offer_declined`, `trip.offer_expired`, `trip.matched`, `trip.picked_up`, `trip.completed`, `trip.cancelled` (only dispatch emits `trip.*`)
+   - `driver.went_online`, `driver.went_offline`, `driver.moved`, `driver.arrived_at_pickup`, `driver.arrived_at_dropoff`
 2. Same name used as event `type` in code, NATS subject suffix, ClickHouse event type value.
 3. Invalid state transition = domain error (see `errors` skill), never silently ignored.
 

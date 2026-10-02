@@ -1,6 +1,6 @@
 # 0015. NATS subject scheme
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-02
 
 ## Context
@@ -12,12 +12,15 @@ Subjects are dot-delimited, case-sensitive tokens; tokens use letters, digits, `
 We will use:
 
 - `sim.events.<entity>.<verb>` for domain events, e.g. `sim.events.trip.requested`. All events: `sim.events.>`.
-- `sim.commands.<name>` for inbound commands, e.g. `sim.commands.request_trip`.
+- `sim.events.clock.ticked` for the clock (same scheme as domain events).
+- `sim.commands.<name>` for commands to dispatch, e.g. `sim.commands.request_trip`, `sim.commands.cancel_trip`.
+- `sim.offers.<driverId>` for dispatch offers to one driver (request/reply). Each driver service subscribes to its own drivers' subjects.
 
 ## Rationale
 
 - A `sim` prefix namespaces everything, leaving room for other systems on the same server.
-- Separating `events` from `commands` makes direction obvious: events are facts out of the simulation, commands are requests in.
+- Separating `events` from `commands` makes direction obvious: events are facts any service may observe, commands are requests to the owner of the state.
+- Per-driver offer subjects route an offer to exactly the service owning that driver without dispatch knowing the sharding.
 - Reusing domain event names as subject suffixes means one name across code, subjects, and ClickHouse; no mapping tables.
 - Token order (entity, then verb) enables useful wildcards like `sim.events.trip.*`.
 
