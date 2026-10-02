@@ -479,3 +479,238 @@ describe("decideDispatch stale and invalid offer replies", () => {
 		]);
 	});
 });
+
+// Arrivals carry the driver's tick (9); dispatch stamps its last tick.
+function arrivedAtPickup(
+	tripId: TripId,
+	driverId: DriverId,
+	at: Cell,
+): DispatchInput {
+	return {
+		type: "driver.arrived_at_pickup",
+		tick: tick(9),
+		driverId,
+		tripId,
+		cell: at,
+	};
+}
+
+function arrivedAtDropoff(
+	tripId: TripId,
+	driverId: DriverId,
+	at: Cell,
+): DispatchInput {
+	return {
+		type: "driver.arrived_at_dropoff",
+		tick: tick(9),
+		driverId,
+		tripId,
+		cell: at,
+	};
+}
+
+describe("decideDispatch driver arrivals", () => {
+	test("picks up a matched trip when its driver arrives at the pickup", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			ticked(4),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+		]);
+
+		expect(outputs).toEqual([
+			{ type: "trip.picked_up", tick: tick(4), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("rejects a pickup arrival by a driver not matched to the trip", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			arrivedAtPickup(t1, d2, cell(1, 2)),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "wrong_driver",
+				input: arrivedAtPickup(t1, d2, cell(1, 2)),
+			},
+		]);
+	});
+
+	test("rejects a pickup arrival away from the trip's pickup cell", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			arrivedAtPickup(t1, d1, cell(2, 2)),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "wrong_cell",
+				input: arrivedAtPickup(t1, d1, cell(2, 2)),
+			},
+		]);
+	});
+
+	test("rejects a pickup arrival for a trip not yet matched", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "invalid_transition",
+				input: arrivedAtPickup(t1, d1, cell(1, 2)),
+			},
+		]);
+	});
+
+	test("does not offer another trip to a driver carrying a rider", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+			requestTrip(t2, 3),
+			ticked(3),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("completes a picked-up trip when its driver arrives at the dropoff", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+			ticked(5),
+			arrivedAtDropoff(t1, d1, cell(7, 8)),
+		]);
+
+		expect(outputs).toEqual([
+			{ type: "trip.completed", tick: tick(5), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("offers a queued trip to a driver whose trip completed", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+			requestTrip(t2, 3),
+			arrivedAtDropoff(t1, d1, cell(7, 8)),
+			ticked(4),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(4), tripId: t2, driverId: d1 },
+		]);
+	});
+
+	test("rejects a dropoff arrival for a trip not yet picked up", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			arrivedAtDropoff(t1, d1, cell(7, 8)),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "invalid_transition",
+				input: arrivedAtDropoff(t1, d1, cell(7, 8)),
+			},
+		]);
+	});
+
+	test("rejects a dropoff arrival by a driver not carrying the trip", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+			arrivedAtDropoff(t1, d2, cell(7, 8)),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "wrong_driver",
+				input: arrivedAtDropoff(t1, d2, cell(7, 8)),
+			},
+		]);
+	});
+
+	test("rejects a dropoff arrival away from the trip's dropoff cell", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+			arrivedAtDropoff(t1, d1, cell(7, 7)),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "wrong_cell",
+				input: arrivedAtDropoff(t1, d1, cell(7, 7)),
+			},
+		]);
+	});
+
+	test("rejects a second dropoff arrival for a completed trip", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+			arrivedAtDropoff(t1, d1, cell(7, 8)),
+			arrivedAtDropoff(t1, d1, cell(7, 8)),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "invalid_transition",
+				input: arrivedAtDropoff(t1, d1, cell(7, 8)),
+			},
+		]);
+	});
+
+	test("ignores an arrival for an unknown trip", () => {
+		const { outputs } = run([arrivedAtPickup(t1, d1, cell(1, 2))]);
+
+		expect(outputs).toEqual([]);
+	});
+});

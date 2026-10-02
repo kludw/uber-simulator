@@ -1,6 +1,8 @@
 import { type Cell, distance, type Grid } from "../shared/grid.ts";
 import type {
 	ClockTicked,
+	DriverArrivedAtDropoff,
+	DriverArrivedAtPickup,
 	DriverId,
 	DriverMoved,
 	DriverWentOnline,
@@ -12,18 +14,23 @@ import type {
 	RequestTripAccepted,
 	RequestTripRejected,
 	Tick,
+	TripCompleted,
 	TripId,
 	TripMatched,
 	TripOfferDeclined,
 	TripOfferExpired,
 	TripOffered,
+	TripPickedUp,
 	TripRequested,
 } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 import {
+	type ArrivalRejected,
 	acceptOffer,
+	complete,
 	type NoPendingOffer,
 	offerTo,
+	pickUp,
 	requestedTrip,
 	type Trip,
 	withdrawOffer,
@@ -46,7 +53,9 @@ export type DispatchInput =
 	| DriverWentOnline
 	| DriverMoved
 	| OfferAccepted
-	| OfferDeclined;
+	| OfferDeclined
+	| DriverArrivedAtPickup
+	| DriverArrivedAtDropoff;
 
 type DispatchOutput =
 	| RequestTripAccepted
@@ -57,7 +66,13 @@ type DispatchOutput =
 	| TripMatched
 	| TripOfferDeclined
 	| TripOfferExpired
-	| InputRejected<OfferAccepted | OfferDeclined, NoPendingOffer["type"]>;
+	| TripPickedUp
+	| TripCompleted
+	| InputRejected<OfferAccepted | OfferDeclined, NoPendingOffer["type"]>
+	| InputRejected<
+			DriverArrivedAtPickup | DriverArrivedAtDropoff,
+			ArrivalRejected["type"]
+	  >;
 
 type Decision = { state: DispatchState; outputs: DispatchOutput[] };
 
@@ -92,6 +107,9 @@ export function decideDispatch(
 		case "offer_accepted":
 		case "offer_declined":
 			return onOfferReply(state, input);
+		case "driver.arrived_at_pickup":
+		case "driver.arrived_at_dropoff":
+			return onArrival(state, input);
 		default: {
 			const unhandled: never = input;
 			throw new Error(`unhandled dispatch input: ${unhandled}`);
@@ -104,7 +122,9 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 	const trips = new Map(state.trips);
 	const busy = new Set<DriverId>();
 	for (const trip of state.trips.values()) {
-		if (trip.state === "matched") busy.add(trip.driverId);
+		if (trip.state === "matched" || trip.state === "picked_up") {
+			busy.add(trip.driverId);
+		}
 		if (trip.state === "requested" && trip.offer !== null) {
 			busy.add(trip.offer.driverId);
 		}
@@ -235,6 +255,37 @@ function onOfferReply(
 				tick: state.tick,
 				tripId: trip.id,
 				driverId: reply.driverId,
+			},
+		],
+	};
+}
+
+function onArrival(
+	state: DispatchState,
+	arrival: DriverArrivedAtPickup | DriverArrivedAtDropoff,
+): Decision {
+	const trip = state.trips.get(arrival.tripId);
+	if (trip === undefined) return { state, outputs: [] };
+	const atPickup = arrival.type === "driver.arrived_at_pickup";
+	const next = atPickup
+		? pickUp(trip, arrival.driverId, arrival.cell)
+		: complete(trip, arrival.driverId, arrival.cell);
+	if (!next.ok) {
+		return {
+			state,
+			outputs: [
+				{ type: "input_rejected", reason: next.error.type, input: arrival },
+			],
+		};
+	}
+	return {
+		state: { ...state, trips: new Map(state.trips).set(trip.id, next.value) },
+		outputs: [
+			{
+				type: atPickup ? "trip.picked_up" : "trip.completed",
+				tick: state.tick,
+				tripId: trip.id,
+				driverId: arrival.driverId,
 			},
 		],
 	};
