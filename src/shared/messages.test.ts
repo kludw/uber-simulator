@@ -103,6 +103,23 @@ const invalidInputs: [string, unknown][] = [
 	["missing field", { type: "driver.moved", tick: 1, driverId: "d-1" }],
 	["wrong field type", { type: "clock.ticked", tick: "1" }],
 	["negative tick", { type: "clock.ticked", tick: -1 }],
+	// IDs must be valid NATS subject tokens (sim.offers.<driverId>, ADR 0028).
+	["trip ID with a dot", { type: "cancel_trip", tripId: "t.1" }],
+	[
+		"driver ID with a wildcard",
+		{ type: "offer_accepted", tripId: "t-1", driverId: "d-*" },
+	],
+	[
+		"rider ID with a space",
+		{
+			type: "request_trip",
+			tick: 1,
+			tripId: "t-1",
+			riderId: "r 1",
+			pickup: { x: 0, y: 0 },
+			dropoff: { x: 0, y: 0 },
+		},
+	],
 	[
 		"non-integer cell",
 		{ type: "driver.moved", tick: 1, driverId: "d-1", cell: { x: 1.5, y: 0 } },

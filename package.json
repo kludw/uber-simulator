@@ -15,6 +15,7 @@
 		"typescript": "^7.0.2"
 	},
 	"dependencies": {
+		"@nats-io/transport-node": "^3.4.0",
 		"zod": "^4.6.5"
 	}
 }
