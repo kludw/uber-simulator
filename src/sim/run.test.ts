@@ -19,6 +19,16 @@ const busyConfig = {
 	requestsPerMinute: 30,
 };
 
+// Two drivers, far more requests than they can serve: riders lose patience
+// while queued, offered, and matched.
+const scarceConfig = {
+	seed: 1,
+	ticks: 600,
+	grid: { width: 20, height: 20 },
+	driverShards: { count: 1, driversPerShard: 2 },
+	requestsPerMinute: 30,
+};
+
 describe("runInProcess", () => {
 	test("riders' trips get completed by drivers across shards", () => {
 		const { eventLog } = runInProcess(busyConfig);
@@ -54,6 +64,23 @@ describe("runInProcess", () => {
 		});
 
 		expect(checkInvariants(eventLog, grid)).toEqual([]);
+	});
+
+	test("a scarce-supply run breaks no invariant", () => {
+		const { eventLog } = runInProcess(scarceConfig);
+
+		expect(checkInvariants(eventLog, scarceConfig.grid)).toEqual([]);
+	});
+
+	// Guards the test above: it must exercise cancels that free a driver.
+	test("a scarce-supply run cancels trips that name a driver to free", () => {
+		const { eventLog } = runInProcess(scarceConfig);
+
+		const freeingDriver = eventLog.filter(
+			(message) =>
+				message.type === "trip.cancelled" && message.driverId !== null,
+		);
+		expect(freeingDriver).not.toBeEmpty();
 	});
 
 	test("publishes clock.ticked for ticks 1..N in order", () => {
