@@ -1,5 +1,8 @@
 import { type Cell, distance, type Grid } from "../shared/grid.ts";
 import type {
+	CancelTrip,
+	CancelTripAccepted,
+	CancelTripRejected,
 	ClockTicked,
 	DriverArrivedAtDropoff,
 	DriverArrivedAtPickup,
@@ -14,6 +17,7 @@ import type {
 	RequestTripAccepted,
 	RequestTripRejected,
 	Tick,
+	TripCancelled,
 	TripCompleted,
 	TripId,
 	TripMatched,
@@ -27,6 +31,7 @@ import type { Random } from "../shared/random.ts";
 import {
 	type ArrivalRejected,
 	acceptOffer,
+	cancel,
 	complete,
 	type NoPendingOffer,
 	offerTo,
@@ -50,6 +55,7 @@ export type DispatchState = {
 export type DispatchInput =
 	| ClockTicked
 	| RequestTrip
+	| CancelTrip
 	| DriverWentOnline
 	| DriverMoved
 	| OfferAccepted
@@ -60,6 +66,8 @@ export type DispatchInput =
 type DispatchOutput =
 	| RequestTripAccepted
 	| RequestTripRejected
+	| CancelTripAccepted
+	| CancelTripRejected
 	| TripRequested
 	| Offer
 	| TripOffered
@@ -68,6 +76,7 @@ type DispatchOutput =
 	| TripOfferExpired
 	| TripPickedUp
 	| TripCompleted
+	| TripCancelled
 	| InputRejected<OfferAccepted | OfferDeclined, NoPendingOffer["type"]>
 	| InputRejected<
 			DriverArrivedAtPickup | DriverArrivedAtDropoff,
@@ -101,6 +110,8 @@ export function decideDispatch(
 			return onTick(state, input);
 		case "request_trip":
 			return onRequestTrip(state, input);
+		case "cancel_trip":
+			return onCancelTrip(state, input);
 		case "driver.went_online":
 		case "driver.moved":
 			return onDriverReported(state, input);
@@ -216,6 +227,50 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 	};
 }
 
+function onCancelTrip(state: DispatchState, command: CancelTrip): Decision {
+	const trip = state.trips.get(command.tripId);
+	if (trip === undefined) {
+		return {
+			state,
+			outputs: [
+				{
+					type: "cancel_trip_rejected",
+					tripId: command.tripId,
+					error: { type: "unknown_trip" },
+				},
+			],
+		};
+	}
+	const cancelled = cancel(trip);
+	if (!cancelled.ok) {
+		return {
+			state,
+			outputs: [
+				{
+					type: "cancel_trip_rejected",
+					tripId: trip.id,
+					error: { type: cancelled.error.type, from: cancelled.error.from },
+				},
+			],
+		};
+	}
+	return {
+		state: {
+			...state,
+			trips: new Map(state.trips).set(trip.id, cancelled.value),
+		},
+		outputs: [
+			{ type: "cancel_trip_accepted", tripId: trip.id },
+			{
+				type: "trip.cancelled",
+				tick: state.tick,
+				tripId: trip.id,
+				driverId: cancelled.value.driverId,
+			},
+		],
+	};
+}
+
 function onDriverReported(
 	state: DispatchState,
 	report: DriverWentOnline | DriverMoved,
@@ -227,13 +282,15 @@ function onDriverReported(
 	return { state: { ...state, driverCells }, outputs: [] };
 }
 
-// Replies to offers already declined or expired are stale (ADR 0022): ignored.
+// Replies to offers already declined, expired, or cancelled with their trip
+// are stale (ADR 0022): ignored.
 function onOfferReply(
 	state: DispatchState,
 	reply: OfferAccepted | OfferDeclined,
 ): Decision {
 	const trip = state.trips.get(reply.tripId);
 	if (trip === undefined) return { state, outputs: [] };
+	if (trip.state === "cancelled") return { state, outputs: [] };
 	if (trip.excludedDrivers.has(reply.driverId)) return { state, outputs: [] };
 	const accepted = reply.type === "offer_accepted";
 	const next = accepted
@@ -266,6 +323,8 @@ function onArrival(
 ): Decision {
 	const trip = state.trips.get(arrival.tripId);
 	if (trip === undefined) return { state, outputs: [] };
+	// The rider's cancel reached dispatch first: a legitimate race, not an error.
+	if (trip.state === "cancelled") return { state, outputs: [] };
 	const atPickup = arrival.type === "driver.arrived_at_pickup";
 	const next = atPickup
 		? pickUp(trip, arrival.driverId, arrival.cell)

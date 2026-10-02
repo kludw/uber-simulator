@@ -59,7 +59,8 @@ export type TripCompleted = {
 	driverId: DriverId;
 };
 
-// driverId null: cancelled before any driver was matched.
+// driverId: the driver to free, matched or holding the pending offer (it may
+// have accepted concurrently); null when no driver was involved.
 export type TripCancelled = {
 	type: "trip.cancelled";
 	tick: Tick;
@@ -142,6 +143,25 @@ export type RequestTripRejected = {
 	type: "request_trip_rejected";
 	tripId: TripId;
 	error: { type: "duplicate_trip_id" };
+};
+
+// Command from the rider service; dispatch answers with a reply, not an event.
+export type CancelTrip = { type: "cancel_trip"; tripId: TripId };
+
+export type CancelTripAccepted = {
+	type: "cancel_trip_accepted";
+	tripId: TripId;
+};
+
+export type CancelTripRejected = {
+	type: "cancel_trip_rejected";
+	tripId: TripId;
+	error:
+		| { type: "unknown_trip" }
+		| {
+				type: "invalid_transition";
+				from: "picked_up" | "completed" | "cancelled";
+		  };
 };
 
 export type TripRequested = {

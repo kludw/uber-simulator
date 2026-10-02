@@ -714,3 +714,148 @@ describe("decideDispatch driver arrivals", () => {
 		expect(outputs).toEqual([]);
 	});
 });
+
+function cancelTrip(tripId: TripId): DispatchInput {
+	return { type: "cancel_trip", tripId };
+}
+
+describe("decideDispatch cancel_trip", () => {
+	test("cancels a queued trip with no driver", () => {
+		const { outputs } = run([requestTrip(t1, 1), ticked(3), cancelTrip(t1)]);
+
+		expect(outputs).toEqual([
+			{ type: "cancel_trip_accepted", tripId: t1 },
+			{ type: "trip.cancelled", tick: tick(3), tripId: t1, driverId: null },
+		]);
+	});
+
+	// Names the offered driver so one that accepted concurrently is freed.
+	test("cancels a trip with a pending offer and names the offered driver", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			cancelTrip(t1),
+		]);
+
+		expect(outputs).toEqual([
+			{ type: "cancel_trip_accepted", tripId: t1 },
+			{ type: "trip.cancelled", tick: tick(2), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("ignores an accept arriving after its trip was cancelled", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			cancelTrip(t1),
+			accepted(t1, d1),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("cancels a matched trip and names its driver", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			ticked(3),
+			cancelTrip(t1),
+		]);
+
+		expect(outputs).toEqual([
+			{ type: "cancel_trip_accepted", tripId: t1 },
+			{ type: "trip.cancelled", tick: tick(3), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("offers a queued trip to a driver whose matched trip was cancelled", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			requestTrip(t2, 3),
+			cancelTrip(t1),
+			ticked(4),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(4), tripId: t2, driverId: d1 },
+		]);
+	});
+
+	test("rejects cancelling a picked-up trip without announcing it", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+			cancelTrip(t1),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "cancel_trip_rejected",
+				tripId: t1,
+				error: { type: "invalid_transition", from: "picked_up" },
+			},
+		]);
+	});
+
+	test("rejects cancelling a completed trip without announcing it", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+			arrivedAtDropoff(t1, d1, cell(7, 8)),
+			cancelTrip(t1),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "cancel_trip_rejected",
+				tripId: t1,
+				error: { type: "invalid_transition", from: "completed" },
+			},
+		]);
+	});
+
+	test("rejects cancelling an unknown trip without announcing it", () => {
+		const { outputs } = run([cancelTrip(t1)]);
+
+		expect(outputs).toEqual([
+			{
+				type: "cancel_trip_rejected",
+				tripId: t1,
+				error: { type: "unknown_trip" },
+			},
+		]);
+	});
+
+	test("ignores a pickup arrival losing the race to a cancel", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			cancelTrip(t1),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+});

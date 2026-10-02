@@ -29,7 +29,10 @@ export type Trip =
 	| (TripDetails & { state: "requested"; offer: PendingOffer })
 	| (TripDetails & { state: "matched"; driverId: DriverId })
 	| (TripDetails & { state: "picked_up"; driverId: DriverId })
-	| (TripDetails & { state: "completed"; driverId: DriverId });
+	| (TripDetails & { state: "completed"; driverId: DriverId })
+	// driverId: the driver to free (matched, or holding the pending offer);
+	// null when no driver was involved.
+	| (TripDetails & { state: "cancelled"; driverId: DriverId | null });
 
 export type NoPendingOffer = {
 	type: "no_pending_offer";
@@ -125,6 +128,45 @@ export function complete(
 	const rejected = arrivalRejection(trip, trip.dropoff, driverId, cell);
 	if (rejected !== null) return { ok: false, error: rejected };
 	return { ok: true, value: { ...trip, state: "completed" } };
+}
+
+type CancelledTrip = Extract<Trip, { state: "cancelled" }>;
+
+type CancelRejected = {
+	type: "invalid_transition";
+	tripId: TripId;
+	from: Exclude<Trip["state"], "requested" | "matched">;
+	to: "cancelled";
+};
+
+// Rider cancelled before pickup; a pending offer is dropped with the trip, but
+// its driver is still named: it may have accepted concurrently.
+export function cancel(trip: Trip): Result<CancelledTrip, CancelRejected> {
+	switch (trip.state) {
+		case "requested": {
+			const { offer, ...details } = trip;
+			return {
+				ok: true,
+				value: {
+					...details,
+					state: "cancelled",
+					driverId: offer?.driverId ?? null,
+				},
+			};
+		}
+		case "matched":
+			return { ok: true, value: { ...trip, state: "cancelled" } };
+		default:
+			return {
+				ok: false,
+				error: {
+					type: "invalid_transition",
+					tripId: trip.id,
+					from: trip.state,
+					to: "cancelled",
+				},
+			};
+	}
 }
 
 function invalidTransition(

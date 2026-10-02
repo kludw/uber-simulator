@@ -35,8 +35,8 @@ Nobody owns "the world". Views (dispatch's driver positions, UI) are built from 
 3. Driver accepts if idle, else declines. Accept -> `trip.matched`, driver `en_route`. Decline (`trip.offer_declined`) or timeout (`trip.offer_expired`, frees a driver that accepted late) -> try next candidate next tick; the trip keeps its FIFO position. Replies to declined, expired, or unknown offers are ignored.
 4. Driver drives to pickup, publishes `driver.arrived_at_pickup` once, waits (`at_pickup`). Dispatch -> `trip.picked_up` (driver `on_trip`).
 5. Driver drives to dropoff, publishes `driver.arrived_at_dropoff` once, waits (`at_dropoff`). Dispatch -> `trip.completed`, driver `idle`, rider removed.
-6. Rider patience expires before pickup -> `cancel_trip` to dispatch -> `trip.cancelled`, driver (if any) `idle`, rider removed.
-7. Races resolved by dispatch: whichever of arrival / cancel reaches dispatch first wins.
+6. Rider patience expires before pickup -> `cancel_trip` to dispatch -> reply `cancel_trip_accepted` + `trip.cancelled` (driverId = driver to free: the matched driver or the one holding a pending offer, null if none), that driver `idle`, rider removed. A pending offer is dropped; a late reply to it is ignored. Trip picked up, completed, already cancelled, or unknown -> reply `cancel_trip_rejected` (`invalid_transition` / `unknown_trip`), no event.
+7. Races resolved by dispatch: whichever of arrival / cancel reaches dispatch first wins. Arrival first -> picked up, cancel rejected. Cancel first -> cancelled, arrival ignored.
 
 Idle drivers wander: pick a random target cell, drive there, repeat. All 100 drivers online the whole run. A crashed driver shard's drivers just disappear.
 
