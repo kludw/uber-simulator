@@ -1,14 +1,18 @@
+import * as z from "zod";
 import type { Random } from "./random.ts";
 import type { Result } from "./result.ts";
 
 export type Grid = { width: number; height: number };
 
-declare const cellBrand: unique symbol;
-
-// Branded so the only way to get a Cell is cellIn: holding one means it is inside a grid.
-export type Cell = { readonly x: number; readonly y: number } & {
-	readonly [cellBrand]: true;
-};
+// Branded so a Cell comes only from cellIn (inside this grid) or from parsing
+// a message. A message can't know the grid, so the schema checks integer,
+// non-negative coordinates only; staying inside the grid is a spec invariant
+// checked over the event log (src/sim/invariants.ts).
+export const Cell = z
+	.object({ x: z.int().nonnegative(), y: z.int().nonnegative() })
+	.readonly()
+	.brand<"Cell">();
+export type Cell = z.infer<typeof Cell>;
 
 export type CellOutsideGrid = {
 	type: "cell_outside_grid";
