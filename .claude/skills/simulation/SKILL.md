@@ -22,8 +22,8 @@ Goal: each service's decision logic ("brain") is exact and replayable from a see
 ## Time
 
 1. Sim time = tick number from the clock service (`clock.ticked`). 1 tick = 1 s sim time.
-2. Only the clock service paces by wall time: publishes a tick every 1 s wall / speed multiplier. Pause/speed = clock concern. Other shells use wall time only for transport timeouts (point 3).
-3. Other services act on received ticks, never on their own timers. Timeouts expressed in ticks inside brains. Exception: transport-level request timeouts in the shell (e.g. offer request/reply), derived from tick duration.
+2. Only the clock service paces by wall time: publishes a tick every 1 s wall / speed multiplier. Pause/speed = clock concern.
+3. Other services act on received ticks, never on their own timers. Timeouts expressed in ticks inside brains. No transport-level timeouts (ADR 0028: no request/reply).
 4. Events carry tick, never wall time. Wall time only added by adapters if needed (e.g. ingestion timestamp).
 5. Events produced by non-tick inputs carry the last `clock.ticked` tick the brain saw; start functions take the start tick.
 
