@@ -153,12 +153,18 @@ function onCancelRejected(
 	if (addressed.state === "waiting") {
 		return reject(state, rejected, "cancel_not_requested");
 	}
-	// Trip unknown to dispatch (e.g. request_trip lost) or already over (its
-	// trip.* event lost): no trip event will ever end it.
+	// Trip already over (its trip.* event lost), whatever the rider saw.
+	if (
+		rejected.error.type === "invalid_transition" &&
+		rejected.error.from !== "picked_up"
+	) {
+		return removeRider(state, addressed.id);
+	}
+	// Dispatch never knew the trip (e.g. request_trip lost): no trip event
+	// will ever end it.
 	if (
 		addressed.state === "cancelling" &&
-		(rejected.error.type === "unknown_trip" ||
-			rejected.error.from !== "picked_up")
+		rejected.error.type === "unknown_trip"
 	) {
 		return removeRider(state, addressed.id);
 	}

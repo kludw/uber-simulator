@@ -378,6 +378,27 @@ describe("decideRiders cancel rejected", () => {
 			{ state: { ...waitingRider(), riders: [] }, outputs: [] },
 		]);
 	});
+
+	// The trip is over regardless of what the rider saw (trip.completed lost).
+	test("riding rider whose cancel is rejected for a completed or cancelled trip is removed", () => {
+		const cancelling = quietTick(waitingRider(), 151);
+		const riding = pickedUp(cancelling.state, 152);
+		const decisions = (["completed", "cancelled"] as const).map((from) =>
+			decideRiders(
+				riding.state,
+				{
+					type: "cancel_trip_rejected",
+					tripId: t1,
+					error: { type: "invalid_transition", from },
+				},
+				scriptedRandom({}),
+			),
+		);
+		expect(decisions).toEqual([
+			{ state: { ...waitingRider(), riders: [] }, outputs: [] },
+			{ state: { ...waitingRider(), riders: [] }, outputs: [] },
+		]);
+	});
 });
 
 function requestRejected(state: RidersState) {
