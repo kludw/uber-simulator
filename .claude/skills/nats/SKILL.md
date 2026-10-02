@@ -12,7 +12,7 @@ Snapshot verified against nats.js READMEs/migration.md + docs.nats.io on 2026-10
 ## Role
 
 1. NATS = transport between services (clock, driver, rider, dispatch, persister) and UI (0017). Brains never import NATS (see `simulation` skill). Only the bus adapter does; an in-memory bus implements the same port.
-2. Adapter failures (connect, timeout, no responders) -> typed `Result` errors (see `errors` skill).
+2. Adapter failures (connect, disconnect, publish errors) -> typed `Result` errors (see `errors` skill).
 
 ## Packages
 

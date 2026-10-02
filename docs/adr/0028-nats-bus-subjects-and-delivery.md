@@ -2,11 +2,11 @@
 
 - Status: Accepted
 - Date: 2026-10-02
-- Supersedes 0014, 0015
+- Supersedes 0014, 0015, and 0018's offer transport
 
 ## Context
 
-Milestone 3 runs each service as its own process over NATS, behind the `Bus` port from ADR 0027 (`publish`, `subscribe(accepts, handle)` with type-guard predicates). 0014 planned request/reply for offers and commands; 0015 defined subjects for events and commands only. Since then, every reply became an ordinary `Message` (ADR 0027) and dispatch expires offers in ticks inside its brain (ADR 0018), so a transport-level request timeout duplicates logic (this also replaces the "via request/reply" transport detail in 0018; its matching rules stand). Core NATS preserves message order from one publishing connection to one subscription (https://docs.nats.io/reference/reference-protocols/nats-protocol). The spec relies on dispatch's `offer` reaching a driver before a `trip.cancelled` naming it.
+Milestone 3 runs each service as its own process over NATS, behind the `Bus` port from ADR 0027 (`publish`, `subscribe(accepts, handle)` with type-guard predicates). 0014 planned request/reply for offers and commands; 0015 defined subjects for events and commands only. Since then, every reply became an ordinary `Message` (ADR 0027) and dispatch expires offers in ticks inside its brain (ADR 0018), so a transport-level request timeout duplicates logic (this also replaces the "via request/reply" transport detail in 0018; its matching rules stand). Core NATS delivers messages "in order from a given publisher, but not across different publishers" (NATS FAQ, https://github.com/nats-io/nats.docs/blob/master/reference/faq.md), and doesn't guarantee that two subscribers see messages in the same order under load (https://docs.nats.io/nats-concepts/core-nats/pubsub). The spec relies on dispatch's `offer` reaching a driver before a `trip.cancelled` naming it.
 
 ## Decision
 
@@ -25,7 +25,7 @@ We will:
 ## Rationale
 
 - Plain subjects keep the `Bus` port unchanged; shells and brains run identically on the in-memory and NATS buses.
-- One `sim.>` subscription per connection preserves each publisher's order end to end, which keeps offer-before-cancel true without extra protocol.
+- One `sim.>` subscription per connection keeps each publisher's order for that subscriber. Offer-before-cancel only needs that: both come from dispatch's single connection and are consumed by one driver-shard subscriber. Cross-publisher order is not guaranteed and nothing relies on it.
 - Local predicate filtering costs every service all traffic; at 100 drivers (~200 msg/s) that's trivial. Per-service subject subscriptions are the scaling step when needed.
 - Typed subject tokens (`events`, `commands`, `offers`, `replies`) keep direction readable and allow wildcard taps (`sim.events.>` for UI and persister).
 
