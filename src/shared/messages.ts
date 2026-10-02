@@ -172,3 +172,29 @@ export type TripRequested = {
 	pickup: Cell;
 	dropoff: Cell;
 };
+
+// Every message published on the bus (ADR 0027). InputRejected is not one:
+// shells log it, never publish it.
+export type Message =
+	| ClockTicked
+	| DriverWentOnline
+	| DriverMoved
+	| DriverArrivedAtPickup
+	| DriverArrivedAtDropoff
+	| TripRequested
+	| TripOffered
+	| TripOfferDeclined
+	| TripOfferExpired
+	| TripMatched
+	| TripPickedUp
+	| TripCompleted
+	| TripCancelled
+	| Offer
+	| OfferAccepted
+	| OfferDeclined
+	| RequestTrip
+	| RequestTripAccepted
+	| RequestTripRejected
+	| CancelTrip
+	| CancelTripAccepted
+	| CancelTripRejected;
