@@ -1,4 +1,4 @@
-import type { Cell } from "../shared/grid.ts";
+import { type Cell, distance } from "../shared/grid.ts";
 import type {
 	DriverId,
 	RequestTrip,
@@ -27,13 +27,32 @@ type QueuedTrip = TripDetails & { state: "requested"; offer: null };
 export type Trip =
 	| QueuedTrip
 	| (TripDetails & { state: "requested"; offer: PendingOffer })
-	| (TripDetails & { state: "matched"; driverId: DriverId });
+	| (TripDetails & { state: "matched"; driverId: DriverId })
+	| (TripDetails & { state: "picked_up"; driverId: DriverId })
+	| (TripDetails & { state: "completed"; driverId: DriverId });
 
 export type NoPendingOffer = {
 	type: "no_pending_offer";
 	tripId: TripId;
 	driverId: DriverId;
 };
+
+type InvalidTransition = {
+	type: "invalid_transition";
+	tripId: TripId;
+	from: Trip["state"];
+	to: Trip["state"];
+};
+
+type WrongDriver = {
+	type: "wrong_driver";
+	tripId: TripId;
+	driverId: DriverId;
+};
+
+type WrongCell = { type: "wrong_cell"; tripId: TripId; cell: Cell };
+
+export type ArrivalRejected = InvalidTransition | WrongDriver | WrongCell;
 
 export function requestedTrip(request: RequestTrip): Trip {
 	return {
@@ -82,6 +101,60 @@ export function withdrawOffer(
 			excludedDrivers: new Set(trip.excludedDrivers).add(driverId),
 		},
 	};
+}
+
+// Arrival by the trip's driver at its pickup cell.
+export function pickUp(
+	trip: Trip,
+	driverId: DriverId,
+	cell: Cell,
+): Result<Trip, ArrivalRejected> {
+	if (trip.state !== "matched") return invalidTransition(trip, "picked_up");
+	const rejected = arrivalRejection(trip, trip.pickup, driverId, cell);
+	if (rejected !== null) return { ok: false, error: rejected };
+	return { ok: true, value: { ...trip, state: "picked_up" } };
+}
+
+// Arrival by the trip's driver at its dropoff cell; frees the driver.
+export function complete(
+	trip: Trip,
+	driverId: DriverId,
+	cell: Cell,
+): Result<Trip, ArrivalRejected> {
+	if (trip.state !== "picked_up") return invalidTransition(trip, "completed");
+	const rejected = arrivalRejection(trip, trip.dropoff, driverId, cell);
+	if (rejected !== null) return { ok: false, error: rejected };
+	return { ok: true, value: { ...trip, state: "completed" } };
+}
+
+function invalidTransition(
+	trip: Trip,
+	to: Trip["state"],
+): Result<never, InvalidTransition> {
+	return {
+		ok: false,
+		error: {
+			type: "invalid_transition",
+			tripId: trip.id,
+			from: trip.state,
+			to,
+		},
+	};
+}
+
+function arrivalRejection(
+	trip: { id: TripId; driverId: DriverId },
+	target: Cell,
+	driverId: DriverId,
+	cell: Cell,
+): WrongDriver | WrongCell | null {
+	if (trip.driverId !== driverId) {
+		return { type: "wrong_driver", tripId: trip.id, driverId };
+	}
+	if (distance(cell, target) !== 0) {
+		return { type: "wrong_cell", tripId: trip.id, cell };
+	}
+	return null;
 }
 
 function offeredTo(
