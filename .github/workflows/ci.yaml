@@ -8,6 +8,20 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      # Plain server for the NATS bus integration tests; the image's default
+      # config (clients 4222, monitoring 8222) is enough, no JetStream/websocket.
+      nats:
+        image: nats:2.15.0-alpine
+        ports:
+          - 4222:4222
+        options: >-
+          --health-cmd "wget -q --spider http://localhost:8222/healthz"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      NATS_URL: nats://localhost:4222
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2

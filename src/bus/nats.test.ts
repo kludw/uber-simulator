@@ -31,10 +31,7 @@ describe("subjectFor", () => {
 			{ type: "driver.went_online", tick, driverId, cell },
 			"sim.events.driver.went_online",
 		],
-		[
-			{ type: "driver.moved", tick, driverId, cell },
-			"sim.events.driver.moved",
-		],
+		[{ type: "driver.moved", tick, driverId, cell }, "sim.events.driver.moved"],
 		[
 			{ type: "driver.arrived_at_pickup", tick, driverId, tripId, cell },
 			"sim.events.driver.arrived_at_pickup",
@@ -211,8 +208,12 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 			(n: number) =>
 			(message: Message): message is CancelTrip =>
 				isOwnCancelTrip(message) && message.tripId === cancelTrip(n).tripId;
-		bus.subscribe(isCancelTrip(1), (message) => received.push(["one", message]));
-		bus.subscribe(isCancelTrip(2), (message) => received.push(["two", message]));
+		bus.subscribe(isCancelTrip(1), (message) =>
+			received.push(["one", message]),
+		);
+		bus.subscribe(isCancelTrip(2), (message) =>
+			received.push(["two", message]),
+		);
 
 		// Trip 1 last: once it arrives, trips 2 and 3 were handled (one publisher).
 		bus.publish(cancelTrip(2));
@@ -223,6 +224,27 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		expect(received).toEqual([
 			["two", cancelTrip(2)],
 			["one", cancelTrip(1)],
+		]);
+	});
+
+	test("handlers run one at a time, even when a handler publishes", async () => {
+		const bus = await connectBus();
+		const trace: string[] = [];
+		bus.subscribe(isOwnCancelTrip, (message) => {
+			trace.push(`start ${message.tripId}`);
+			if (message.tripId === cancelTrip(1).tripId) bus.publish(cancelTrip(2));
+			trace.push(`end ${message.tripId}`);
+		});
+
+		bus.publish(cancelTrip(1));
+		await waitFor(() => trace.length >= 4);
+
+		const [t1, t2] = [cancelTrip(1).tripId, cancelTrip(2).tripId];
+		expect(trace).toEqual([
+			`start ${t1}`,
+			`end ${t1}`,
+			`start ${t2}`,
+			`end ${t2}`,
 		]);
 	});
 

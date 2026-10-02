@@ -2,7 +2,7 @@
 
 What lives where and how it connects. Behavior: [spec.md](spec.md). Why: [ADRs](adr/README.md). Terms: `.claude/skills/domain/SKILL.md`.
 
-Current state: milestone 2, everything in one process over an in-memory bus. NATS (milestone 3, planned bus adapter: [0028](adr/0028-nats-bus-subjects-and-delivery.md)), UI (4), and ClickHouse (5) are not built yet. Local NATS server runs via Docker Compose (see Local infra).
+Current state: milestone 2, everything in one process over an in-memory bus. Milestone 3 in progress: the NATS bus adapter exists ([0028](adr/0028-nats-bus-subjects-and-delivery.md)), service entrypoints and clock service don't yet. UI (4) and ClickHouse (5) are not built yet. Local NATS server runs via Docker Compose (see Local infra).
 
 ## Components
 
@@ -14,6 +14,7 @@ Current state: milestone 2, everything in one process over an in-memory bus. NAT
 | Rider brain | `src/rider/brain.ts` | demand generator, riders, patience, cancels | [0016](adr/0016-initial-domain-model.md), [0022](adr/0022-source-layout-and-brain-shape.md) |
 | Bus port | `src/bus/bus.ts` | `publish` / `subscribe` by type-guard predicate | [0027](adr/0027-in-process-bus-and-runner.md) |
 | In-memory bus | `src/bus/in-memory.ts` | FIFO queue, `drain()` delivers in publish order | [0027](adr/0027-in-process-bus-and-runner.md) |
+| NATS bus | `src/bus/nats.ts` | `connectNatsBus`: one connection, one `sim.>` subscription, Zod-parses each payload (invalid ones logged, dropped), then predicates; handlers one at a time in arrival order. `subjectFor` maps messages to subjects | [0028](adr/0028-nats-bus-subjects-and-delivery.md) |
 | Service shell | `src/bus/service.ts` | runs any brain on the bus: feeds accepted messages to `decide`, publishes outputs, logs `input_rejected` | [0026](adr/0026-brains-reject-invalid-inputs.md), [0027](adr/0027-in-process-bus-and-runner.md) |
 | Runner | `src/sim/run.ts` | starts driver shards, dispatch, riders; acts as clock; returns event log + rejected inputs | [0027](adr/0027-in-process-bus-and-runner.md) |
 | Invariant checker | `src/sim/invariants.ts` | spec invariants from the event log alone, own trip model | [0017](adr/0017-independent-actor-services-with-pure-brains.md) |
@@ -37,7 +38,7 @@ Services never call each other: commands (`request_trip`, `cancel_trip`), offers
 
 ## Local infra
 
-Docker Compose ([0012](adr/0012-use-docker-compose-for-local-infra.md)), `compose.yaml`; app runs on the host via Bun. No app code connects yet.
+Docker Compose ([0012](adr/0012-use-docker-compose-for-local-infra.md)), `compose.yaml`; app runs on the host via Bun. Only the NATS bus integration tests connect so far (`NATS_URL`; CI runs a plain `nats` service container).
 
 | Service | Image | Ports | Config |
 | --- | --- | --- | --- |
@@ -52,6 +53,7 @@ Client URLs: `.env.example` (`NATS_URL`, `NATS_WS_URL`).
 - Trip transitions: `src/dispatch/trip.ts`; matching strategy: `src/dispatch/brain.ts` ([0018](adr/0018-dispatch-matching-via-offers.md)).
 - Randomness: `src/shared/random.ts`; seed streams per service: `src/sim/run.ts` ([0023](adr/0023-own-seeded-prng.md)).
 - Driver IDs and shard ownership: `src/sim/run.ts`.
-- Message delivery order: `src/bus/in-memory.ts` ([0027](adr/0027-in-process-bus-and-runner.md)).
+- Message delivery order: `src/bus/in-memory.ts` ([0027](adr/0027-in-process-bus-and-runner.md)), `src/bus/nats.ts` ([0028](adr/0028-nats-bus-subjects-and-delivery.md)).
+- NATS subject per message: `subjectFor` in `src/bus/nats.ts` ([0028](adr/0028-nats-bus-subjects-and-delivery.md)).
 - Rejected-input handling: brains emit, shell logs ([0026](adr/0026-brains-reject-invalid-inputs.md)).
 - Default run config (spec scale) and exit codes: `src/sim/main.ts`.
