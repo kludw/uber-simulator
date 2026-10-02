@@ -46,6 +46,6 @@ Snapshot verified against nats.js READMEs/migration.md + docs.nats.io on 2026-10
 
 ## Local setup
 
-1. Runs via Docker Compose (see `docker` skill). Ports 4222 clients, 8222 HTTP monitoring.
-2. JetStream: image command `-js`, persist with `-sd /data` + volume on `/data` (Docker Hub `nats` page).
-3. Server URL from env, validated with Zod.
+1. Runs via Docker Compose (see `docker` skill). Ports 4222 clients, 8222 HTTP monitoring, 9222 websocket.
+2. Server config: `infra/nats.conf` (syntax: https://docs.nats.io/running-a-nats-service/configuration). JetStream via `jetstream { store_dir: /data }`, `/data` on a named volume. Websocket via `websocket { port, no_tls: true }` (local only).
+3. Server URLs from env (`NATS_URL`, `NATS_WS_URL`, see `.env.example`), validated with Zod.
