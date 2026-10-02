@@ -147,6 +147,53 @@ describe("connectNatsBus", () => {
 			error: { type: "nats_connect_failed", url: "nats://127.0.0.1:1" },
 		});
 	});
+
+	test("gives up the connection when the server drops it during setup", async () => {
+		// Fake server: completes every handshake (INFO, then PONG to the first
+		// PING) but hangs up on the first connection's next PING, the bus's
+		// flush after SUB. Later connections (reconnects) stay up.
+		let connections = 0;
+		let openSockets = 0;
+		const server = Bun.listen<{ connection: number; pings: number }>({
+			hostname: "127.0.0.1",
+			port: 0,
+			socket: {
+				open(socket) {
+					connections++;
+					openSockets++;
+					socket.data = { connection: connections, pings: 0 };
+					socket.write(
+						'INFO {"server_id":"fake","version":"2.15.0","max_payload":1048576}\r\n',
+					);
+				},
+				data(socket, chunk) {
+					for (const _ of chunk.toString().matchAll(/PING\r\n/g)) {
+						socket.data.pings++;
+						if (socket.data.connection === 1 && socket.data.pings > 1) {
+							socket.end();
+							return;
+						}
+						socket.write("PONG\r\n");
+					}
+				},
+				close() {
+					openSockets--;
+				},
+			},
+		});
+		const url = `nats://127.0.0.1:${server.port}`;
+
+		const result = await connectNatsBus({ url, log: () => {} });
+		// A client left behind reconnects after its 2 s reconnect wait.
+		await Bun.sleep(2500);
+		const leftOpen = openSockets;
+		server.stop(true);
+
+		expect({ result, leftOpen }).toMatchObject({
+			result: { ok: false, error: { type: "nats_connect_failed", url } },
+			leftOpen: 0,
+		});
+	}, 10_000);
 });
 
 // Integration tests need a real server: `docker compose up -d --wait`, then

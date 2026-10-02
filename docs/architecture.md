@@ -49,7 +49,7 @@ Client URLs: `.env.example` (`NATS_URL`, `NATS_WS_URL`).
 ## Where decisions live
 
 - Grid geometry, distance, moves: `src/shared/grid.ts`.
-- Message shapes, names, and wire parsing (Zod schemas, `parseMessage`): `src/shared/messages.ts` ([0005](adr/0005-use-zod-for-validation.md), [0016](adr/0016-initial-domain-model.md), `domain` skill). Parsed cells are checked for shape only; grid bounds are an invariant (`src/sim/invariants.ts`).
+- Message shapes, names, and wire parsing (Zod schemas, `parseMessage`): `src/shared/messages.ts` ([0005](adr/0005-use-zod-for-validation.md), [0016](adr/0016-initial-domain-model.md), `domain` skill). Parsed cells are checked for shape only; grid bounds are an invariant (`src/sim/invariants.ts`). Driver, trip, and rider IDs are restricted to `[A-Za-z0-9_-]+` so they are valid NATS subject tokens (`sim.offers.<driverId>`, [0028](adr/0028-nats-bus-subjects-and-delivery.md)).
 - Trip transitions: `src/dispatch/trip.ts`; matching strategy: `src/dispatch/brain.ts` ([0018](adr/0018-dispatch-matching-via-offers.md)).
 - Randomness: `src/shared/random.ts`; seed streams per service: `src/sim/run.ts` ([0023](adr/0023-own-seeded-prng.md)).
 - Driver IDs and shard ownership: `src/sim/run.ts`.

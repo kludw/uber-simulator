@@ -1,4 +1,8 @@
-import { connect, type Msg } from "@nats-io/transport-node";
+import {
+	connect,
+	type Msg,
+	type NatsConnection,
+} from "@nats-io/transport-node";
 import { type Message, parseMessage } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
 import type { Bus } from "./bus.ts";
@@ -29,48 +33,56 @@ export async function connectNatsBus(options: {
 	url: string;
 	log: (dropped: DroppedMessage) => void;
 }): Promise<Result<NatsBus, NatsConnectError>> {
+	const failed = (cause: unknown): Result<never, NatsConnectError> => ({
+		ok: false,
+		error: { type: "nats_connect_failed", url: options.url, cause },
+	});
+	let connection: NatsConnection;
 	try {
-		const connection = await connect({ servers: options.url });
-		const subscription = connection.subscribe("sim.>");
+		connection = await connect({ servers: options.url });
+	} catch (cause) {
+		return failed(cause);
+	}
+	const subscription = connection.subscribe("sim.>");
+	try {
 		// The server has registered the subscription once flush resolves, so
 		// messages published after connect returns are delivered.
 		await connection.flush();
-		const subscribers: ((message: Message) => void)[] = [];
-		const delivering = (async () => {
-			for await (const received of subscription) {
-				const parsed = decode(received);
-				if (!parsed.ok) {
-					options.log({ subject: received.subject, error: parsed.error });
-					continue;
-				}
-				for (const deliver of subscribers) deliver(parsed.value);
-			}
-		})();
-		// drain() throws once closed; every close() shares the first one.
-		let closing: Promise<void> | undefined;
-		return {
-			ok: true,
-			value: {
-				publish(message) {
-					connection.publish(subjectFor(message), JSON.stringify(message));
-				},
-				subscribe(accepts, handle) {
-					subscribers.push((message) => {
-						if (accepts(message)) handle(message);
-					});
-				},
-				close() {
-					closing ??= connection.drain().then(() => delivering);
-					return closing;
-				},
-			},
-		};
 	} catch (cause) {
-		return {
-			ok: false,
-			error: { type: "nats_connect_failed", url: options.url, cause },
-		};
+		// Otherwise the client keeps reconnecting with nobody holding it.
+		await connection.close();
+		return failed(cause);
 	}
+	const subscribers: ((message: Message) => void)[] = [];
+	const delivering = (async () => {
+		for await (const received of subscription) {
+			const parsed = decode(received);
+			if (!parsed.ok) {
+				options.log({ subject: received.subject, error: parsed.error });
+				continue;
+			}
+			for (const deliver of subscribers) deliver(parsed.value);
+		}
+	})();
+	// drain() throws once closed; every close() shares the first one.
+	let closing: Promise<void> | undefined;
+	return {
+		ok: true,
+		value: {
+			publish(message) {
+				connection.publish(subjectFor(message), JSON.stringify(message));
+			},
+			subscribe(accepts, handle) {
+				subscribers.push((message) => {
+					if (accepts(message)) handle(message);
+				});
+			},
+			close() {
+				closing ??= connection.drain().then(() => delivering);
+				return closing;
+			},
+		},
+	};
 }
 
 function decode(received: Msg): Result<Message, DroppedMessage["error"]> {
