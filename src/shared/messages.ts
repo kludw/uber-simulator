@@ -10,6 +10,9 @@ export type Tick = z.infer<typeof Tick>;
 export const TripId = z.string().min(1).brand<"TripId">();
 export type TripId = z.infer<typeof TripId>;
 
+export const RiderId = z.string().min(1).brand<"RiderId">();
+export type RiderId = z.infer<typeof RiderId>;
+
 export type ClockTicked = { type: "clock.ticked"; tick: Tick };
 
 export type DriverWentOnline = {
@@ -97,4 +100,34 @@ export type OfferDeclined = {
 	type: "offer_declined";
 	tripId: TripId;
 	driverId: DriverId;
+};
+
+// Command from the rider service; dispatch answers with a reply, not an event.
+export type RequestTrip = {
+	type: "request_trip";
+	tick: Tick;
+	tripId: TripId;
+	riderId: RiderId;
+	pickup: Cell;
+	dropoff: Cell;
+};
+
+export type RequestTripAccepted = {
+	type: "request_trip_accepted";
+	tripId: TripId;
+};
+
+export type RequestTripRejected = {
+	type: "request_trip_rejected";
+	tripId: TripId;
+	error: { type: "duplicate_trip_id" };
+};
+
+export type TripRequested = {
+	type: "trip.requested";
+	tick: Tick;
+	tripId: TripId;
+	riderId: RiderId;
+	pickup: Cell;
+	dropoff: Cell;
 };
