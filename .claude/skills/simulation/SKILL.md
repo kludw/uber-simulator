@@ -1,42 +1,38 @@
 ---
 name: simulation
-description: Project rules for the simulation engine - deterministic time, seeded randomness, tick loop, pure core vs I/O adapters, reproducible tests. Use whenever writing or changing simulation logic, anything touching time/clocks/timers, randomness, IDs, the tick loop, or simulation tests.
+description: Project rules for the simulation - independent services with pure seeded brains, the clock service and ticks, seeded randomness, deterministic IDs, bus port, brain tests and system invariant tests. Use whenever writing or changing simulation logic, anything touching time/clocks/timers, randomness, IDs, ticks, services, or simulation tests.
 ---
 
 # Simulation
 
-Goal: same seed + same config + same inputs = identical event log, every run. That makes bugs replayable and tests exact.
+Architecture (0017): clock, driver (sharded), rider, dispatch run as independent services, each owning its state, talking over a bus. Behavior: `docs/spec.md`.
+
+Goal: each service's decision logic ("brain") is exact and replayable from a seed. The system as a whole is not: message ordering between services is nondeterministic, and that's accepted.
+
+## Brains (pure, deterministic)
+
+1. Shape: `decide(state, input, random) -> { state, intents/events }`. Input = a tick, a received message, an offer. No I/O, no async.
+2. Brains never call `Date.now()`, `new Date()`, `performance.now()`, `setTimeout`/`setInterval`, `Math.random()`, `crypto.randomUUID()`.
+3. Seeded PRNG behind a small `Random` interface, injected. Seed per service in config, logged at service start. Independent concerns (e.g. demand vs patience) get child PRNGs derived from the seed.
+4. IDs from a deterministic generator (counter or seeded), not UUIDs. IDs must be unique across services: prefix with service/shard (e.g. driver IDs fixed by shard config).
+5. Deterministic iteration inside a brain: stable order (sorted by ID). Ties broken by ID.
+6. Invalid transition = domain error (see `errors` skill), never silently ignored.
 
 ## Time
 
-1. Simulated time is separate from wall time. Core never calls `Date.now()`, `new Date()`, `performance.now()`, `setTimeout`/`setInterval`.
-2. Time advances in discrete ticks. One tick = fixed simulated duration (configurable). Core only knows tick number / sim time.
-3. Runners decide wall-clock pacing, core doesn't:
-   - Headless runner: ticks as fast as possible (tests, batch runs, analytics).
-   - Live runner: paces ticks to wall time × speed multiplier (UI watching). Pause/resume/speed = runner concern.
-4. Same core logic under both runners. No `if (live)` in core.
+1. Sim time = tick number from the clock service (`clock.ticked`). 1 tick = 1 s sim time.
+2. Only the clock service touches wall time: publishes a tick every 1 s wall / speed multiplier. Pause/speed = clock concern.
+3. Other services act on received ticks, never on their own timers. Timeouts expressed in ticks inside brains. Exception: transport-level request timeouts in the shell (e.g. offer request/reply), derived from tick duration.
+4. Events carry tick, never wall time. Wall time only added by adapters if needed (e.g. ingestion timestamp).
 
-## Randomness
+## Shell (imperative, per service)
 
-1. Core never calls `Math.random()` or `crypto.randomUUID()`.
-2. One seeded PRNG behind a small `Random` interface, injected. Seed in run config, logged at start of every run.
-3. IDs from a deterministic generator (counter or seeded), not UUIDs, inside the sim.
-4. Need independent random streams (e.g. demand vs driver behavior)? Derive child PRNGs from the run seed, don't share one stream across unrelated concerns.
-
-## Structure
-
-1. Pure core: `step(state, tick, random) -> { state, events }`. No I/O, no async.
-2. I/O lives in adapters outside core: NATS publish, ClickHouse writes, UI. Adapters consume events; they never mutate sim state.
-3. Inputs from outside (e.g. UI-injected ride request) enter as queued commands, applied at the start of the next tick. Never mid-tick.
-4. Deterministic iteration: process entities in stable order (sorted by ID). No `Promise.all` races or async ordering inside core.
-
-## Events
-
-1. Every state change emits a domain event (names in `domain` skill). Event log = source of truth for replay, NATS, ClickHouse, UI.
-2. Events carry sim tick/time, never wall time. Wall time only added by adapters if needed (e.g. ingestion timestamp).
+1. Shell = bus subscriptions, feeding inputs to the brain one at a time, publishing its outputs. Never decides anything.
+2. Bus is a port with two adapters: in-memory (single process, tests, milestone 2) and NATS. Brains never import either.
+3. One input processed at a time per service: no concurrent mutation of service state.
 
 ## Tests
 
-1. Unit tests drive `step` directly with a fixed seed and hand-built state.
-2. Scenario tests: small seeded scenario, assert on known literal events/outcomes (not recomputed, see `tdd` anti-patterns).
-3. Determinism test: run same seed twice, event logs equal.
+1. Brain unit tests: hand-built state + fixed seed, call `decide` directly, assert exact literal outputs (not recomputed, see `tdd` anti-patterns).
+2. Brain determinism: same seed + same inputs twice -> equal outputs.
+3. System tests (in-memory bus or NATS): run N ticks, assert invariants from `docs/spec.md` over the event log, never exact event sequences.

@@ -16,7 +16,7 @@
 5. Development done using TDD -> red -> green -> refactor. No exceptions unless user specifically says so. Load `tdd` skill before writing code or tests.
 6. Follow Design (see below). Even if not using Go: we value Go's simplicity, not Go's typical sloppy styling. Load `design` skill before designing modules, types, or abstractions.
 7. Domain terms from `domain` skill only. Load it before naming anything.
-8. Simulation core deterministic: no wall clock, no unseeded randomness. Load `simulation` skill before touching sim logic, time, or randomness.
+8. Service brains (decision logic) pure + deterministic: no wall clock, no unseeded randomness. System-level ordering nondeterministic, tested by invariants. Load `simulation` skill before touching sim logic, time, or randomness.
 9. Expected failures = `Result`, bugs = throw. Load `errors` skill before handling errors or logging.
 
 ## Tooling
@@ -45,6 +45,13 @@
 1. Touch only what the task requires.
 2. Spotted an adjacent bug? Flag it. Don't fix unprompted.
 3. Ask before refactors, renames, or moving files.
+
+## Workflow
+
+1. Tickets = GitHub issues + sub-issues on project 4. Load `tickets` skill before planning or creating tickets.
+2. One sub-issue = one PR. Load `create-pr` skill before branching, committing, or opening a PR.
+3. Every PR reviewed by a Fable agent. Load `review-pr` skill before reviewing.
+4. Working through tickets: load `orchestrate` skill. You manage, fresh agents implement.
 
 ## Docs
 

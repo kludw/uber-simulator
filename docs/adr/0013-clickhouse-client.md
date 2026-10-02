@@ -1,6 +1,6 @@
 # 0013. ClickHouse client for Bun
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-02
 
 ## Context

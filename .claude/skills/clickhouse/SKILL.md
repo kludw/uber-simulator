@@ -16,10 +16,7 @@ Snapshot verified against clickhouse.com/docs + clickhouse-js README/CHANGELOG o
 
 ## Client
 
-1. **Decision pending (ask me before first use):** no official Bun client. Options:
-   - `@clickhouse/client`: official, Node-only. Bun support unverified (relies on Bun's `node:http`/`node:stream`, marked fully implemented in bun.com/docs/runtime/nodejs-compat). Needs smoke test.
-   - `@clickhouse/client-web`: official, Fetch + Web Streams based, targets browsers/Cloudflare. Bun support unverified.
-   - Raw HTTP interface via Bun `fetch`: no dependency, more code.
+1. Use `@clickhouse/client` (0013), gated by a smoke test under Bun (connect, DDL, batched JSONEachRow insert, query). Smoke test fails -> fall back to HTTP interface via Bun `fetch`, and tell me.
 2. Config keys: `url` (not deprecated `host`), `username`, `password`, `database`, `request_timeout`, `clickhouse_settings`. Use `http_headers`, not deprecated `additional_headers`.
 3. Import from `@clickhouse/client`, never `@clickhouse/client-common` (deprecated 1.23.0).
 4. API: `createClient({...})`, `client.insert({ table, values, format: "JSONEachRow" })`, `client.query({ query, format: "JSONEachRow" })` then `await resultSet.json()`, `client.command({ query })` for DDL, `client.close()` on shutdown.

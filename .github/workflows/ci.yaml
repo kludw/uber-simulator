@@ -1,0 +1,21 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      # tsc errors with no inputs (TS18003); remove guard once src/ has code.
+      - if: hashFiles('src/**/*.ts') != ''
+        run: bun run typecheck
+      - run: bun run test
