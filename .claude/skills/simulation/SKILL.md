@@ -11,7 +11,7 @@ Goal: each service's decision logic ("brain") is exact and replayable from a see
 
 ## Brains (pure, deterministic)
 
-1. Shape: `decide(state, input, random) -> { state, intents/events }`. Input = a tick, a received message, an offer. No I/O, no async.
+1. Shape (ADR 0022): a start function `start<Service>(config, random?) -> state` (or `{ state, outputs }` when starting emits events), and `decide<Service>(state, input, random) -> { state, outputs }`. Input = discriminated union of received messages (tick, events, commands, offers). Outputs = messages to publish, in emission order. No I/O, no async.
 2. Brains never call `Date.now()`, `new Date()`, `performance.now()`, `setTimeout`/`setInterval`, `Math.random()`, `crypto.randomUUID()`.
 3. Seeded PRNG behind a small `Random` interface, injected. Seed per service in config, logged at service start. Independent concerns (e.g. demand vs patience) get child PRNGs derived from the seed.
 4. IDs from a deterministic generator (counter or seeded), not UUIDs. IDs must be unique across services: prefix with service/shard (e.g. driver IDs fixed by shard config).
@@ -21,7 +21,7 @@ Goal: each service's decision logic ("brain") is exact and replayable from a see
 ## Time
 
 1. Sim time = tick number from the clock service (`clock.ticked`). 1 tick = 1 s sim time.
-2. Only the clock service touches wall time: publishes a tick every 1 s wall / speed multiplier. Pause/speed = clock concern.
+2. Only the clock service paces by wall time: publishes a tick every 1 s wall / speed multiplier. Pause/speed = clock concern. Other shells use wall time only for transport timeouts (point 3).
 3. Other services act on received ticks, never on their own timers. Timeouts expressed in ticks inside brains. Exception: transport-level request timeouts in the shell (e.g. offer request/reply), derived from tick duration.
 4. Events carry tick, never wall time. Wall time only added by adapters if needed (e.g. ingestion timestamp).
 

@@ -55,7 +55,7 @@
 
 ## Docs
 
-1. Docs written alongside code, in the same change. Change not done until affected docs (README, `docs/architecture.md`, ADRs, skills) are updated.
+1. Docs written alongside code, in the same change. Change not done until affected docs (README, `docs/spec.md`, `docs/architecture.md` once created in milestone 2, ADRs, skills) are updated.
 2. Every architecture decision has an ADR in `docs/adr/`. Propose ADR before implementing; accepted ADRs immutable, superseded not edited.
 3. Load `docs` skill before making a decision, changing setup/components/data flow, or finishing a change.
 
