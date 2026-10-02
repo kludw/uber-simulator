@@ -25,7 +25,7 @@ Snapshot verified against nats.js READMEs/migration.md + docs.nats.io on 2026-10
 1. Connect: `const nc = await connect({ servers: "localhost:4222" })`.
 2. Publish: `nc.publish(subject, JSON.stringify(payload))`.
 3. Subscribe: `const sub = nc.subscribe(subject); for await (const m of sub) { ... }`. Async handling in the iterator, not in callbacks (callbacks must not `await`).
-4. Request/reply: `await nc.request(subject, data, { timeout })`; responder `m.respond(data)`.
+4. Request/reply: `await nc.request(subject, data, { timeout })`; responder `m.respond(data)`. Not used by services (ADR 0028).
 5. Payloads: `m.string()` / `m.json()`. `JSONCodec` / `StringCodec` are removed.
 6. Incoming payloads are untrusted: `m.json()` result goes through Zod `safeParse` (see `validation` skill). Never cast.
 7. Errors are specific classes (`RequestError`, `TimeoutError`, `NoRespondersError`), not `NatsError`.
@@ -36,13 +36,13 @@ Snapshot verified against nats.js READMEs/migration.md + docs.nats.io on 2026-10
 1. `jetstreamManager(nc)` -> `jsm.streams.add({ name, subjects })`, `jsm.consumers.add(stream, { durable_name, ack_policy: AckPolicy.Explicit })`.
 2. `jetstream(nc)` -> `js.publish(subject, data, { msgID })` (msgID = dedupe), `js.consumers.get(stream, consumer)` -> `consume()` -> `for await (const m of messages) { m.ack() }`.
 3. `nc.jetstream()`, `JetStreamClient#subscribe()/fetch()` removed. Use the above.
-4. Which flow uses what (0014): core pub/sub for `clock.ticked` + domain events (services, UI); core request/reply for commands to dispatch and offers to drivers; JetStream only for events -> ClickHouse writer.
+4. Which flow uses what (0028): core NATS publish for every message; no request/reply. JetStream only for the persister (stream on `sim.events.>`).
 
 ## Subjects
 
 1. Dot-delimited tokens, case-sensitive. Tokens: letters, digits, `-`, `_` only. Never start with `$` (reserved).
 2. Wildcards subscriber-only: `*` = exactly one token, `>` = one or more, last token only.
-3. Scheme (0015): `sim.events.<entity>.<verb>` for domain events incl. `sim.events.clock.ticked` (names from `domain` skill). `sim.commands.<name>` for commands to dispatch (`request_trip`, `cancel_trip`). `sim.offers.<driverId>` for offers (request/reply). All events: `sim.events.>`.
+3. Scheme (0028): `sim.events.<entity>.<verb>` (incl. `sim.events.clock.ticked`), `sim.commands.<name>`, `sim.offers.<driverId>`, `sim.replies.<name>`. Each service: one connection, one subscription on `sim.>`, Zod-parse, then its `accepts` predicate.
 
 ## Local setup
 

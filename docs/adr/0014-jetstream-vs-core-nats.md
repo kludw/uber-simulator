@@ -1,6 +1,6 @@
 # 0014. JetStream vs core NATS per message flow
 
-- Status: Accepted
+- Status: Superseded by 0028
 - Date: 2026-10-02
 
 ## Context

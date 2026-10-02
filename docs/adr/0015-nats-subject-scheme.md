@@ -1,6 +1,6 @@
 # 0015. NATS subject scheme
 
-- Status: Accepted
+- Status: Superseded by 0028
 - Date: 2026-10-02
 
 ## Context

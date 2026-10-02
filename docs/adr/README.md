@@ -17,8 +17,8 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0011 | [Use ClickHouse for persistence](0011-use-clickhouse-for-persistence.md) | Accepted |
 | 0012 | [Docker Compose for local infra](0012-use-docker-compose-for-local-infra.md) | Accepted |
 | 0013 | [ClickHouse client for Bun](0013-clickhouse-client.md)                   | Accepted |
-| 0014 | [JetStream vs core NATS](0014-jetstream-vs-core-nats.md)                 | Accepted |
-| 0015 | [NATS subject scheme](0015-nats-subject-scheme.md)                       | Accepted |
+| 0014 | [JetStream vs core NATS](0014-jetstream-vs-core-nats.md)                 | Superseded by 0028 |
+| 0015 | [NATS subject scheme](0015-nats-subject-scheme.md)                       | Superseded by 0028 |
 | 0016 | [Initial domain model](0016-initial-domain-model.md)                     | Accepted (driver states superseded by 0024, then 0025) |
 | 0017 | [Independent actor services with pure brains](0017-independent-actor-services-with-pure-brains.md) | Accepted |
 | 0018 | [Dispatch matching via offers](0018-dispatch-matching-via-offers.md)     | Accepted |
@@ -31,3 +31,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0025 | [Add `at_dropoff` driver state](0025-driver-at-dropoff-state.md)         | Accepted |
 | 0026 | [Brains reject invalid inputs with `input_rejected` outputs](0026-brains-reject-invalid-inputs.md) | Accepted |
 | 0027 | [In-process bus, service shell, runner](0027-in-process-bus-and-runner.md) | Accepted |
+| 0028 | [NATS bus: subjects and delivery](0028-nats-bus-subjects-and-delivery.md) | Accepted |
