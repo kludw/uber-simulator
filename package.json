@@ -4,6 +4,7 @@
 	"type": "module",
 	"scripts": {
 		"sim": "bun src/sim/main.ts",
+		"dev": "bun src/sim/dev.ts",
 		"test": "bun test",
 		"typecheck": "tsc",
 		"lint": "biome ci",
