@@ -15,7 +15,5 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: bun run lint
-      # tsc errors with no inputs (TS18003); remove guard once src/ has code.
-      - if: hashFiles('src/**/*.ts') != ''
-        run: bun run typecheck
+      - run: bun run typecheck
       - run: bun run test
