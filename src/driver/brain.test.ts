@@ -55,7 +55,7 @@ describe("decideDriverShard on tick", () => {
 		const { state } = startDriverShard({ grid, driverIds: [d1] }, random);
 		const { outputs } = decideDriverShard(
 			state,
-			{ type: "tick", tick: tick(1) },
+			{ type: "clock.ticked", tick: tick(1) },
 			random,
 		);
 		expect(outputs).toEqual([
@@ -68,7 +68,7 @@ describe("decideDriverShard on tick", () => {
 		const { state } = startDriverShard({ grid, driverIds: [d2, d1] }, random);
 		const { outputs } = decideDriverShard(
 			state,
-			{ type: "tick", tick: tick(1) },
+			{ type: "clock.ticked", tick: tick(1) },
 			random,
 		);
 		expect(outputs).toEqual([
@@ -82,12 +82,12 @@ describe("decideDriverShard on tick", () => {
 		const started = startDriverShard({ grid, driverIds: [d1] }, random);
 		const first = decideDriverShard(
 			started.state,
-			{ type: "tick", tick: tick(1) },
+			{ type: "clock.ticked", tick: tick(1) },
 			random,
 		);
 		const { outputs } = decideDriverShard(
 			first.state,
-			{ type: "tick", tick: tick(2) },
+			{ type: "clock.ticked", tick: tick(2) },
 			random,
 		);
 		expect(outputs).toEqual([
@@ -100,7 +100,7 @@ describe("decideDriverShard on tick", () => {
 		const { state } = startDriverShard({ grid, driverIds: [d1] }, random);
 		const { outputs } = decideDriverShard(
 			state,
-			{ type: "tick", tick: tick(1) },
+			{ type: "clock.ticked", tick: tick(1) },
 			random,
 		);
 		expect(outputs).toEqual([]);
@@ -111,12 +111,12 @@ describe("decideDriverShard on tick", () => {
 		const started = startDriverShard({ grid, driverIds: [d1] }, random);
 		const arrived = decideDriverShard(
 			started.state,
-			{ type: "tick", tick: tick(1) },
+			{ type: "clock.ticked", tick: tick(1) },
 			random,
 		);
 		const { outputs } = decideDriverShard(
 			arrived.state,
-			{ type: "tick", tick: tick(2) },
+			{ type: "clock.ticked", tick: tick(2) },
 			random,
 		);
 		expect(outputs).toEqual([
@@ -134,7 +134,7 @@ describe("driver shard determinism", () => {
 		for (let n = 1; n <= 30; n++) {
 			const decided = decideDriverShard(
 				state,
-				{ type: "tick", tick: tick(n) },
+				{ type: "clock.ticked", tick: tick(n) },
 				random,
 			);
 			state = decided.state;

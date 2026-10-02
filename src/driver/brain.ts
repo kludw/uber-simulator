@@ -6,10 +6,10 @@ import {
 	stepToward,
 } from "../shared/grid.ts";
 import type {
+	ClockTicked,
 	DriverId,
 	DriverMoved,
 	DriverWentOnline,
-	Tick,
 } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 
@@ -23,7 +23,7 @@ type Driver = {
 // Drivers kept sorted by ID: outputs and random draws follow that order.
 export type DriverShardState = { grid: Grid; drivers: Driver[] };
 
-export type DriverShardInput = { type: "tick"; tick: Tick };
+export type DriverShardInput = ClockTicked;
 
 export function startDriverShard(
 	config: { grid: Grid; driverIds: DriverId[] },
