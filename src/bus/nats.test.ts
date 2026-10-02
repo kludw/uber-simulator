@@ -197,4 +197,26 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 
 		expect(received).toEqual(sent);
 	});
+
+	test("each message reaches only subscribers that accept it", async () => {
+		const bus = await connectBus();
+		const received: [string, Message][] = [];
+		const isCancelTrip =
+			(n: number) =>
+			(message: Message): message is CancelTrip =>
+				isOwnCancelTrip(message) && message.tripId === cancelTrip(n).tripId;
+		bus.subscribe(isCancelTrip(1), (message) => received.push(["one", message]));
+		bus.subscribe(isCancelTrip(2), (message) => received.push(["two", message]));
+
+		// Trip 1 last: once it arrives, trips 2 and 3 were handled (one publisher).
+		bus.publish(cancelTrip(2));
+		bus.publish(cancelTrip(3));
+		bus.publish(cancelTrip(1));
+		await waitFor(() => received.length >= 2);
+
+		expect(received).toEqual([
+			["two", cancelTrip(2)],
+			["one", cancelTrip(1)],
+		]);
+	});
 });
