@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { connect } from "@nats-io/transport-node";
 import * as z from "zod";
 import { Cell } from "../shared/grid.ts";
 import {
@@ -9,7 +10,12 @@ import {
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
-import { connectNatsBus, type NatsBus, subjectFor } from "./nats.ts";
+import {
+	connectNatsBus,
+	type DroppedMessage,
+	type NatsBus,
+	subjectFor,
+} from "./nats.ts";
 
 const tick = Tick.parse(1);
 const tripId = TripId.parse("t-1");
@@ -163,7 +169,7 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		await Promise.all(open.splice(0).map((bus) => bus.close()));
 	});
 
-	async function connectBus(log: (dropped: unknown) => void = () => {}) {
+	async function connectBus(log: (dropped: DroppedMessage) => void = () => {}) {
 		const result = await connectNatsBus({ url: natsUrl ?? "", log });
 		if (!result.ok) throw new Error("NATS unavailable", { cause: result });
 		open.push(result.value);
@@ -218,5 +224,33 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 			["two", cancelTrip(2)],
 			["one", cancelTrip(1)],
 		]);
+	});
+
+	test("invalid payloads on sim.> are logged and dropped", async () => {
+		const logged: DroppedMessage[] = [];
+		const bus = await connectBus((dropped) => logged.push(dropped));
+		const received: Message[] = [];
+		bus.subscribe(isOwnCancelTrip, (message) => received.push(message));
+		// A raw connection can publish what the bus never would; one publisher
+		// keeps the valid message last.
+		const raw = await connect({ servers: natsUrl });
+		const subject = `sim.test.${runId}`;
+
+		raw.publish(subject, "{not json");
+		raw.publish(subject, JSON.stringify({ type: "no_such_message" }));
+		raw.publish(subject, JSON.stringify(cancelTrip(1)));
+		await raw.drain();
+		await waitFor(() => received.length >= 1);
+
+		expect({
+			logged: logged.filter((dropped) => dropped.subject === subject),
+			received,
+		}).toMatchObject({
+			logged: [
+				{ subject, error: { type: "invalid_json" } },
+				{ subject, error: { type: "invalid_message" } },
+			],
+			received: [cancelTrip(1)],
+		});
 	});
 });

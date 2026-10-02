@@ -1,9 +1,20 @@
-import { connect } from "@nats-io/transport-node";
+import { connect, type Msg } from "@nats-io/transport-node";
 import { type Message, parseMessage } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
 import type { Bus } from "./bus.ts";
 
 export type NatsBus = Bus & { close(): Promise<void> };
+
+type ParseMessageError = Extract<
+	ReturnType<typeof parseMessage>,
+	{ ok: false }
+>["error"];
+
+// A payload on sim.> that isn't a Message: logged, never delivered.
+export type DroppedMessage = {
+	subject: string;
+	error: { type: "invalid_json"; cause: unknown } | ParseMessageError;
+};
 
 export type NatsConnectError = {
 	type: "nats_connect_failed";
@@ -16,7 +27,7 @@ export type NatsConnectError = {
 // loop, so they run one at a time in arrival order.
 export async function connectNatsBus(options: {
 	url: string;
-	log: (dropped: unknown) => void;
+	log: (dropped: DroppedMessage) => void;
 }): Promise<Result<NatsBus, NatsConnectError>> {
 	try {
 		const connection = await connect({ servers: options.url });
@@ -27,8 +38,11 @@ export async function connectNatsBus(options: {
 		const subscribers: ((message: Message) => void)[] = [];
 		const delivering = (async () => {
 			for await (const received of subscription) {
-				const parsed = parseMessage(received.json());
-				if (!parsed.ok) continue;
+				const parsed = decode(received);
+				if (!parsed.ok) {
+					options.log({ subject: received.subject, error: parsed.error });
+					continue;
+				}
 				for (const deliver of subscribers) deliver(parsed.value);
 			}
 		})();
@@ -55,6 +69,18 @@ export async function connectNatsBus(options: {
 			error: { type: "nats_connect_failed", url: options.url, cause },
 		};
 	}
+}
+
+function decode(received: Msg): Result<Message, DroppedMessage["error"]> {
+	let payload: unknown;
+	try {
+		payload = received.json();
+	} catch (cause) {
+		// Msg.json() is JSON.parse: SyntaxError means a malformed payload.
+		if (!(cause instanceof SyntaxError)) throw cause;
+		return { ok: false, error: { type: "invalid_json", cause } };
+	}
+	return parseMessage(payload);
 }
 
 // Subject scheme (ADR 0028). Subscribers read sim.> and filter by predicate,
