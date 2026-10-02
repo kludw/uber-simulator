@@ -144,6 +144,25 @@ export type RequestTripRejected = {
 	error: { type: "duplicate_trip_id" };
 };
 
+// Command from the rider service; dispatch answers with a reply, not an event.
+export type CancelTrip = { type: "cancel_trip"; tripId: TripId };
+
+export type CancelTripAccepted = {
+	type: "cancel_trip_accepted";
+	tripId: TripId;
+};
+
+export type CancelTripRejected = {
+	type: "cancel_trip_rejected";
+	tripId: TripId;
+	error:
+		| { type: "unknown_trip" }
+		| {
+				type: "invalid_transition";
+				from: "picked_up" | "completed" | "cancelled";
+		  };
+};
+
 export type TripRequested = {
 	type: "trip.requested";
 	tick: Tick;
