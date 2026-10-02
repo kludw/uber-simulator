@@ -27,6 +27,7 @@ type Rider =
 	| { state: "riding"; id: RiderId; tripId: TripId };
 
 // spawned: riders spawned so far; numbers both rider and trip IDs.
+// Riders kept ordered by ID: patience cancels follow that order.
 export type RidersState = {
 	grid: Grid;
 	requestsPerMinute: number;
@@ -133,8 +134,6 @@ function onCancelled(state: RidersState, cancelled: TripCancelled): Decision {
 	return removeRider(state, addressed.id);
 }
 
-// The rider keeps its state: dispatch's trip event (picked_up or completed)
-// decides what happens next.
 function onCancelRejected(
 	state: RidersState,
 	rejected: CancelTripRejected,
@@ -146,6 +145,15 @@ function onCancelRejected(
 	if (addressed.state === "waiting") {
 		return reject(state, rejected, "cancel_not_requested");
 	}
+	// Dispatch never knew the trip (e.g. request_trip lost): no trip event
+	// will ever end it.
+	if (
+		addressed.state === "cancelling" &&
+		rejected.error.type === "unknown_trip"
+	) {
+		return removeRider(state, addressed.id);
+	}
+	// Otherwise dispatch's trip event (picked_up, completed) decides what's next.
 	return { state, outputs: [] };
 }
 
@@ -201,6 +209,7 @@ function onTick(
 			dropoff,
 		});
 	}
+	riders.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 	return { state: { ...state, spawned, riders }, outputs };
 }
 

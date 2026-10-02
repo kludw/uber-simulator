@@ -34,7 +34,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 
 - **Rider**: requests one trip, then is removed (after `completed` or `cancelled`). States:
   - `waiting` (trip requested) -> `riding` (picked up).
-  - `waiting` -> `cancelling` (patience ran out, sent `cancel_trip`, awaiting dispatch's outcome) -> removed on `trip.cancelled`, or `riding` if pickup won the race.
+  - `waiting` -> `cancelling` (patience ran out, sent `cancel_trip`, awaiting dispatch's outcome) -> removed on `trip.cancelled` or `cancel_trip_rejected` (`unknown_trip`), or `riding` if pickup won the race.
 - **Patience**: ticks a rider waits for pickup before cancelling.
 - **Driver**: fulfills trips. States:
   - `offline` -> `idle` (available) -> `en_route` (heading to pickup) -> `at_pickup` (arrived at pickup, waiting for dispatch) -> `on_trip` (rider aboard) -> `at_dropoff` (arrived at dropoff, waiting for dispatch) -> `idle`.

@@ -226,6 +226,36 @@ describe("decideRiders patience", () => {
 		expect(quietTick(waitingRider(), 150).outputs).toEqual([]);
 	});
 
+	// r-9 (patience 150 from tick 1) and r-10 (spawned at tick 2, patience 149)
+	// both give up at tick 151; plain string order puts r-10 first.
+	test("riders out of patience on the same tick cancel ordered by ID", () => {
+		const r9: RidersState = {
+			...startRiders({ grid, requestsPerMinute: 10 }),
+			spawned: 9,
+			riders: [
+				{
+					state: "waiting",
+					id: RiderId.parse("r-9"),
+					tripId: TripId.parse("t-9"),
+					requestedAt: tick(1),
+					patience: 150,
+				},
+			],
+		};
+		const r10 = decideRiders(
+			r9,
+			{ type: "clock.ticked", tick: tick(2) },
+			scriptedRandom({
+				"demand:2": { floats: [0.9, 0.5], ints: [2, 3, 7, 8] },
+				"patience:2": { ints: [149] },
+			}),
+		);
+		expect(quietTick(r10.state, 151).outputs).toEqual([
+			{ type: "cancel_trip", tripId: TripId.parse("t-10") },
+			{ type: "cancel_trip", tripId: TripId.parse("t-9") },
+		]);
+	});
+
 	test("rider cancels a trip only once", () => {
 		const cancelled = quietTick(waitingRider(), 151);
 		expect(quietTick(cancelled.state, 152).outputs).toEqual([]);
@@ -307,6 +337,24 @@ describe("decideRiders cancel rejected", () => {
 		const riding = pickedUp(cancelling.state, 152);
 		expect(cancelRejected(riding.state)).toEqual({
 			state: riding.state,
+			outputs: [],
+		});
+	});
+
+	// Dispatch never knew the trip (e.g. request_trip lost): nothing else ends it.
+	test("rider whose cancel is rejected as an unknown trip is removed", () => {
+		const cancelling = quietTick(waitingRider(), 151);
+		const rejected = decideRiders(
+			cancelling.state,
+			{
+				type: "cancel_trip_rejected",
+				tripId: t1,
+				error: { type: "unknown_trip" },
+			},
+			scriptedRandom({}),
+		);
+		expect(rejected).toEqual({
+			state: { ...waitingRider(), riders: [] },
 			outputs: [],
 		});
 	});
