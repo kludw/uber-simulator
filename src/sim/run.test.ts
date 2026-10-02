@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { checkInvariants } from "./invariants.ts";
 import { runInProcess } from "./run.ts";
 
 const quietConfig = {
@@ -40,6 +41,19 @@ describe("runInProcess", () => {
 	// FIFO delivery leaves no stale or out-of-order inputs in process.
 	test("a busy run rejects no inputs", () => {
 		expect(runInProcess(busyConfig).rejected).toEqual([]);
+	});
+
+	test("a 600-tick run at spec defaults breaks no invariant", () => {
+		const grid = { width: 500, height: 500 };
+		const { eventLog } = runInProcess({
+			seed: 1,
+			ticks: 600,
+			grid,
+			driverShards: { count: 2, driversPerShard: 50 },
+			requestsPerMinute: 10,
+		});
+
+		expect(checkInvariants(eventLog, grid)).toEqual([]);
 	});
 
 	test("publishes clock.ticked for ticks 1..N in order", () => {
