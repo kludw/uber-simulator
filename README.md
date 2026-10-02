@@ -28,7 +28,9 @@ bun run lint
 bun run check
 ```
 
-`bun run typecheck` works once `src/` contains TypeScript (`tsc` errors with no inputs).
+```bash
+bun run typecheck
+```
 
 ## Workflow
 
