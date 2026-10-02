@@ -30,8 +30,14 @@ type Driver =
 			tripId: TripId;
 			pickup: Cell;
 			dropoff: Cell;
-			// True once at the pickup and arrival published: waits there for dispatch.
-			reportedArrival: boolean;
+	  }
+	// Position is the pickup: no separate cell.
+	| {
+			state: "at_pickup";
+			id: DriverId;
+			tripId: TripId;
+			pickup: Cell;
+			dropoff: Cell;
 	  };
 
 // Drivers kept sorted by ID: outputs and random draws follow that order.
@@ -47,7 +53,7 @@ export function startDriverShard(
 	config: { grid: Grid; driverIds: DriverId[]; tick: Tick },
 	random: Random,
 ): { state: DriverShardState; outputs: DriverWentOnline[] } {
-	const drivers: Driver[] = config.driverIds.toSorted().map((id) => ({
+	const drivers: IdleDriver[] = config.driverIds.toSorted().map((id) => ({
 		state: "idle",
 		id,
 		cell: randomCell(config.grid, random),
@@ -113,11 +119,10 @@ function onOffer(state: DriverShardState, offer: Offer): Decision {
 				? {
 						state: "en_route",
 						id: driver.id,
-						cell: driver.cell,
+						cell: offered.cell,
 						tripId: offer.tripId,
 						pickup: offer.pickup,
 						dropoff: offer.dropoff,
-						reportedArrival: false,
 					}
 				: driver,
 	);
@@ -138,17 +143,10 @@ function onTripEnded(
 	ended: TripCancelled | TripOfferExpired,
 ): Decision {
 	const drivers = state.drivers.map((driver): Driver => {
-		const onEndedTrip =
-			driver.id === ended.driverId &&
-			driver.state === "en_route" &&
-			driver.tripId === ended.tripId;
-		if (!onEndedTrip) return driver;
-		return {
-			state: "idle",
-			id: driver.id,
-			cell: driver.cell,
-			wanderTarget: null,
-		};
+		if (driver.id !== ended.driverId || driver.state === "idle") return driver;
+		if (driver.tripId !== ended.tripId) return driver;
+		const cell = driver.state === "at_pickup" ? driver.pickup : driver.cell;
+		return { state: "idle", id: driver.id, cell, wanderTarget: null };
 	});
 	return { state: { ...state, drivers }, outputs: [] };
 }
@@ -167,6 +165,9 @@ function onTick(
 				break;
 			case "en_route":
 				drivers.push(driveToPickup(driver, input.tick, outputs));
+				break;
+			case "at_pickup":
+				drivers.push(driver);
 				break;
 			default: {
 				const unhandled: never = driver;
@@ -201,22 +202,27 @@ function driveToPickup(
 	driver: EnRouteDriver,
 	tick: Tick,
 	outputs: DriverShardOutput[],
-): EnRouteDriver {
-	if (driver.reportedArrival) return driver;
+): Driver {
 	let cell = driver.cell;
 	if (distance(cell, driver.pickup) > 0) {
 		cell = stepToward(cell, driver.pickup);
 		outputs.push({ type: "driver.moved", tick, driverId: driver.id, cell });
 	}
-	const arrived = distance(cell, driver.pickup) === 0;
-	if (arrived) {
-		outputs.push({
-			type: "driver.arrived_at_pickup",
-			tick,
-			driverId: driver.id,
-			tripId: driver.tripId,
-			cell,
-		});
+	if (distance(cell, driver.pickup) > 0) {
+		return { ...driver, cell };
 	}
-	return { ...driver, cell, reportedArrival: arrived };
+	outputs.push({
+		type: "driver.arrived_at_pickup",
+		tick,
+		driverId: driver.id,
+		tripId: driver.tripId,
+		cell,
+	});
+	return {
+		state: "at_pickup",
+		id: driver.id,
+		tripId: driver.tripId,
+		pickup: driver.pickup,
+		dropoff: driver.dropoff,
+	};
 }

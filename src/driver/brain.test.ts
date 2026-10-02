@@ -346,6 +346,33 @@ describe("decideDriverShard on trip ended", () => {
 		]);
 	});
 
+	test("driver waiting at the pickup goes back to wandering when its trip is cancelled", () => {
+		const random = scriptedRandom([5, 4, 5, 9]);
+		const started = startDriverShard(
+			{ grid, driverIds: [d1], tick: tick(0) },
+			random,
+		);
+		const accepted = decideDriverShard(started.state, offer(d1), random);
+		const arrived = decideDriverShard(
+			accepted.state,
+			{ type: "clock.ticked", tick: tick(1) },
+			random,
+		);
+		const cancelled = decideDriverShard(
+			arrived.state,
+			{ type: "trip.cancelled", tick: tick(2), tripId: t1, driverId: d1 },
+			random,
+		);
+		const { outputs } = decideDriverShard(
+			cancelled.state,
+			{ type: "clock.ticked", tick: tick(3) },
+			random,
+		);
+		expect(outputs).toEqual([
+			{ type: "driver.moved", tick: tick(3), driverId: d1, cell: cell(5, 6) },
+		]);
+	});
+
 	test("driver that accepted an expired offer goes back to wandering", () => {
 		const random = scriptedRandom([0, 0, 0, 3]);
 		const started = startDriverShard(
