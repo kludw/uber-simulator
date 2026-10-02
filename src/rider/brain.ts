@@ -5,6 +5,7 @@ import type {
 	ClockTicked,
 	InputRejected,
 	RequestTrip,
+	RequestTripRejected,
 	RiderId,
 	Tick,
 	TripCancelled,
@@ -40,12 +41,17 @@ export type RidersInput =
 	| TripPickedUp
 	| TripCompleted
 	| TripCancelled
-	| CancelTripRejected;
+	| CancelTripRejected
+	| RequestTripRejected;
 
 type RidersOutput = RequestTrip | CancelTrip | Rejected;
 
 type Rejected = InputRejected<
-	TripPickedUp | TripCompleted | TripCancelled | CancelTripRejected,
+	| TripPickedUp
+	| TripCompleted
+	| TripCancelled
+	| CancelTripRejected
+	| RequestTripRejected,
 	"rider_already_riding" | "rider_not_riding" | "cancel_not_requested"
 >;
 
@@ -79,6 +85,8 @@ export function decideRiders(
 			return onCancelled(state, input);
 		case "cancel_trip_rejected":
 			return onCancelRejected(state, input);
+		case "request_trip_rejected":
+			return onRequestRejected(state, input);
 		default: {
 			const unhandled: never = input;
 			throw new Error(`unhandled riders input: ${unhandled}`);
@@ -145,6 +153,13 @@ function onCancelRejected(
 	if (addressed.state === "waiting") {
 		return reject(state, rejected, "cancel_not_requested");
 	}
+	// Trip already over (its trip.* event lost), whatever the rider saw.
+	if (
+		rejected.error.type === "invalid_transition" &&
+		rejected.error.from !== "picked_up"
+	) {
+		return removeRider(state, addressed.id);
+	}
 	// Dispatch never knew the trip (e.g. request_trip lost): no trip event
 	// will ever end it.
 	if (
@@ -155,6 +170,20 @@ function onCancelRejected(
 	}
 	// Otherwise dispatch's trip event (picked_up, completed) decides what's next.
 	return { state, outputs: [] };
+}
+
+function onRequestRejected(
+	state: RidersState,
+	rejected: RequestTripRejected,
+): Decision {
+	const addressed = state.riders.find(
+		(rider) => rider.tripId === rejected.tripId,
+	);
+	if (addressed === undefined) return { state, outputs: [] };
+	if (addressed.state === "riding") {
+		return reject(state, rejected, "rider_already_riding");
+	}
+	return removeRider(state, addressed.id);
 }
 
 function removeRider(state: RidersState, id: RiderId): Decision {
