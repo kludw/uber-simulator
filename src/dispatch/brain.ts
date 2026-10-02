@@ -4,35 +4,37 @@ import type {
 	DriverId,
 	DriverMoved,
 	DriverWentOnline,
+	InputRejected,
 	Offer,
+	OfferAccepted,
+	OfferDeclined,
 	RequestTrip,
 	RequestTripAccepted,
 	RequestTripRejected,
-	RiderId,
 	Tick,
 	TripId,
+	TripMatched,
+	TripOfferDeclined,
+	TripOfferExpired,
 	TripOffered,
 	TripRequested,
 } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
+import {
+	acceptOffer,
+	type NoPendingOffer,
+	type Trip,
+	withdrawOffer,
+} from "./trip.ts";
 
-type Trip = {
-	state: "requested";
-	id: TripId;
-	riderId: RiderId;
-	pickup: Cell;
-	dropoff: Cell;
-	requestedAt: Tick;
-	// Driver asked to take the trip, awaiting a reply; null while queued.
-	pendingOffer: DriverId | null;
-};
-
-// Every known trip by ID; queue = IDs awaiting an offer, FIFO.
+// Every known trip by ID, in request order: the queue is the requested trips
+// without an offer, in that order (FIFO).
 // Driver cells as last reported in events; may be stale (ADR 0018).
+// tick: last clock tick, stamped on events caused by non-tick inputs.
 export type DispatchState = {
 	grid: Grid;
+	tick: Tick;
 	trips: ReadonlyMap<TripId, Trip>;
-	queue: readonly TripId[];
 	driverCells: ReadonlyMap<DriverId, Cell>;
 };
 
@@ -40,22 +42,34 @@ export type DispatchInput =
 	| ClockTicked
 	| RequestTrip
 	| DriverWentOnline
-	| DriverMoved;
+	| DriverMoved
+	| OfferAccepted
+	| OfferDeclined;
 
 type DispatchOutput =
 	| RequestTripAccepted
 	| RequestTripRejected
 	| TripRequested
 	| Offer
-	| TripOffered;
+	| TripOffered
+	| TripMatched
+	| TripOfferDeclined
+	| TripOfferExpired
+	| InputRejected<OfferAccepted | OfferDeclined, NoPendingOffer["type"]>;
 
 type Decision = { state: DispatchState; outputs: DispatchOutput[] };
 
-export function startDispatch(config: { grid: Grid }): DispatchState {
+// ADR 0018.
+const offerTimeoutTicks = 3;
+
+export function startDispatch(config: {
+	grid: Grid;
+	tick: Tick;
+}): DispatchState {
 	return {
 		grid: config.grid,
+		tick: config.tick,
 		trips: new Map(),
-		queue: [],
 		driverCells: new Map(),
 	};
 }
@@ -73,6 +87,9 @@ export function decideDispatch(
 		case "driver.went_online":
 		case "driver.moved":
 			return onDriverReported(state, input);
+		case "offer_accepted":
+		case "offer_declined":
+			return onOfferReply(state, input);
 		default: {
 			const unhandled: never = input;
 			throw new Error(`unhandled dispatch input: ${unhandled}`);
@@ -83,21 +100,26 @@ export function decideDispatch(
 function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 	const outputs: DispatchOutput[] = [];
 	const trips = new Map(state.trips);
-	const queue: TripId[] = [];
-	const offered = new Set<DriverId>();
+	const busy = new Set<DriverId>();
 	for (const trip of state.trips.values()) {
-		if (trip.pendingOffer !== null) offered.add(trip.pendingOffer);
-	}
-	for (const tripId of state.queue) {
-		const trip = trips.get(tripId);
-		if (trip === undefined) throw new Error(`queued trip ${tripId} unknown`);
-		const driverId = nearestDriver(state, trip.pickup, offered);
-		if (driverId === undefined) {
-			queue.push(tripId);
-			continue;
+		if (trip.state === "matched") busy.add(trip.driverId);
+		if (trip.state === "requested" && trip.offer !== null) {
+			busy.add(trip.offer.driverId);
 		}
-		offered.add(driverId);
-		trips.set(tripId, { ...trip, pendingOffer: driverId });
+	}
+	for (const trip of state.trips.values()) {
+		if (trip.state !== "requested" || trip.offer !== null) continue;
+		const driverId = nearestDriver(
+			state,
+			trip.pickup,
+			(id) => busy.has(id) || trip.excludedDrivers.has(id),
+		);
+		if (driverId === undefined) continue;
+		busy.add(driverId);
+		trips.set(trip.id, {
+			...trip,
+			offer: { driverId, offeredAt: ticked.tick },
+		});
 		outputs.push(
 			{
 				type: "offer",
@@ -109,18 +131,33 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 			{ type: "trip.offered", tick: ticked.tick, tripId: trip.id, driverId },
 		);
 	}
-	return { state: { ...state, trips, queue }, outputs };
+	// After offering, so an expired trip and its driver wait for the next tick
+	// (ADR 0018); offers made this tick are never due.
+	for (const trip of state.trips.values()) {
+		if (trip.state !== "requested" || trip.offer === null) continue;
+		if (ticked.tick < trip.offer.offeredAt + offerTimeoutTicks) continue;
+		const queued = withdrawOffer(trip, trip.offer.driverId);
+		if (!queued.ok) throw new Error(`pending offer for ${trip.id} not found`);
+		trips.set(trip.id, queued.value);
+		outputs.push({
+			type: "trip.offer_expired",
+			tick: ticked.tick,
+			tripId: trip.id,
+			driverId: trip.offer.driverId,
+		});
+	}
+	return { state: { ...state, tick: ticked.tick, trips }, outputs };
 }
 
 function nearestDriver(
 	state: DispatchState,
 	pickup: Cell,
-	busy: ReadonlySet<DriverId>,
+	isUnavailable: (driverId: DriverId) => boolean,
 ): DriverId | undefined {
 	let nearest: { driverId: DriverId; distance: number } | undefined;
 	// Ordered by ID so the strict < below leaves ties to the lowest ID.
 	for (const driverId of [...state.driverCells.keys()].toSorted()) {
-		if (busy.has(driverId)) continue;
+		if (isUnavailable(driverId)) continue;
 		const cell = state.driverCells.get(driverId);
 		if (cell === undefined) throw new Error(`no cell for ${driverId}`);
 		const toPickup = distance(cell, pickup);
@@ -150,14 +187,11 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 		pickup: request.pickup,
 		dropoff: request.dropoff,
 		requestedAt: request.tick,
-		pendingOffer: null,
+		excludedDrivers: new Set(),
+		offer: null,
 	};
 	return {
-		state: {
-			...state,
-			trips: new Map(state.trips).set(trip.id, trip),
-			queue: [...state.queue, trip.id],
-		},
+		state: { ...state, trips: new Map(state.trips).set(trip.id, trip) },
 		outputs: [
 			{ type: "request_trip_accepted", tripId: request.tripId },
 			{
@@ -181,4 +215,37 @@ function onDriverReported(
 		report.cell,
 	);
 	return { state: { ...state, driverCells }, outputs: [] };
+}
+
+// Replies to offers already declined or expired are stale (ADR 0022): ignored.
+function onOfferReply(
+	state: DispatchState,
+	reply: OfferAccepted | OfferDeclined,
+): Decision {
+	const trip = state.trips.get(reply.tripId);
+	if (trip === undefined) return { state, outputs: [] };
+	if (trip.excludedDrivers.has(reply.driverId)) return { state, outputs: [] };
+	const accepted = reply.type === "offer_accepted";
+	const next = accepted
+		? acceptOffer(trip, reply.driverId)
+		: withdrawOffer(trip, reply.driverId);
+	if (!next.ok) {
+		return {
+			state,
+			outputs: [
+				{ type: "input_rejected", reason: next.error.type, input: reply },
+			],
+		};
+	}
+	return {
+		state: { ...state, trips: new Map(state.trips).set(trip.id, next.value) },
+		outputs: [
+			{
+				type: accepted ? "trip.matched" : "trip.offer_declined",
+				tick: state.tick,
+				tripId: trip.id,
+				driverId: reply.driverId,
+			},
+		],
+	};
 }

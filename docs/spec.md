@@ -32,7 +32,7 @@ Nobody owns "the world". Views (dispatch's driver positions, UI) are built from 
 
 1. Rider spawns at a random cell with a random dropoff and patience (random 120–300 ticks). Sends `request_trip` to dispatch -> reply `request_trip_accepted` + `trip.requested`. A trip ID dispatch already knows -> reply `request_trip_rejected` (`duplicate_trip_id`), no event.
 2. Dispatch queues it (FIFO). Each tick, for each queued trip without a pending offer: pick nearest known-idle driver with no pending offer and not already offered this trip (ties by driver ID), send offer (request/reply, timeout 3 ticks). At most one pending offer per trip and per driver.
-3. Driver accepts if idle, else declines. Accept -> `trip.matched`, driver `en_route`. Decline (`trip.offer_declined`) or timeout (`trip.offer_expired`, frees a driver that accepted late) -> try next candidate next tick.
+3. Driver accepts if idle, else declines. Accept -> `trip.matched`, driver `en_route`. Decline (`trip.offer_declined`) or timeout (`trip.offer_expired`, frees a driver that accepted late) -> try next candidate next tick; the trip keeps its FIFO position. Replies to declined, expired, or unknown offers are ignored.
 4. Driver drives to pickup, publishes `driver.arrived_at_pickup` once, waits (`at_pickup`). Dispatch -> `trip.picked_up` (driver `on_trip`).
 5. Driver drives to dropoff, publishes `driver.arrived_at_dropoff` once, waits (`at_dropoff`). Dispatch -> `trip.completed`, driver `idle`, rider removed.
 6. Rider patience expires before pickup -> `cancel_trip` to dispatch -> `trip.cancelled`, driver (if any) `idle`, rider removed.
