@@ -130,12 +130,16 @@ describe("decideDispatch clock.ticked", () => {
 			ticked(2),
 		]);
 
-		expect(outputs).toContainEqual({
-			type: "trip.offered",
-			tick: tick(2),
-			tripId: t1,
-			driverId: d2,
-		});
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d2,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d2 },
+		]);
 	});
 
 	test("breaks a distance tie by lowest driver ID in string order", () => {
@@ -147,12 +151,16 @@ describe("decideDispatch clock.ticked", () => {
 			ticked(2),
 		]);
 
-		expect(outputs).toContainEqual({
-			type: "trip.offered",
-			tick: tick(2),
-			tripId: t1,
-			driverId: d10,
-		});
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d10,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d10 },
+		]);
 	});
 
 	test("offers a driver only the first of two queued trips in a tick", () => {
@@ -213,12 +221,16 @@ describe("decideDispatch clock.ticked", () => {
 			ticked(3),
 		]);
 
-		expect(outputs).toContainEqual({
-			type: "trip.offered",
-			tick: tick(3),
-			tripId: t1,
-			driverId: d1,
-		});
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(3), tripId: t1, driverId: d1 },
+		]);
 	});
 
 	test("offers by the cell a driver last moved to", () => {
@@ -230,12 +242,16 @@ describe("decideDispatch clock.ticked", () => {
 			ticked(2),
 		]);
 
-		expect(outputs).toContainEqual({
-			type: "trip.offered",
-			tick: tick(2),
-			tripId: t1,
-			driverId: d1,
-		});
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d1 },
+		]);
 	});
 
 	test("rejects a duplicate request for a trip already offered", () => {
