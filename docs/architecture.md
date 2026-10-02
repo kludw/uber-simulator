@@ -2,7 +2,7 @@
 
 What lives where and how it connects. Behavior: [spec.md](spec.md). Why: [ADRs](adr/README.md). Terms: `.claude/skills/domain/SKILL.md`.
 
-Current state: milestone 2, everything in one process over an in-memory bus. NATS (milestone 3), UI (4), and ClickHouse (5) are not built yet.
+Current state: milestone 2, everything in one process over an in-memory bus. NATS (milestone 3, planned bus adapter: [0028](adr/0028-nats-bus-subjects-and-delivery.md)), UI (4), and ClickHouse (5) are not built yet.
 
 ## Components
 
