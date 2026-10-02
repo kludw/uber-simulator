@@ -48,7 +48,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Matching**: assigning an idle driver to a requested trip. v1: nearest known-idle driver, ties by driver ID.
 - **Ordered by ID**: plain string comparison of IDs (default `toSorted()`, so `d-10` < `d-2`). Every brain uses it for iteration order and tie-breaks.
 - **Offer**: dispatch asking one driver to take a trip; driver accepts or declines, or the offer expires (3 ticks). Message `offer` (tripId, driverId, pickup, dropoff); driver replies `offer_accepted` or `offer_declined` (tripId, driverId). Replies are not events: dispatch turns them into `trip.*` events.
-- **Command**: request to the owner of some state (`request_trip`, `cancel_trip` to dispatch). Events are facts; commands may be rejected.
+- **Command**: request to the owner of some state (`request_trip`, `cancel_trip` to dispatch). Events are facts; commands may be rejected. Dispatch replies to the sender (not an event): `request_trip_accepted` (tripId), or `request_trip_rejected` (tripId, `error` tagged by `type`, e.g. `duplicate_trip_id`).
 - **ETA**: ticks until a driver reaches a cell.
 
 ## Events
