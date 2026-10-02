@@ -19,7 +19,7 @@ Independent processes, each owning its state, talking over NATS. Each service's 
 
 | Service | Owns | Does |
 | --- | --- | --- |
-| clock | tick counter | publishes `clock.ticked` every 1 s × speed |
+| clock | tick counter | publishes `clock.ticked` every 1 s / speed |
 | driver (×2, 50 drivers each, fixed shard) | driver position, state | moves drivers each tick, answers offers, reports arrivals |
 | rider | riders, demand generator | spawns riders (Poisson, random cells), requests trips, cancels on lost patience |
 | dispatch (single) | trips | queues requests, matches, owns every trip transition |
