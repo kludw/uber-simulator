@@ -1,6 +1,6 @@
 # 0016. Initial domain model: synthetic grid, states, matching
 
-- Status: Accepted
+- Status: Accepted (driver states superseded by 0024)
 - Date: 2026-10-02
 
 ## Context
