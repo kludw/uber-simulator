@@ -2,7 +2,7 @@
 
 What lives where and how it connects. Behavior: [spec.md](spec.md). Why: [ADRs](adr/README.md). Terms: `.claude/skills/domain/SKILL.md`.
 
-Current state: milestones 2 and 3 done. `bun run sim` runs everything in one process over an in-memory bus, or with `--bus nats` each service on its own NATS connection. Each service also runs as its own process over NATS ([0019](adr/0019-single-package-multiple-entrypoints.md), [0028](adr/0028-nats-bus-subjects-and-delivery.md)), all spawned by `bun run dev`. Integration tests check invariants on NATS runs. UI (4) and ClickHouse (5) are not built yet. Local NATS server runs via Docker Compose (see Local infra).
+Current state: milestones 2 and 3 done. `bun run sim` runs everything in one process over an in-memory bus, or with `--bus nats` each service on its own NATS connection. Each service also runs as its own process over NATS ([0019](adr/0019-single-package-multiple-entrypoints.md), [0028](adr/0028-nats-bus-subjects-and-delivery.md)), all spawned by `bun run dev`. Integration tests check invariants on NATS runs. UI (4) in progress: its view model is built, rendering and NATS wiring are not. ClickHouse (5) is not built yet. Local NATS server runs via Docker Compose (see Local infra).
 
 ## Components
 
@@ -25,9 +25,10 @@ Current state: milestones 2 and 3 done. `bun run sim` runs everything in one pro
 | Dev launcher | `src/sim/dev.ts` (`bun run dev`) | spawns every entrypoint (`Bun.spawn`), prefixes their output; SIGINT/SIGTERM or any child exiting stops all | [0019](adr/0019-single-package-multiple-entrypoints.md) |
 | Invariant checker | `src/sim/invariants.ts` | spec invariants from the event log alone, own trip model | [0017](adr/0017-independent-actor-services-with-pure-brains.md) |
 | Summary | `src/sim/summary.ts` | run result -> counts, mean ticks to pickup, violations | - |
+| UI view | `src/ui/view.ts` | `applyEvent(view, event)`: drivers (cell, previous cell, tick moved, state), waiting riders, active trips, counters, from `sim.events.>` alone. Tolerates a mid-run join: a driver first seen moving is shown idle, first seen arriving at its arrival cell. Ignores an arrival for a known idle driver (late over NATS, 0028) | [0020](adr/0020-browser-ui-canvas-nats-websocket.md) |
 | CLI | `src/sim/main.ts` (`bun run sim`) | parses args (Zod), runs in process or `--bus nats` (`NATS_URL`), prints summary, sets exit code | [0005](adr/0005-use-zod-for-validation.md), [0019](adr/0019-single-package-multiple-entrypoints.md) |
 
-Brains are the functional core: pure, seeded, no I/O ([0017](adr/0017-independent-actor-services-with-pure-brains.md), `simulation` skill). Shell: `src/bus/`, `src/sim/` (except invariants and summary), `src/*/main.ts`. Invariant checker and summary are pure but not brains. Dependencies point inward: brains import only `src/shared/`.
+Brains are the functional core: pure, seeded, no I/O ([0017](adr/0017-independent-actor-services-with-pure-brains.md), `simulation` skill). Shell: `src/bus/`, `src/sim/` (except invariants and summary), `src/*/main.ts`. Invariant checker, summary, and UI view are pure but not brains. Dependencies point inward: brains import only `src/shared/`.
 
 ## Data flow
 
