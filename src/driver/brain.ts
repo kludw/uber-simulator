@@ -12,6 +12,7 @@ import type {
 	DriverId,
 	DriverMoved,
 	DriverWentOnline,
+	InputRejected,
 	Offer,
 	OfferAccepted,
 	OfferDeclined,
@@ -87,7 +88,13 @@ type DriverShardOutput =
 	| DriverArrivedAtPickup
 	| DriverArrivedAtDropoff
 	| OfferAccepted
-	| OfferDeclined;
+	| OfferDeclined
+	| Rejected;
+
+type Rejected = InputRejected<
+	TripPickedUp | TripCompleted,
+	"driver_not_at_pickup" | "driver_not_at_dropoff" | "driver_on_another_trip"
+>;
 
 type Decision = { state: DriverShardState; outputs: DriverShardOutput[] };
 
@@ -158,38 +165,62 @@ function onOffer(state: DriverShardState, offer: Offer): Decision {
 }
 
 function onPickedUp(state: DriverShardState, pickedUp: TripPickedUp): Decision {
-	const drivers = state.drivers.map((driver): Driver => {
-		if (driver.id !== pickedUp.driverId || driver.state !== "at_pickup") {
-			return driver;
-		}
-		if (driver.tripId !== pickedUp.tripId) return driver;
-		return {
-			state: "on_trip",
-			id: driver.id,
-			cell: driver.pickup,
-			tripId: driver.tripId,
-			dropoff: driver.dropoff,
-		};
+	const addressed = state.drivers.find(
+		(driver) => driver.id === pickedUp.driverId,
+	);
+	if (addressed === undefined) return { state, outputs: [] };
+	if (addressed.state !== "at_pickup") {
+		return reject(state, pickedUp, "driver_not_at_pickup");
+	}
+	if (addressed.tripId !== pickedUp.tripId) {
+		return reject(state, pickedUp, "driver_on_another_trip");
+	}
+	return replaceDriver(state, {
+		state: "on_trip",
+		id: addressed.id,
+		cell: addressed.pickup,
+		tripId: addressed.tripId,
+		dropoff: addressed.dropoff,
 	});
-	return { state: { ...state, drivers }, outputs: [] };
 }
 
 function onCompleted(
 	state: DriverShardState,
 	completed: TripCompleted,
 ): Decision {
-	const drivers = state.drivers.map((driver): Driver => {
-		if (driver.id !== completed.driverId || driver.state !== "at_dropoff") {
-			return driver;
-		}
-		if (driver.tripId !== completed.tripId) return driver;
-		return {
-			state: "idle",
-			id: driver.id,
-			cell: driver.dropoff,
-			wanderTarget: null,
-		};
+	const addressed = state.drivers.find(
+		(driver) => driver.id === completed.driverId,
+	);
+	if (addressed === undefined) return { state, outputs: [] };
+	if (addressed.state !== "at_dropoff") {
+		return reject(state, completed, "driver_not_at_dropoff");
+	}
+	if (addressed.tripId !== completed.tripId) {
+		return reject(state, completed, "driver_on_another_trip");
+	}
+	return replaceDriver(state, {
+		state: "idle",
+		id: addressed.id,
+		cell: addressed.dropoff,
+		wanderTarget: null,
 	});
+}
+
+function reject(
+	state: DriverShardState,
+	input: Rejected["input"],
+	reason: Rejected["reason"],
+): Decision {
+	return {
+		state,
+		outputs: [{ type: "input_rejected", reason, input }],
+	};
+}
+
+function replaceDriver(state: DriverShardState, replacement: Driver): Decision {
+	const drivers = state.drivers.map((driver) =>
+		driver.id === replacement.id ? replacement : driver,
+	);
 	return { state: { ...state, drivers }, outputs: [] };
 }
 

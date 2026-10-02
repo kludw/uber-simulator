@@ -547,6 +547,53 @@ describe("decideDriverShard carrying the rider", () => {
 		expect(outputs).toEqual([]);
 	});
 
+	test("driver carrying the rider ignores a cancellation of its trip", () => {
+		const random = scriptedRandom([5, 4]);
+		const pickedUp = decideDriverShard(
+			waitingAtPickup(random),
+			{ type: "trip.picked_up", tick: tick(2), tripId: t1, driverId: d1 },
+			random,
+		);
+		const cancelled = decideDriverShard(
+			pickedUp.state,
+			{ type: "trip.cancelled", tick: tick(3), tripId: t1, driverId: d1 },
+			random,
+		);
+		const { outputs } = decideDriverShard(
+			cancelled.state,
+			{ type: "clock.ticked", tick: tick(4) },
+			random,
+		);
+		expect(outputs).toEqual([
+			{ type: "driver.moved", tick: tick(4), driverId: d1, cell: cell(6, 5) },
+		]);
+	});
+
+	test("driver waiting at the dropoff ignores a late offer expiry for its trip", () => {
+		const random = scriptedRandom([5, 4]);
+		const pickedUp = decideDriverShard(
+			waitingAtPickup(random, cell(6, 5)),
+			{ type: "trip.picked_up", tick: tick(2), tripId: t1, driverId: d1 },
+			random,
+		);
+		const arrived = decideDriverShard(
+			pickedUp.state,
+			{ type: "clock.ticked", tick: tick(3) },
+			random,
+		);
+		const expired = decideDriverShard(
+			arrived.state,
+			{ type: "trip.offer_expired", tick: tick(4), tripId: t1, driverId: d1 },
+			random,
+		);
+		const { outputs } = decideDriverShard(
+			expired.state,
+			{ type: "clock.ticked", tick: tick(5) },
+			random,
+		);
+		expect(outputs).toEqual([]);
+	});
+
 	test("driver whose trip is completed goes back to wandering from the dropoff", () => {
 		const random = scriptedRandom([5, 4, 6, 9]);
 		const pickedUp = decideDriverShard(
@@ -572,6 +619,153 @@ describe("decideDriverShard carrying the rider", () => {
 		expect(outputs).toEqual([
 			{ type: "driver.moved", tick: tick(5), driverId: d1, cell: cell(6, 6) },
 		]);
+	});
+});
+
+describe("decideDriverShard rejecting inputs", () => {
+	test("pickup for a driver still heading to the pickup is rejected", () => {
+		const random = scriptedRandom([0, 0]);
+		const started = startDriverShard(
+			{ grid, driverIds: [d1], tick: tick(0) },
+			random,
+		);
+		const accepted = decideDriverShard(started.state, offer(d1), random);
+		const pickedUp: DriverShardInput = {
+			type: "trip.picked_up",
+			tick: tick(1),
+			tripId: t1,
+			driverId: d1,
+		};
+		const { outputs } = decideDriverShard(accepted.state, pickedUp, random);
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "driver_not_at_pickup",
+				input: pickedUp,
+			},
+		]);
+	});
+
+	test("pickup of another trip for a driver waiting at its pickup is rejected", () => {
+		const random = scriptedRandom([5, 4]);
+		const started = startDriverShard(
+			{ grid, driverIds: [d1], tick: tick(0) },
+			random,
+		);
+		const accepted = decideDriverShard(started.state, offer(d1), random);
+		const arrived = decideDriverShard(
+			accepted.state,
+			{ type: "clock.ticked", tick: tick(1) },
+			random,
+		);
+		const pickedUp: DriverShardInput = {
+			type: "trip.picked_up",
+			tick: tick(2),
+			tripId: t2,
+			driverId: d1,
+		};
+		const { outputs } = decideDriverShard(arrived.state, pickedUp, random);
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "driver_on_another_trip",
+				input: pickedUp,
+			},
+		]);
+	});
+
+	test("completion for a driver still carrying the rider is rejected", () => {
+		const random = scriptedRandom([5, 4]);
+		const started = startDriverShard(
+			{ grid, driverIds: [d1], tick: tick(0) },
+			random,
+		);
+		const accepted = decideDriverShard(started.state, offer(d1), random);
+		const arrived = decideDriverShard(
+			accepted.state,
+			{ type: "clock.ticked", tick: tick(1) },
+			random,
+		);
+		const pickedUp = decideDriverShard(
+			arrived.state,
+			{ type: "trip.picked_up", tick: tick(2), tripId: t1, driverId: d1 },
+			random,
+		);
+		const completed: DriverShardInput = {
+			type: "trip.completed",
+			tick: tick(3),
+			tripId: t1,
+			driverId: d1,
+		};
+		const { outputs } = decideDriverShard(pickedUp.state, completed, random);
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "driver_not_at_dropoff",
+				input: completed,
+			},
+		]);
+	});
+
+	test("completion of another trip for a driver waiting at its dropoff is rejected", () => {
+		const random = scriptedRandom([5, 4]);
+		const started = startDriverShard(
+			{ grid, driverIds: [d1], tick: tick(0) },
+			random,
+		);
+		const accepted = decideDriverShard(
+			started.state,
+			{ ...offer(d1), dropoff: cell(6, 5) },
+			random,
+		);
+		const atPickup = decideDriverShard(
+			accepted.state,
+			{ type: "clock.ticked", tick: tick(1) },
+			random,
+		);
+		const pickedUp = decideDriverShard(
+			atPickup.state,
+			{ type: "trip.picked_up", tick: tick(2), tripId: t1, driverId: d1 },
+			random,
+		);
+		const atDropoff = decideDriverShard(
+			pickedUp.state,
+			{ type: "clock.ticked", tick: tick(3) },
+			random,
+		);
+		const completed: DriverShardInput = {
+			type: "trip.completed",
+			tick: tick(4),
+			tripId: t2,
+			driverId: d1,
+		};
+		const { outputs } = decideDriverShard(atDropoff.state, completed, random);
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "driver_on_another_trip",
+				input: completed,
+			},
+		]);
+	});
+
+	test("pickup and completion for drivers outside the shard are ignored", () => {
+		const random = scriptedRandom([0, 0]);
+		const { state } = startDriverShard(
+			{ grid, driverIds: [d1], tick: tick(0) },
+			random,
+		);
+		const pickedUp = decideDriverShard(
+			state,
+			{ type: "trip.picked_up", tick: tick(1), tripId: t1, driverId: d2 },
+			random,
+		);
+		const completed = decideDriverShard(
+			pickedUp.state,
+			{ type: "trip.completed", tick: tick(2), tripId: t1, driverId: d2 },
+			random,
+		);
+		expect([...pickedUp.outputs, ...completed.outputs]).toEqual([]);
 	});
 });
 

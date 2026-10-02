@@ -71,6 +71,14 @@ export type TripOfferExpired = {
 	driverId: DriverId;
 };
 
+// Brain output for an input addressed to it but invalid for the current
+// state (stale or out-of-order message). Shells log it, never publish it.
+export type InputRejected<Input, Reason extends string> = {
+	type: "input_rejected";
+	reason: Reason;
+	input: Input;
+};
+
 export type Offer = {
 	type: "offer";
 	tripId: TripId;

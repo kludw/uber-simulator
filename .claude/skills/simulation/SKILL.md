@@ -17,6 +17,7 @@ Goal: each service's decision logic ("brain") is exact and replayable from a see
 4. IDs from a deterministic generator (counter or seeded), not UUIDs. IDs must be unique across services: prefix with service/shard (e.g. driver IDs fixed by shard config).
 5. Deterministic iteration inside a brain: stable order (sorted by ID). Ties broken by ID.
 6. Invalid transition = domain error (see `errors` skill), never silently ignored.
+7. Inputs about entities this service doesn't own (e.g. drivers in another shard) = broadcast traffic, ignore silently. Inputs addressed to an owned entity but invalid for its state = output `{ type: "input_rejected", reason, input }` (`InputRejected` in `src/shared/messages.ts`); shells log it, never publish it.
 
 ## Time
 
