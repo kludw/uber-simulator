@@ -1,6 +1,6 @@
 # 0024. Add `at_pickup` driver state
 
-- Status: Accepted
+- Status: Superseded by 0025 (driver states only)
 - Date: 2026-10-02
 - Supersedes 0016 (driver states only)
 

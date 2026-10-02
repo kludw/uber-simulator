@@ -34,6 +34,28 @@ export type DriverArrivedAtPickup = {
 	cell: Cell;
 };
 
+export type TripPickedUp = {
+	type: "trip.picked_up";
+	tick: Tick;
+	tripId: TripId;
+	driverId: DriverId;
+};
+
+export type DriverArrivedAtDropoff = {
+	type: "driver.arrived_at_dropoff";
+	tick: Tick;
+	driverId: DriverId;
+	tripId: TripId;
+	cell: Cell;
+};
+
+export type TripCompleted = {
+	type: "trip.completed";
+	tick: Tick;
+	tripId: TripId;
+	driverId: DriverId;
+};
+
 // driverId null: cancelled before any driver was matched.
 export type TripCancelled = {
 	type: "trip.cancelled";
