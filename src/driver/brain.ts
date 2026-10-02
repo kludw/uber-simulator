@@ -92,8 +92,11 @@ type DriverShardOutput =
 	| Rejected;
 
 type Rejected = InputRejected<
-	TripPickedUp | TripCompleted,
-	"driver_not_at_pickup" | "driver_not_at_dropoff" | "driver_on_another_trip"
+	TripPickedUp | TripCompleted | TripCancelled | TripOfferExpired,
+	| "driver_not_at_pickup"
+	| "driver_not_at_dropoff"
+	| "driver_on_another_trip"
+	| "trip_already_picked_up"
 >;
 
 type Decision = { state: DriverShardState; outputs: DriverShardOutput[] };
@@ -228,16 +231,26 @@ function onTripEnded(
 	state: DriverShardState,
 	ended: TripCancelled | TripOfferExpired,
 ): Decision {
-	const drivers = state.drivers.map((driver): Driver => {
-		if (driver.id !== ended.driverId) return driver;
-		if (driver.state !== "en_route" && driver.state !== "at_pickup") {
-			return driver;
-		}
-		if (driver.tripId !== ended.tripId) return driver;
-		const cell = driver.state === "at_pickup" ? driver.pickup : driver.cell;
-		return { state: "idle", id: driver.id, cell, wanderTarget: null };
+	const addressed = state.drivers.find(
+		(driver) => driver.id === ended.driverId,
+	);
+	// Not this driver's current trip: the driver isn't involved.
+	if (addressed === undefined || addressed.state === "idle") {
+		return { state, outputs: [] };
+	}
+	if (addressed.tripId !== ended.tripId) return { state, outputs: [] };
+	// Dispatch rejects cancel after pickup and expiry only precedes a match.
+	if (addressed.state === "on_trip" || addressed.state === "at_dropoff") {
+		return reject(state, ended, "trip_already_picked_up");
+	}
+	const cell =
+		addressed.state === "at_pickup" ? addressed.pickup : addressed.cell;
+	return replaceDriver(state, {
+		state: "idle",
+		id: addressed.id,
+		cell,
+		wanderTarget: null,
 	});
-	return { state: { ...state, drivers }, outputs: [] };
 }
 
 function onTick(
