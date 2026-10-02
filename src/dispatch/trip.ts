@@ -1,5 +1,11 @@
 import type { Cell } from "../shared/grid.ts";
-import type { DriverId, RiderId, Tick, TripId } from "../shared/messages.ts";
+import type {
+	DriverId,
+	RequestTrip,
+	RiderId,
+	Tick,
+	TripId,
+} from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
 
 type TripDetails = {
@@ -16,8 +22,10 @@ type TripDetails = {
 export type PendingOffer = { driverId: DriverId; offeredAt: Tick };
 
 // A requested trip without an offer is queued for matching.
+type QueuedTrip = TripDetails & { state: "requested"; offer: null };
+
 export type Trip =
-	| (TripDetails & { state: "requested"; offer: null })
+	| QueuedTrip
 	| (TripDetails & { state: "requested"; offer: PendingOffer })
 	| (TripDetails & { state: "matched"; driverId: DriverId });
 
@@ -26,6 +34,28 @@ export type NoPendingOffer = {
 	tripId: TripId;
 	driverId: DriverId;
 };
+
+export function requestedTrip(request: RequestTrip): Trip {
+	return {
+		state: "requested",
+		id: request.tripId,
+		riderId: request.riderId,
+		pickup: request.pickup,
+		dropoff: request.dropoff,
+		requestedAt: request.tick,
+		excludedDrivers: new Set(),
+		offer: null,
+	};
+}
+
+// Only queued trips can be offered: the type, not a Result, enforces it.
+export function offerTo(
+	trip: QueuedTrip,
+	driverId: DriverId,
+	offeredAt: Tick,
+): Trip {
+	return { ...trip, offer: { driverId, offeredAt } };
+}
 
 export function acceptOffer(
 	trip: Trip,

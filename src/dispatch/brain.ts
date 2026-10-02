@@ -23,6 +23,8 @@ import type { Random } from "../shared/random.ts";
 import {
 	acceptOffer,
 	type NoPendingOffer,
+	offerTo,
+	requestedTrip,
 	type Trip,
 	withdrawOffer,
 } from "./trip.ts";
@@ -116,10 +118,7 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 		);
 		if (driverId === undefined) continue;
 		busy.add(driverId);
-		trips.set(trip.id, {
-			...trip,
-			offer: { driverId, offeredAt: ticked.tick },
-		});
+		trips.set(trip.id, offerTo(trip, driverId, ticked.tick));
 		outputs.push(
 			{
 				type: "offer",
@@ -180,16 +179,7 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 			],
 		};
 	}
-	const trip: Trip = {
-		state: "requested",
-		id: request.tripId,
-		riderId: request.riderId,
-		pickup: request.pickup,
-		dropoff: request.dropoff,
-		requestedAt: request.tick,
-		excludedDrivers: new Set(),
-		offer: null,
-	};
+	const trip = requestedTrip(request);
 	return {
 		state: { ...state, trips: new Map(state.trips).set(trip.id, trip) },
 		outputs: [
