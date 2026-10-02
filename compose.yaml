@@ -1,0 +1,21 @@
+services:
+  nats:
+    # Alpine variant: the default (scratch) image has no shell or wget for a healthcheck.
+    image: nats:2.15.0-alpine
+    command: ["nats-server", "--config", "/etc/nats/nats-server.conf"]
+    ports:
+      - "4222:4222" # clients
+      - "8222:8222" # HTTP monitoring
+      - "9222:9222" # websocket (browser UI)
+    volumes:
+      - ./infra/nats.conf:/etc/nats/nats-server.conf:ro
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  nats-data:

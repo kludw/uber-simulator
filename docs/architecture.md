@@ -2,7 +2,7 @@
 
 What lives where and how it connects. Behavior: [spec.md](spec.md). Why: [ADRs](adr/README.md). Terms: `.claude/skills/domain/SKILL.md`.
 
-Current state: milestone 2, everything in one process over an in-memory bus. NATS (milestone 3, planned bus adapter: [0028](adr/0028-nats-bus-subjects-and-delivery.md)), UI (4), and ClickHouse (5) are not built yet.
+Current state: milestone 2, everything in one process over an in-memory bus. NATS (milestone 3, planned bus adapter: [0028](adr/0028-nats-bus-subjects-and-delivery.md)), UI (4), and ClickHouse (5) are not built yet. Local NATS server runs via Docker Compose (see Local infra).
 
 ## Components
 
@@ -34,6 +34,16 @@ runner --{ eventLog, rejected }--> summarize --> checkInvariants --> main.ts pri
 ```
 
 Services never call each other: commands (`request_trip`, `cancel_trip`), offers, replies, and events are all bus messages. Dispatch is the only source of `trip.*` events ([0018](adr/0018-dispatch-matching-via-offers.md)). Offers reach only the shard owning the driver via the shard's subscription predicate.
+
+## Local infra
+
+Docker Compose ([0012](adr/0012-use-docker-compose-for-local-infra.md)), `compose.yaml`; app runs on the host via Bun. No app code connects yet.
+
+| Service | Image | Ports | Config |
+| --- | --- | --- | --- |
+| NATS | `nats:2.15.0-alpine` | 4222 clients, 8222 monitoring (`/healthz` = healthcheck), 9222 websocket (no TLS, local only) | `infra/nats.conf`: JetStream on named volume `nats-data` (`/data`), websocket for the UI ([0020](adr/0020-browser-ui-canvas-nats-websocket.md), [0028](adr/0028-nats-bus-subjects-and-delivery.md)) |
+
+Client URLs: `.env.example` (`NATS_URL`, `NATS_WS_URL`).
 
 ## Where decisions live
 
