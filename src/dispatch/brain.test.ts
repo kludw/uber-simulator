@@ -729,7 +729,8 @@ describe("decideDispatch cancel_trip", () => {
 		]);
 	});
 
-	test("cancels a trip with a pending offer as not yet matched", () => {
+	// Names the offered driver so one that accepted concurrently is freed.
+	test("cancels a trip with a pending offer and names the offered driver", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
 			wentOnline(d1, cell(3, 3)),
@@ -739,7 +740,7 @@ describe("decideDispatch cancel_trip", () => {
 
 		expect(outputs).toEqual([
 			{ type: "cancel_trip_accepted", tripId: t1 },
-			{ type: "trip.cancelled", tick: tick(2), tripId: t1, driverId: null },
+			{ type: "trip.cancelled", tick: tick(2), tripId: t1, driverId: d1 },
 		]);
 	});
 

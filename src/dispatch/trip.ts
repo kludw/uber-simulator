@@ -30,7 +30,8 @@ export type Trip =
 	| (TripDetails & { state: "matched"; driverId: DriverId })
 	| (TripDetails & { state: "picked_up"; driverId: DriverId })
 	| (TripDetails & { state: "completed"; driverId: DriverId })
-	// driverId null: cancelled before any driver was matched.
+	// driverId: the driver to free (matched, or holding the pending offer);
+	// null when no driver was involved.
 	| (TripDetails & { state: "cancelled"; driverId: DriverId | null });
 
 export type NoPendingOffer = {
@@ -138,14 +139,19 @@ type CancelRejected = {
 	to: "cancelled";
 };
 
-// Rider cancelled before pickup; a pending offer is dropped with the trip.
+// Rider cancelled before pickup; a pending offer is dropped with the trip, but
+// its driver is still named: it may have accepted concurrently.
 export function cancel(trip: Trip): Result<CancelledTrip, CancelRejected> {
 	switch (trip.state) {
 		case "requested": {
-			const { offer: _offer, ...details } = trip;
+			const { offer, ...details } = trip;
 			return {
 				ok: true,
-				value: { ...details, state: "cancelled", driverId: null },
+				value: {
+					...details,
+					state: "cancelled",
+					driverId: offer?.driverId ?? null,
+				},
 			};
 		}
 		case "matched":

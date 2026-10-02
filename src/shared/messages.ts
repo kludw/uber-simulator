@@ -59,7 +59,8 @@ export type TripCompleted = {
 	driverId: DriverId;
 };
 
-// driverId null: cancelled before any driver was matched.
+// driverId: the driver to free, matched or holding the pending offer (it may
+// have accepted concurrently); null when no driver was involved.
 export type TripCancelled = {
 	type: "trip.cancelled";
 	tick: Tick;
