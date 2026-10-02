@@ -29,3 +29,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0023 | [Small in-house seeded PRNG](0023-own-seeded-prng.md)                    | Accepted |
 | 0024 | [Add `at_pickup` driver state](0024-driver-at-pickup-state.md)           | Superseded by 0025 (driver states only) |
 | 0025 | [Add `at_dropoff` driver state](0025-driver-at-dropoff-state.md)         | Accepted |
+| 0026 | [Brains reject invalid inputs with `input_rejected` outputs](0026-brains-reject-invalid-inputs.md) | Accepted |
