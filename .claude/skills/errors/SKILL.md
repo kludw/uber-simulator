@@ -9,6 +9,7 @@ description: Project error-handling and logging conventions - Result type for ex
 
 1. **Expected failure** (part of the domain or input): no idle driver, invalid trip transition, validation failed, NATS/ClickHouse unavailable. Return it as a value: `Result<T, E>`.
 2. **Bug** (broken invariant, impossible state): `throw new Error(...)`. Fail fast, never catch-and-continue.
+3. Brain input invalid for the addressed entity's state (stale/out-of-order message) = expected failure, emitted as an `input_rejected` output (snake_case `reason`), not thrown. See `simulation` skill, ADR 0026.
 
 ## Result
 

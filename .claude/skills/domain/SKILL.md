@@ -24,6 +24,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Service**: independent process owning part of the world, talking only via the bus (0017).
 - **Brain**: a service's pure, seeded decision logic. **Shell**: its I/O around the brain.
 - **Bus**: messaging port; in-memory or NATS adapter.
+- **Input rejected**: brain output for an input addressed to one of its entities but invalid for that entity's state. Logged by the shell, never published.
 - **Clock**: service publishing ticks.
 - **Shard**: fixed set of drivers owned by one driver service instance.
 - **Dispatch**: service owning all trips; matches trips to drivers (0018).
@@ -34,7 +35,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Rider**: requests one trip, then is removed (after `completed` or `cancelled`). States: `waiting` -> `riding`.
 - **Patience**: ticks a rider waits for pickup before cancelling.
 - **Driver**: fulfills trips. States:
-  - `offline` -> `idle` (available) -> `en_route` (heading to pickup) -> `at_pickup` (arrived at pickup, waiting for dispatch) -> `on_trip` (rider aboard) -> `idle`.
+  - `offline` -> `idle` (available) -> `en_route` (heading to pickup) -> `at_pickup` (arrived at pickup, waiting for dispatch) -> `on_trip` (rider aboard) -> `at_dropoff` (arrived at dropoff, waiting for dispatch) -> `idle`.
   - `idle` -> `offline`. (v1: all drivers stay online.)
 - **Wander target**: random cell an idle driver drives toward; new one picked on arrival.
 

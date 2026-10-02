@@ -34,6 +34,28 @@ export type DriverArrivedAtPickup = {
 	cell: Cell;
 };
 
+export type TripPickedUp = {
+	type: "trip.picked_up";
+	tick: Tick;
+	tripId: TripId;
+	driverId: DriverId;
+};
+
+export type DriverArrivedAtDropoff = {
+	type: "driver.arrived_at_dropoff";
+	tick: Tick;
+	driverId: DriverId;
+	tripId: TripId;
+	cell: Cell;
+};
+
+export type TripCompleted = {
+	type: "trip.completed";
+	tick: Tick;
+	tripId: TripId;
+	driverId: DriverId;
+};
+
 // driverId null: cancelled before any driver was matched.
 export type TripCancelled = {
 	type: "trip.cancelled";
@@ -47,6 +69,14 @@ export type TripOfferExpired = {
 	tick: Tick;
 	tripId: TripId;
 	driverId: DriverId;
+};
+
+// Brain output for an input addressed to it but invalid for the current
+// state (stale or out-of-order message). Shells log it, never publish it.
+export type InputRejected<Input, Reason extends string> = {
+	type: "input_rejected";
+	reason: Reason;
+	input: Input;
 };
 
 export type Offer = {
