@@ -8,11 +8,18 @@ import {
 	TripId,
 } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
-import { decideDispatch, knownDriverCell, startDispatch } from "./brain.ts";
+import {
+	type DispatchInput,
+	type DispatchState,
+	decideDispatch,
+	startDispatch,
+} from "./brain.ts";
 
 const grid: Grid = { width: 10, height: 10 };
 const d1 = DriverId.parse("d-1");
+const d2 = DriverId.parse("d-2");
 const t1 = TripId.parse("t-1");
+const t2 = TripId.parse("t-2");
 const r1 = RiderId.parse("r-1");
 const random = createRandom(1);
 
@@ -35,6 +42,24 @@ function requestTrip(tripId: TripId, at: number): RequestTrip {
 		pickup: cell(1, 2),
 		dropoff: cell(7, 8),
 	};
+}
+
+function wentOnline(driverId: DriverId, at: Cell): DispatchInput {
+	return { type: "driver.went_online", tick: tick(0), driverId, cell: at };
+}
+
+function ticked(n: number): DispatchInput {
+	return { type: "clock.ticked", tick: tick(n) };
+}
+
+// Feeds inputs in order from a fresh dispatch; returns the last input's outputs.
+function run(inputs: DispatchInput[]) {
+	let state: DispatchState = startDispatch({ grid });
+	let outputs: unknown[] = [];
+	for (const input of inputs) {
+		({ state, outputs } = decideDispatch(state, input, random));
+	}
+	return { outputs };
 }
 
 describe("decideDispatch request_trip", () => {
@@ -77,40 +102,172 @@ describe("decideDispatch request_trip", () => {
 	});
 });
 
-describe("dispatch driver view", () => {
-	test("knows where a driver went online", () => {
-		const { state } = decideDispatch(
-			startDispatch({ grid }),
-			{
-				type: "driver.went_online",
-				tick: tick(0),
-				driverId: d1,
-				cell: cell(3, 3),
-			},
-			random,
-		);
+describe("decideDispatch clock.ticked", () => {
+	test("offers a queued trip to an online driver", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+		]);
 
-		expect(knownDriverCell(state, d1)).toEqual(cell(3, 3));
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d1 },
+		]);
 	});
 
-	test("follows a driver to the cell it last moved to", () => {
-		const online = decideDispatch(
-			startDispatch({ grid }),
+	test("offers the trip to the driver nearest its pickup", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(9, 9)),
+			wentOnline(d2, cell(2, 2)),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([
 			{
-				type: "driver.went_online",
-				tick: tick(0),
-				driverId: d1,
-				cell: cell(3, 3),
+				type: "offer",
+				tripId: t1,
+				driverId: d2,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
 			},
-			random,
-		);
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d2 },
+		]);
+	});
 
-		const { state } = decideDispatch(
-			online.state,
-			{ type: "driver.moved", tick: tick(1), driverId: d1, cell: cell(3, 4) },
-			random,
-		);
+	test("breaks a distance tie by lowest driver ID in string order", () => {
+		const d10 = DriverId.parse("d-10");
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d2, cell(1, 4)),
+			wentOnline(d10, cell(3, 2)),
+			ticked(2),
+		]);
 
-		expect(knownDriverCell(state, d1)).toEqual(cell(3, 4));
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d10,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d10 },
+		]);
+	});
+
+	test("offers a driver only the first of two queued trips in a tick", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			requestTrip(t2, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("does not offer a trip again while its offer is pending", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			wentOnline(d2, cell(4, 4)),
+			ticked(3),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("does not offer another trip to a driver with a pending offer", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			requestTrip(t2, 2),
+			ticked(3),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("outputs nothing when no driver is online", () => {
+		const { outputs } = run([requestTrip(t1, 1), ticked(2)]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("keeps an unoffered trip queued until a driver comes online", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			ticked(2),
+			wentOnline(d1, cell(3, 3)),
+			ticked(3),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(3), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("offers by the cell a driver last moved to", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(9, 9)),
+			wentOnline(d2, cell(5, 5)),
+			{ type: "driver.moved", tick: tick(1), driverId: d1, cell: cell(1, 3) },
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("rejects a duplicate request for a trip already offered", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			requestTrip(t1, 3),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "request_trip_rejected",
+				tripId: t1,
+				error: { type: "duplicate_trip_id" },
+			},
+		]);
 	});
 });

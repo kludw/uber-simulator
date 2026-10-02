@@ -67,6 +67,13 @@ export type TripCancelled = {
 	driverId: DriverId | null;
 };
 
+export type TripOffered = {
+	type: "trip.offered";
+	tick: Tick;
+	tripId: TripId;
+	driverId: DriverId;
+};
+
 export type TripOfferExpired = {
 	type: "trip.offer_expired";
 	tick: Tick;
