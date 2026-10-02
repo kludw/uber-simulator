@@ -54,7 +54,7 @@ function ticked(n: number): DispatchInput {
 
 // Feeds inputs in order from a fresh dispatch; returns the last input's outputs.
 function run(inputs: DispatchInput[]) {
-	let state: DispatchState = startDispatch({ grid });
+	let state: DispatchState = startDispatch({ grid, tick: tick(0) });
 	let outputs: unknown[] = [];
 	for (const input of inputs) {
 		({ state, outputs } = decideDispatch(state, input, random));
@@ -65,7 +65,7 @@ function run(inputs: DispatchInput[]) {
 describe("decideDispatch request_trip", () => {
 	test("accepts a new trip request and announces it requested", () => {
 		const { outputs } = decideDispatch(
-			startDispatch({ grid }),
+			startDispatch({ grid, tick: tick(0) }),
 			requestTrip(t1, 4),
 			random,
 		);
@@ -85,7 +85,7 @@ describe("decideDispatch request_trip", () => {
 
 	test("rejects a request reusing a known trip ID without announcing it", () => {
 		const first = decideDispatch(
-			startDispatch({ grid }),
+			startDispatch({ grid, tick: tick(0) }),
 			requestTrip(t1, 4),
 			random,
 		);
@@ -267,6 +267,214 @@ describe("decideDispatch clock.ticked", () => {
 				type: "request_trip_rejected",
 				tripId: t1,
 				error: { type: "duplicate_trip_id" },
+			},
+		]);
+	});
+});
+
+function accepted(tripId: TripId, driverId: DriverId): DispatchInput {
+	return { type: "offer_accepted", tripId, driverId };
+}
+
+function declined(tripId: TripId, driverId: DriverId): DispatchInput {
+	return { type: "offer_declined", tripId, driverId };
+}
+
+describe("decideDispatch offer replies", () => {
+	test("matches the trip when the driver accepts its offer", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+		]);
+
+		expect(outputs).toEqual([
+			{ type: "trip.matched", tick: tick(2), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("does not offer another trip to a driver matched to a trip", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			requestTrip(t2, 2),
+			ticked(3),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("announces the offer declined when the driver declines", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			declined(t1, d1),
+		]);
+
+		expect(outputs).toEqual([
+			{ type: "trip.offer_declined", tick: tick(2), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("offers a declined trip next tick to the nearest other driver", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			wentOnline(d2, cell(9, 9)),
+			ticked(2),
+			declined(t1, d1),
+			ticked(3),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d2,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(3), tripId: t1, driverId: d2 },
+		]);
+	});
+
+	test("keeps a declined trip ahead of trips requested after it", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			requestTrip(t2, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			declined(t1, d1),
+			wentOnline(d2, cell(9, 9)),
+			ticked(3),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d2,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(3), tripId: t1, driverId: d2 },
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(3), tripId: t2, driverId: d1 },
+		]);
+	});
+});
+
+describe("decideDispatch offer expiry", () => {
+	test("expires an offer with no reply three ticks after it was made", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			ticked(3),
+			ticked(4),
+			ticked(5),
+		]);
+
+		expect(outputs).toEqual([
+			{ type: "trip.offer_expired", tick: tick(5), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("keeps an offer pending two ticks after it was made", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			ticked(3),
+			ticked(4),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("offers an expired trip next tick to the nearest other driver", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			wentOnline(d2, cell(9, 9)),
+			ticked(2),
+			ticked(5),
+			ticked(6),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d2,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(6), tripId: t1, driverId: d2 },
+		]);
+	});
+});
+
+describe("decideDispatch stale and invalid offer replies", () => {
+	test("ignores an accept arriving after its offer expired", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			ticked(5),
+			accepted(t1, d1),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("ignores a reply for an unknown trip", () => {
+		const { outputs } = run([accepted(t1, d1)]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("rejects a second accept for an already matched trip", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			accepted(t1, d1),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "no_pending_offer",
+				input: accepted(t1, d1),
+			},
+		]);
+	});
+
+	test("rejects a reply from a driver never offered the trip", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			declined(t1, d2),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "no_pending_offer",
+				input: declined(t1, d2),
 			},
 		]);
 	});

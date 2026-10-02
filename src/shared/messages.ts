@@ -74,6 +74,20 @@ export type TripOffered = {
 	driverId: DriverId;
 };
 
+export type TripMatched = {
+	type: "trip.matched";
+	tick: Tick;
+	tripId: TripId;
+	driverId: DriverId;
+};
+
+export type TripOfferDeclined = {
+	type: "trip.offer_declined";
+	tick: Tick;
+	tripId: TripId;
+	driverId: DriverId;
+};
+
 export type TripOfferExpired = {
 	type: "trip.offer_expired";
 	tick: Tick;
