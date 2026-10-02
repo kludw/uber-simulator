@@ -358,6 +358,56 @@ describe("decideRiders cancel rejected", () => {
 			outputs: [],
 		});
 	});
+
+	// Only under message loss: the trip.* event that ended the trip never arrived.
+	test("rider whose cancel is rejected for a completed or cancelled trip is removed", () => {
+		const cancelling = quietTick(waitingRider(), 151);
+		const decisions = (["completed", "cancelled"] as const).map((from) =>
+			decideRiders(
+				cancelling.state,
+				{
+					type: "cancel_trip_rejected",
+					tripId: t1,
+					error: { type: "invalid_transition", from },
+				},
+				scriptedRandom({}),
+			),
+		);
+		expect(decisions).toEqual([
+			{ state: { ...waitingRider(), riders: [] }, outputs: [] },
+			{ state: { ...waitingRider(), riders: [] }, outputs: [] },
+		]);
+	});
+});
+
+function requestRejected(state: RidersState) {
+	return decideRiders(
+		state,
+		{
+			type: "request_trip_rejected",
+			tripId: t1,
+			error: { type: "duplicate_trip_id" },
+		},
+		scriptedRandom({}),
+	);
+}
+
+// E.g. trip IDs reused after a rider service restart: dispatch never takes the trip.
+describe("decideRiders request rejected", () => {
+	test("waiting rider whose request is rejected is removed", () => {
+		expect(requestRejected(waitingRider())).toEqual({
+			state: { ...waitingRider(), riders: [] },
+			outputs: [],
+		});
+	});
+
+	test("cancelling rider whose request is rejected is removed", () => {
+		const cancelling = quietTick(waitingRider(), 151);
+		expect(requestRejected(cancelling.state)).toEqual({
+			state: { ...waitingRider(), riders: [] },
+			outputs: [],
+		});
+	});
 });
 
 describe("decideRiders other riders' trips", () => {
@@ -439,6 +489,24 @@ describe("decideRiders invalid inputs", () => {
 					type: "input_rejected",
 					reason: "rider_already_riding",
 					input: cancelled,
+				},
+			],
+		});
+	});
+
+	test("request rejection for a rider already riding is rejected, state unchanged", () => {
+		const riding = pickedUp(waitingRider(), 100);
+		expect(requestRejected(riding.state)).toEqual({
+			state: riding.state,
+			outputs: [
+				{
+					type: "input_rejected",
+					reason: "rider_already_riding",
+					input: {
+						type: "request_trip_rejected",
+						tripId: t1,
+						error: { type: "duplicate_trip_id" },
+					},
 				},
 			],
 		});
