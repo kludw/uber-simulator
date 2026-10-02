@@ -28,8 +28,16 @@ export function createRandom(seed: number): Random {
 	const float = () => nextUint32() / 2 ** 32;
 
 	return {
-		int: (min, maxInclusive) =>
-			min + Math.floor(float() * (maxInclusive - min + 1)),
+		int: (min, maxInclusive) => {
+			if (
+				!Number.isInteger(min) ||
+				!Number.isInteger(maxInclusive) ||
+				min > maxInclusive
+			) {
+				throw new Error(`invalid int bounds [${min}, ${maxInclusive}]`);
+			}
+			return min + Math.floor(float() * (maxInclusive - min + 1));
+		},
 		float,
 		// From the seed, not the current state: a child is the same no matter when it is taken.
 		child: (label) => createRandom(splitmix32(seed ^ fnv1a(label))()),

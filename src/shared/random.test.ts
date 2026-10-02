@@ -40,6 +40,14 @@ describe("int", () => {
 		);
 		expect([...draws].sort((a, b) => a - b)).toEqual([-2, -1, 0, 1, 2]);
 	});
+
+	test("throws when min is greater than max", () => {
+		expect(() => createRandom(3).int(3, 2)).toThrow();
+	});
+
+	test("throws on non-integer bounds", () => {
+		expect(() => createRandom(3).int(0, 2.5)).toThrow();
+	});
 });
 
 describe("child", () => {
