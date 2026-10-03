@@ -52,8 +52,9 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Patience**: ticks a rider waits for pickup before cancelling.
 - **Driver**: fulfills trips. States:
   - `offline` -> `idle` (available) -> `en_route` (heading to pickup) -> `at_pickup` (arrived at pickup, waiting for dispatch) -> `on_trip` (rider aboard) -> `at_dropoff` (arrived at dropoff, waiting for dispatch) -> `idle`.
-  - `idle` -> `offline`. (v1: all drivers stay online.)
+  - `idle` -> `offline` (online period over; a driver on a trip finishes it first). `offline` drivers don't move and decline every offer.
 - **Wander target**: random cell an idle driver drives toward; new one picked on arrival.
+- **Shifts**: driver shard config (0032). `always_online` (default): every driver online the whole run. `shifts`: each driver alternates **online periods** and **offline periods**, lengths uniform in `onlineTicks` / `offlineTicks`; starts online with probability `startOnlineShare`. An offline period counts from the tick the driver actually went offline.
 
 ## Trip
 

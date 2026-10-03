@@ -11,6 +11,7 @@ import type {
 	DriverArrivedAtPickup,
 	DriverId,
 	DriverMoved,
+	DriverWentOffline,
 	DriverWentOnline,
 	InputRejected,
 	Offer,
@@ -26,6 +27,7 @@ import type {
 import type { Random } from "../shared/random.ts";
 
 type Driver =
+	| { state: "offline"; id: DriverId; cell: Cell }
 	| { state: "idle"; id: DriverId; cell: Cell; wanderTarget: Cell | null }
 	| {
 			state: "en_route";
@@ -53,8 +55,36 @@ type Driver =
 	// Position is the dropoff: no separate cell.
 	| { state: "at_dropoff"; id: DriverId; tripId: TripId; dropoff: Cell };
 
+// Missing = always_online. In shift mode drivers alternate online and offline
+// periods with lengths uniform in the ranges (ADR 0032).
+export type Shifts =
+	| { type: "always_online" }
+	| {
+			type: "shifts";
+			onlineTicks: TickRange;
+			offlineTicks: TickRange;
+			startOnlineShare: number;
+	  };
+
+type TickRange = { min: number; max: number };
+
+// n-th period of a driver's schedule, drawn from stream `shift:<driverId>:<n>`.
+// Online or offline follows the driver: offline only while state is offline.
+type Period = { n: number; startedAt: Tick; ticks: number };
+
+type Schedule = {
+	onlineTicks: TickRange;
+	offlineTicks: TickRange;
+	periods: ReadonlyMap<DriverId, Period>;
+};
+
 // Drivers kept sorted by ID: outputs and random draws follow that order.
-export type DriverShardState = { grid: Grid; drivers: Driver[] };
+// schedule: null when always online.
+export type DriverShardState = {
+	grid: Grid;
+	drivers: Driver[];
+	schedule: Schedule | null;
+};
 
 export type DriverShardInput =
 	| ClockTicked
@@ -65,25 +95,78 @@ export type DriverShardInput =
 	| TripOfferExpired;
 
 export function startDriverShard(
-	config: { grid: Grid; driverIds: DriverId[]; tick: Tick },
+	config: { grid: Grid; driverIds: DriverId[]; tick: Tick; shifts?: Shifts },
 	random: Random,
 ): { state: DriverShardState; outputs: DriverWentOnline[] } {
-	const drivers: IdleDriver[] = config.driverIds.toSorted().map((id) => ({
-		state: "idle",
+	const shifts = config.shifts ?? { type: "always_online" };
+	assertValidShifts(shifts);
+	// Cells drawn first, in driver ID order, as before shifts existed: shift
+	// draws come only from shift streams.
+	const placed = config.driverIds.toSorted().map((id) => ({
 		id,
 		cell: randomCell(config.grid, random),
-		wanderTarget: null,
 	}));
-	const outputs: DriverWentOnline[] = drivers.map((driver) => ({
-		type: "driver.went_online",
-		tick: config.tick,
-		driverId: driver.id,
-		cell: driver.cell,
-	}));
-	return { state: { grid: config.grid, drivers }, outputs };
+	let drivers: Driver[];
+	let schedule: Schedule | null = null;
+	if (shifts.type === "always_online") {
+		drivers = placed.map(({ id, cell }) => idle(id, cell));
+	} else {
+		const periods = new Map<DriverId, Period>();
+		drivers = placed.map(({ id, cell }): Driver => {
+			const stream = random.child(shiftStream(id, 0));
+			const online = stream.float() < shifts.startOnlineShare;
+			const range = online ? shifts.onlineTicks : shifts.offlineTicks;
+			periods.set(id, {
+				n: 0,
+				startedAt: config.tick,
+				ticks: stream.int(range.min, range.max),
+			});
+			return online ? idle(id, cell) : { state: "offline", id, cell };
+		});
+		schedule = {
+			onlineTicks: shifts.onlineTicks,
+			offlineTicks: shifts.offlineTicks,
+			periods,
+		};
+	}
+	const outputs: DriverWentOnline[] = drivers
+		.filter((driver) => driver.state === "idle")
+		.map((driver) => ({
+			type: "driver.went_online",
+			tick: config.tick,
+			driverId: driver.id,
+			cell: driver.cell,
+		}));
+	return { state: { grid: config.grid, drivers, schedule }, outputs };
+}
+
+// Config is parsed at the edge (CLI, env), so an invalid one here is a bug.
+// Negated comparisons also reject NaN.
+function assertValidShifts(shifts: Shifts): void {
+	if (shifts.type === "always_online") return;
+	for (const { min, max } of [shifts.onlineTicks, shifts.offlineTicks]) {
+		if (!Number.isInteger(min) || !Number.isInteger(max) || !(min >= 1)) {
+			throw new Error(`shift period [${min}, ${max}] not integers >= 1`);
+		}
+		if (min > max) throw new Error(`shift period min ${min} above max ${max}`);
+	}
+	const share = shifts.startOnlineShare;
+	if (!(share >= 0 && share <= 1)) {
+		throw new Error(`start online share ${share} outside [0, 1]`);
+	}
+}
+
+function idle(id: DriverId, cell: Cell): IdleDriver {
+	return { state: "idle", id, cell, wanderTarget: null };
+}
+
+function shiftStream(driverId: DriverId, n: number): string {
+	return `shift:${driverId}:${n}`;
 }
 
 type DriverShardOutput =
+	| DriverWentOnline
+	| DriverWentOffline
 	| DriverMoved
 	| DriverArrivedAtPickup
 	| DriverArrivedAtDropoff
@@ -235,7 +318,11 @@ function onTripEnded(
 		(driver) => driver.id === ended.driverId,
 	);
 	// Not this driver's current trip: the driver isn't involved.
-	if (addressed === undefined || addressed.state === "idle") {
+	if (
+		addressed === undefined ||
+		addressed.state === "idle" ||
+		addressed.state === "offline"
+	) {
 		return { state, outputs: [] };
 	}
 	if (addressed.tripId !== ended.tripId) return { state, outputs: [] };
@@ -260,7 +347,18 @@ function onTick(
 ): Decision {
 	const outputs: DriverShardOutput[] = [];
 	const drivers: Driver[] = [];
+	const periods = new Map(state.schedule?.periods);
 	for (const driver of state.drivers) {
+		const changed =
+			state.schedule === null
+				? null
+				: changeShift(driver, state.schedule, input.tick, random);
+		if (changed !== null) {
+			drivers.push(changed.driver);
+			periods.set(driver.id, changed.period);
+			outputs.push(changed.output);
+			continue;
+		}
 		switch (driver.state) {
 			case "idle":
 				drivers.push(wander(driver, state.grid, input.tick, random, outputs));
@@ -268,6 +366,7 @@ function onTick(
 			case "en_route":
 				drivers.push(driveToPickup(driver, input.tick, outputs));
 				break;
+			case "offline":
 			case "at_pickup":
 			case "at_dropoff":
 				drivers.push(driver);
@@ -281,7 +380,53 @@ function onTick(
 			}
 		}
 	}
-	return { state: { ...state, drivers }, outputs };
+	const schedule =
+		state.schedule === null ? null : { ...state.schedule, periods };
+	return { state: { ...state, drivers, schedule }, outputs };
+}
+
+// Ends the driver's current period if it is over; the next one starts this
+// tick. A driver on a trip finishes it first: its online period runs over
+// until it is idle (ADR 0032). null: no change.
+function changeShift(
+	driver: Driver,
+	schedule: Schedule,
+	tick: Tick,
+	random: Random,
+): {
+	driver: Driver;
+	period: Period;
+	output: DriverWentOnline | DriverWentOffline;
+} | null {
+	const period = schedule.periods.get(driver.id);
+	if (period === undefined) {
+		throw new Error(`driver ${driver.id} without a shift period`);
+	}
+	if (tick - period.startedAt < period.ticks) return null;
+	if (driver.state !== "offline" && driver.state !== "idle") return null;
+	const n = period.n + 1;
+	const goingOnline = driver.state === "offline";
+	const { min, max } = goingOnline
+		? schedule.onlineTicks
+		: schedule.offlineTicks;
+	const next = {
+		n,
+		startedAt: tick,
+		ticks: random.child(shiftStream(driver.id, n)).int(min, max),
+	};
+	const event = { tick, driverId: driver.id, cell: driver.cell };
+	if (goingOnline) {
+		return {
+			driver: idle(driver.id, driver.cell),
+			period: next,
+			output: { type: "driver.went_online", ...event },
+		};
+	}
+	return {
+		driver: { state: "offline", id: driver.id, cell: driver.cell },
+		period: next,
+		output: { type: "driver.went_offline", ...event },
+	};
 }
 
 type IdleDriver = Extract<Driver, { state: "idle" }>;

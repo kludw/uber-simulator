@@ -4,7 +4,9 @@ import { DriverId, type Offer, Tick, TripId } from "../shared/messages.ts";
 import { createRandom, type Random } from "../shared/random.ts";
 import {
 	type DriverShardInput,
+	type DriverShardState,
 	decideDriverShard,
+	type Shifts,
 	startDriverShard,
 } from "./brain.ts";
 
@@ -52,6 +54,49 @@ function scriptedRandom(draws: number[]): Random {
 	};
 }
 
+// Shift streams: each child(label) replays its own script, as a real child
+// depends only on seed and label. Ints must fall in the requested range.
+function shiftRandom(
+	draws: number[],
+	streams: Record<string, number[]>,
+): Random {
+	return {
+		...scriptedRandom(draws),
+		child: (label) => {
+			const script = streams[label];
+			if (script === undefined) throw new Error(`unexpected stream ${label}`);
+			const queue = [...script];
+			const next = () => {
+				const value = queue.shift();
+				if (value === undefined) throw new Error(`${label} exhausted`);
+				return value;
+			};
+			return {
+				int: (min, maxInclusive) => {
+					const value = next();
+					if (value < min || value > maxInclusive) {
+						throw new Error(
+							`${label} draw ${value} outside [${min}, ${maxInclusive}]`,
+						);
+					}
+					return value;
+				},
+				float: next,
+				child: () => {
+					throw new Error("unexpected grandchild stream");
+				},
+			};
+		},
+	};
+}
+
+const shifts: Shifts = {
+	type: "shifts",
+	onlineTicks: { min: 2, max: 10 },
+	offlineTicks: { min: 3, max: 6 },
+	startOnlineShare: 0.5,
+};
+
 describe("startDriverShard", () => {
 	test("places each driver at a random cell and announces it online, in driver ID order", () => {
 		const { outputs } = startDriverShard(
@@ -72,6 +117,200 @@ describe("startDriverShard", () => {
 				cell: cell(7, 8),
 			},
 		]);
+	});
+});
+
+describe("startDriverShard with shifts", () => {
+	test("announces only drivers whose start coin lands under the online share", () => {
+		const { outputs } = startDriverShard(
+			{ grid, driverIds: [d1, d2], tick: tick(5), shifts },
+			shiftRandom([3, 4, 7, 8], {
+				"shift:d-1:0": [0.7, 4],
+				"shift:d-2:0": [0.2, 9],
+			}),
+		);
+		expect(outputs).toEqual([
+			{
+				type: "driver.went_online",
+				tick: tick(5),
+				driverId: d2,
+				cell: cell(7, 8),
+			},
+		]);
+	});
+});
+
+describe("decideDriverShard with shifts", () => {
+	// Feeds ticks from..to (inclusive), returning the last state and all outputs.
+	function runTicks(
+		state: DriverShardState,
+		from: number,
+		to: number,
+		random: Random,
+	) {
+		const outputs: unknown[] = [];
+		for (let n = from; n <= to; n++) {
+			const decided = decideDriverShard(
+				state,
+				{ type: "clock.ticked", tick: tick(n) },
+				random,
+			);
+			state = decided.state;
+			outputs.push(...decided.outputs);
+		}
+		return { state, outputs };
+	}
+
+	test("driver offline at start stays put, then comes online at its cell when the offline period ends", () => {
+		const random = shiftRandom([3, 4], {
+			"shift:d-1:0": [0.7, 4],
+			"shift:d-1:1": [5],
+		});
+		const started = startDriverShard(
+			{ grid, driverIds: [d1], tick: tick(0), shifts },
+			random,
+		);
+		const { outputs } = runTicks(started.state, 1, 4, random);
+		expect(outputs).toEqual([
+			{
+				type: "driver.went_online",
+				tick: tick(4),
+				driverId: d1,
+				cell: cell(3, 4),
+			},
+		]);
+	});
+
+	test("idle driver goes offline at its cell when the online period ends", () => {
+		const random = shiftRandom([0, 0, 3, 0], {
+			"shift:d-1:0": [0.2, 2],
+			"shift:d-1:1": [3],
+		});
+		const started = startDriverShard(
+			{ grid, driverIds: [d1], tick: tick(0), shifts },
+			random,
+		);
+		const { outputs } = runTicks(started.state, 1, 2, random);
+		expect(outputs).toEqual([
+			{ type: "driver.moved", tick: tick(1), driverId: d1, cell: cell(1, 0) },
+			{
+				type: "driver.went_offline",
+				tick: tick(2),
+				driverId: d1,
+				cell: cell(1, 0),
+			},
+		]);
+	});
+
+	test("driver on a trip when the online period ends finishes it, goes offline once idle, and its offline period counts from then", () => {
+		const random = shiftRandom([0, 0], {
+			"shift:d-1:0": [0.2, 2],
+			"shift:d-1:1": [3],
+			"shift:d-1:2": [5],
+		});
+		const started = startDriverShard(
+			{ grid, driverIds: [d1], tick: tick(0), shifts },
+			random,
+		);
+		const accepted = decideDriverShard(started.state, offer(d1), random);
+		const enRoute = runTicks(accepted.state, 1, 2, random);
+		const cancelled = decideDriverShard(
+			enRoute.state,
+			{ type: "trip.cancelled", tick: tick(2), tripId: t1, driverId: d1 },
+			random,
+		);
+		const { outputs } = runTicks(cancelled.state, 3, 6, random);
+		expect([...enRoute.outputs, ...outputs]).toEqual([
+			{ type: "driver.moved", tick: tick(1), driverId: d1, cell: cell(1, 0) },
+			{ type: "driver.moved", tick: tick(2), driverId: d1, cell: cell(1, 1) },
+			{
+				type: "driver.went_offline",
+				tick: tick(3),
+				driverId: d1,
+				cell: cell(1, 1),
+			},
+			{
+				type: "driver.went_online",
+				tick: tick(6),
+				driverId: d1,
+				cell: cell(1, 1),
+			},
+		]);
+	});
+
+	function offlineAtStart() {
+		const random = shiftRandom([3, 4], { "shift:d-1:0": [0.7, 4] });
+		const { state } = startDriverShard(
+			{ grid, driverIds: [d1], tick: tick(0), shifts },
+			random,
+		);
+		return { state, random };
+	}
+
+	test("offline driver declines an offer", () => {
+		const { state, random } = offlineAtStart();
+		const { outputs } = decideDriverShard(state, offer(d1), random);
+		expect(outputs).toEqual([
+			{ type: "offer_declined", tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("offline driver stays offline when a trip naming it is cancelled", () => {
+		const { state, random } = offlineAtStart();
+		const cancelled = decideDriverShard(
+			state,
+			{ type: "trip.cancelled", tick: tick(1), tripId: t1, driverId: d1 },
+			random,
+		);
+		const { outputs } = runTicks(cancelled.state, 2, 3, random);
+		expect([...cancelled.outputs, ...outputs]).toEqual([]);
+	});
+});
+
+describe("startDriverShard shift config", () => {
+	test("always_online takes no shift streams", () => {
+		const { outputs } = startDriverShard(
+			{
+				grid,
+				driverIds: [d1],
+				tick: tick(0),
+				shifts: { type: "always_online" },
+			},
+			scriptedRandom([3, 4]),
+		);
+		expect(outputs).toEqual([
+			{
+				type: "driver.went_online",
+				tick: tick(0),
+				driverId: d1,
+				cell: cell(3, 4),
+			},
+		]);
+	});
+
+	const invalid: [string, Partial<Extract<Shifts, { type: "shifts" }>>][] = [
+		["online min above max", { onlineTicks: { min: 5, max: 4 } }],
+		["offline min above max", { offlineTicks: { min: 5, max: 4 } }],
+		["zero-length online period", { onlineTicks: { min: 0, max: 4 } }],
+		["negative offline period", { offlineTicks: { min: -1, max: 4 } }],
+		["fractional period length", { onlineTicks: { min: 1.5, max: 4 } }],
+		["online share below 0", { startOnlineShare: -0.1 }],
+		["online share above 1", { startOnlineShare: 1.1 }],
+		["online share NaN", { startOnlineShare: Number.NaN }],
+	];
+
+	test.each(invalid)("%s throws", (_case, override) => {
+		expect(() =>
+			startDriverShard(
+				{
+					grid,
+					driverIds: [d1],
+					tick: tick(0),
+					shifts: { ...shifts, ...override } as Shifts,
+				},
+				createRandom(1),
+			),
+		).toThrow();
 	});
 });
 
@@ -854,10 +1093,10 @@ describe("driver shard trip scenario", () => {
 });
 
 describe("driver shard determinism", () => {
-	function run(seed: number) {
+	function run(seed: number, shifts?: Shifts) {
 		const random = createRandom(seed);
 		const started = startDriverShard(
-			{ grid, driverIds: [d1, d2], tick: tick(0) },
+			{ grid, driverIds: [d1, d2], tick: tick(0), shifts },
 			random,
 		);
 		const outputs: unknown[] = [...started.outputs];
@@ -876,5 +1115,9 @@ describe("driver shard determinism", () => {
 
 	test("same seed and inputs give identical outputs", () => {
 		expect(run(42)).toEqual(run(42));
+	});
+
+	test("same seed and inputs give identical outputs with shifts", () => {
+		expect(run(42, shifts)).toEqual(run(42, shifts));
 	});
 });
