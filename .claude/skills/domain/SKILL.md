@@ -30,6 +30,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **View**: state a consumer rebuilds from events alone, never from a brain (dispatch's driver positions, the UI's view in `src/ui/view.ts`).
 - **Active trip**: a trip from `matched` until `completed` or `cancelled`; the UI draws its pickup-dropoff line.
 - **Summary**: a run's headline numbers (trip counts, mean ticks from request to pickup, rejected inputs, invariant violations), computed from its event log.
+- **Run report**: a persisted run's headline numbers queried from ClickHouse (`bun run report`, `src/analytics/report.ts`): trip counts, mean ticks from request to pickup and from pickup to completion, completed trips per simulated minute. Its trip counts and mean ticks to pickup agree with the summary of the same event log.
 - **Input rejected**: brain output for an input addressed to one of its entities but invalid for that entity's state. Logged by the shell, never published.
 - **Violation**: a broken spec invariant (`docs/spec.md`) found in an event log, tagged by `type` (e.g. `illegal_trip_transition`).
 - **Clock**: service publishing ticks.

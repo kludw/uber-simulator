@@ -7,6 +7,7 @@
 		"dev": "bun src/sim/dev.ts",
 		"ui": "bun src/ui/serve.ts",
 		"db:migrate": "bun src/persistence/migrate.ts",
+		"report": "bun src/analytics/main.ts",
 		"test": "bun test",
 		"typecheck": "tsc && tsc -p src/ui",
 		"lint": "biome ci",
