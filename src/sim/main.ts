@@ -20,7 +20,13 @@ if (!args.ok) {
 	process.exit(2);
 }
 
-const { bus, compare, windowTicks, config } = args.value;
+const { bus, compare, windowTicks, demandName, config } = args.value;
+const { count, driversPerShard } = config.driverShards;
+const loadLines = [
+	`demand: ${demandName}`,
+	`requests per minute: ${config.requestsPerMinute}`,
+	`driver shards: ${count} x ${driversPerShard}`,
+];
 const batched: Matching = { type: "batched", windowTicks };
 
 if (compare) {
@@ -35,6 +41,7 @@ if (compare) {
 	console.log(`seed: ${config.seed}`);
 	console.log(`ticks: ${config.ticks}`);
 	console.log(`batch window: ${windowTicks} ticks`);
+	for (const line of loadLines) console.log(line);
 	printComparison(greedySummary, batchedSummary);
 	printAndFailOnViolations("greedy", greedySummary);
 	printAndFailOnViolations("batched", batchedSummary);
@@ -48,6 +55,7 @@ if (compare) {
 	console.log(
 		`matching: ${matching.type === "batched" ? `batched (window ${windowTicks} ticks)` : "greedy"}`,
 	);
+	for (const line of loadLines) console.log(line);
 	console.log(`drivers: ${summary.drivers}`);
 	console.log(`trips requested: ${summary.trips.requested}`);
 	console.log(`trips completed: ${summary.trips.completed}`);

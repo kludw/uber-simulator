@@ -57,7 +57,7 @@ Seeded headless run at spec scale (500 × 500 grid, 2 shards × 50 drivers, 10 t
 bun run sim -- --seed 42 --ticks 3600
 ```
 
-Prints seed, ticks, matching strategy, drivers, trips requested / completed / cancelled, mean ticks from request to pickup, rejected inputs, and invariant violations (one JSON line each). Exit code 0 ok, 1 invariant violated, 2 invalid args or `NATS_URL`, 3 NATS unreachable.
+Prints seed, ticks, matching strategy, demand model, requests per minute, driver shards (shards × drivers per shard), drivers, trips requested / completed / cancelled, mean ticks from request to pickup, rejected inputs, and invariant violations (one JSON line each). Exit code 0 ok, 1 invariant violated, 2 invalid args or `NATS_URL`, 3 NATS unreachable.
 
 Same run over NATS, each service on its own connection, ticks as fast as the services settle (needs the local NATS server and `NATS_URL`, see Local infra; don't run `bun run dev` on the same server at the same time). Only each publisher's order is guaranteed, so the counts can differ from the in-process run and between runs. The summary starts with `run id: <id>`, a fresh UUID per run carried as the `Run-Id` header on every message ([ADR 0029](docs/adr/0029-event-persistence.md)):
 
@@ -67,7 +67,7 @@ bun run sim -- --seed 42 --ticks 600 --bus nats
 
 ### Compare matching strategies
 
-Runs greedy and batched matching in process on the same seed (riders request the same trips in both) and prints their numbers side by side, then any invariant violations (one JSON line each, tagged with the strategy). Takes `--seed`, `--ticks`, `--batch-window`, `--demand`, `--requests-per-minute`, `--drivers-per-shard`; in process only (`--bus nats` exits 2). Exit code 1 if either run violates an invariant, 2 invalid args.
+Runs greedy and batched matching in process on the same seed (riders request the same trips in both) and prints seed, ticks, batch window, demand model, requests per minute, and driver shards, then their numbers side by side, then any invariant violations (one JSON line each, tagged with the strategy). Takes `--seed`, `--ticks`, `--batch-window`, `--demand`, `--requests-per-minute`, `--drivers-per-shard`; in process only (`--bus nats` exits 2). Exit code 1 if either run violates an invariant, 2 invalid args.
 
 ```bash
 bun run sim -- --compare --seed 42 --ticks 3600 --batch-window 5

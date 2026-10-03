@@ -13,6 +13,8 @@ export type SimArgs = {
 	matching: "greedy" | "batched";
 	// Batched only.
 	windowTicks: number;
+	// For the printed summary; config.demand is the model it names.
+	demandName: z.infer<typeof DemandName>;
 	config: Omit<RunConfig, "matching">;
 };
 
@@ -90,6 +92,7 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 			compare: args.compare,
 			matching: args.matching,
 			windowTicks: args["batch-window"],
+			demandName: args.demand,
 			config: {
 				seed: args.seed,
 				ticks: args.ticks,

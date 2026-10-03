@@ -11,6 +11,7 @@ describe("parseSimArgs", () => {
 				compare: false,
 				matching: "greedy",
 				windowTicks: 5,
+				demandName: "uniform",
 				config: {
 					seed: 1,
 					ticks: 3600,
@@ -36,6 +37,7 @@ describe("parseSimArgs", () => {
 		expect(parsed).toMatchObject({
 			ok: true,
 			value: {
+				demandName: "city",
 				config: {
 					driverShards: { count: 2, driversPerShard: 25 },
 					requestsPerMinute: 30,
