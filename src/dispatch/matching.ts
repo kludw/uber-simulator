@@ -23,33 +23,49 @@ export function minCostMatching(costs: readonly (readonly Cost[])[]): Pair[] {
 			}
 		}
 	}
-	const size = Math.max(rows, columns);
-	// Disallowed and padding cells cost more than any whole set of real pairs, so the optimum
-	// uses as many real pairs as possible. Finite: Infinity breaks the potentials.
-	const sentinel = costs.flat().reduce<number>((sum, c) => sum + (c ?? 0), 1);
-	const cost = (row: number, column: number) =>
-		costs[row]?.[column] ?? sentinel;
+	// Hungarian below needs rows <= columns: solve the transpose otherwise, swap back.
+	const transposed = rows > columns;
+	const matrix = transposed
+		? Array.from({ length: columns }, (_, column) =>
+				costs.map((row) => row[column] ?? null),
+			)
+		: costs;
+	return solve(matrix)
+		.map(({ row, column }) =>
+			transposed ? { row: column, column: row } : { row, column },
+		)
+		.toSorted((a, b) => a.row - b.row);
+}
 
-	// Hungarian algorithm with potentials (shortest augmenting paths), 1-indexed;
-	// index 0 is a virtual column used as the root of each augmenting path.
-	const rowPotential = new Array<number>(size + 1).fill(0);
-	const columnPotential = new Array<number>(size + 1).fill(0);
-	const rowOfColumn = new Array<number>(size + 1).fill(0);
-	const previousColumn = new Array<number>(size + 1).fill(0);
-	for (let row = 1; row <= size; row++) {
+// Rectangular Hungarian with potentials (shortest augmenting paths), rows <= columns,
+// O(rows^2 x columns); 1-indexed, index 0 is a virtual column used as the root of each
+// augmenting path. Every row ends matched; rows matched on a disallowed cell are dropped.
+function solve(costs: readonly (readonly Cost[])[]): Pair[] {
+	const rows = costs.length;
+	const columns = costs[0]?.length ?? 0;
+	// Disallowed cells cost more than any whole set of allowed pairs, so the optimum
+	// uses as many allowed pairs as possible. Finite: Infinity breaks the potentials.
+	const sentinel = costs.flat().reduce<number>((sum, c) => sum + (c ?? 0), 1);
+
+	const rowPotential = new Array<number>(rows + 1).fill(0);
+	const columnPotential = new Array<number>(columns + 1).fill(0);
+	const rowOfColumn = new Array<number>(columns + 1).fill(0);
+	const previousColumn = new Array<number>(columns + 1).fill(0);
+	for (let row = 1; row <= rows; row++) {
 		rowOfColumn[0] = row;
 		let column = 0;
-		const slack = new Array<number>(size + 1).fill(Number.POSITIVE_INFINITY);
-		const visited = new Array<boolean>(size + 1).fill(false);
+		const slack = new Array<number>(columns + 1).fill(Number.POSITIVE_INFINITY);
+		const visited = new Array<boolean>(columns + 1).fill(false);
 		do {
 			visited[column] = true;
 			const currentRow = at(rowOfColumn, column);
+			const currentCosts = costs[currentRow - 1] ?? [];
 			let delta = Number.POSITIVE_INFINITY;
 			let nextColumn = 0;
-			for (let candidate = 1; candidate <= size; candidate++) {
+			for (let candidate = 1; candidate <= columns; candidate++) {
 				if (visited[candidate]) continue;
 				const reduced =
-					cost(currentRow - 1, candidate - 1) -
+					(currentCosts[candidate - 1] ?? sentinel) -
 					at(rowPotential, currentRow) -
 					at(columnPotential, candidate);
 				if (reduced < at(slack, candidate)) {
@@ -61,7 +77,7 @@ export function minCostMatching(costs: readonly (readonly Cost[])[]): Pair[] {
 					nextColumn = candidate;
 				}
 			}
-			for (let candidate = 0; candidate <= size; candidate++) {
+			for (let candidate = 0; candidate <= columns; candidate++) {
 				if (visited[candidate]) {
 					const visitedRow = at(rowOfColumn, candidate);
 					rowPotential[visitedRow] = at(rowPotential, visitedRow) + delta;
@@ -80,12 +96,12 @@ export function minCostMatching(costs: readonly (readonly Cost[])[]): Pair[] {
 	}
 
 	const pairs: Pair[] = [];
-	for (let column = 1; column <= size; column++) {
+	for (let column = 1; column <= columns; column++) {
 		const row = at(rowOfColumn, column) - 1;
 		if (costs[row]?.[column - 1] == null) continue;
 		pairs.push({ row, column: column - 1 });
 	}
-	return pairs.toSorted((a, b) => a.row - b.row);
+	return pairs;
 }
 
 function at(values: readonly number[], index: number): number {
