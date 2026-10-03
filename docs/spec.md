@@ -63,7 +63,8 @@ Watch-only, live-only. Browser canvas: drivers as dots colored by state, waiting
 3. **Distributed**: same services over NATS as separate processes. Infra in Docker, `bun run dev` spawns services; NATS runs break no invariant (`bun run sim -- --bus nats`). Done.
 4. **UI**: live canvas view, served by `bun run ui`, subscribed to NATS events over WebSocket. Done.
 5. **Persistence**: persister -> ClickHouse, first analytics queries (`bun run report`). Done.
+6. **Batched matching** (0030): dispatch strategy switch (greedy | batched every N ticks, min total pickup distance), `bun run sim -- --compare` prints both on one seed.
 
 ## Later (not v1)
 
-Batched matching (compare wait times), driver preferences / rejections, shifts (online/offline), hotspot demand, scaling to 10k+ drivers, replay. Pricing, surge, ratings, real roads, pooling stay out of scope.
+Driver preferences / rejections, shifts (online/offline), hotspot demand, scaling to 10k+ drivers, replay. Pricing, surge, ratings, real roads, pooling stay out of scope.
