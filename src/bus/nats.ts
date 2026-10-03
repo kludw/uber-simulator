@@ -8,6 +8,7 @@ import {
 } from "@nats-io/transport-node";
 import { type Message, parseMessage, type RunId } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
+import { simSubjects, subjectFor } from "../shared/subjects.ts";
 import type { Bus } from "./bus.ts";
 
 export type NatsBus = Bus & { close(): Promise<void> };
@@ -60,7 +61,7 @@ export async function connectNatsBus(options: {
 	} catch (cause) {
 		return failed(cause);
 	}
-	const subscription = connection.subscribe("sim.>");
+	const subscription = connection.subscribe(simSubjects);
 	try {
 		// The server has registered the subscription once flush resolves, so
 		// messages published after connect returns are delivered.
@@ -148,42 +149,4 @@ function decode(received: Msg): Result<Message, DroppedMessage["error"]> {
 		return { ok: false, error: { type: "invalid_json", cause } };
 	}
 	return parseMessage(payload);
-}
-
-// Subject scheme (ADR 0028). Subscribers read sim.> and filter by predicate,
-// so subjects serve wildcard taps (sim.events.>) and readability.
-export function subjectFor(message: Message): string {
-	switch (message.type) {
-		case "clock.ticked":
-		case "driver.went_online":
-		case "driver.went_offline":
-		case "driver.moved":
-		case "driver.arrived_at_pickup":
-		case "driver.arrived_at_dropoff":
-		case "trip.requested":
-		case "trip.offered":
-		case "trip.offer_declined":
-		case "trip.offer_expired":
-		case "trip.matched":
-		case "trip.picked_up":
-		case "trip.completed":
-		case "trip.cancelled":
-			return `sim.events.${message.type}`;
-		case "request_trip":
-		case "cancel_trip":
-			return `sim.commands.${message.type}`;
-		case "offer":
-			return `sim.offers.${message.driverId}`;
-		case "offer_accepted":
-		case "offer_declined":
-		case "request_trip_accepted":
-		case "request_trip_rejected":
-		case "cancel_trip_accepted":
-		case "cancel_trip_rejected":
-			return `sim.replies.${message.type}`;
-		default: {
-			const unhandled: never = message;
-			throw new Error(`no subject for ${JSON.stringify(unhandled)}`);
-		}
-	}
 }

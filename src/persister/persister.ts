@@ -25,6 +25,7 @@ import {
 	type SimEvent,
 } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
+import { simEventSubjects } from "../shared/subjects.ts";
 import { toRow } from "./rows.ts";
 
 // Where the persister reads from. Tests use their own stream and subjects;
@@ -41,7 +42,7 @@ export type EventSource = {
 
 export const simEvents: EventSource = {
 	stream: "SIM_EVENTS",
-	subjects: "sim.events.>",
+	subjects: simEventSubjects,
 	consumer: "persister",
 	ackWaitMs: 60_000,
 };
