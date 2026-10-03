@@ -7,8 +7,9 @@ type Point = { x: number; y: number };
 // CSS pixels.
 type Size = { width: number; height: number };
 
-// Legend colors: the one place a driver state gets its color.
-const driverColors: Record<DriverView["state"], string> = {
+// Legend colors (the side panel shows them, src/ui/panel.ts): the one place a
+// driver state, a waiting rider, or an active trip gets its color.
+export const driverColors: Record<DriverView["state"], string> = {
 	idle: "#8b949e",
 	en_route: "#e3b341",
 	at_pickup: "#f0883e",
@@ -17,8 +18,8 @@ const driverColors: Record<DriverView["state"], string> = {
 };
 const backgroundColor = "#0d1117";
 const cityColor = "#161b22";
-const waitingRiderColor = "#ff7b72";
-const activeTripColor = "rgba(88, 166, 255, 0.35)";
+export const waitingRiderColor = "#ff7b72";
+export const activeTripColor = "rgba(88, 166, 255, 0.35)";
 const driverRadius = 3;
 const waitingRiderSize = 5;
 
