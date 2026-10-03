@@ -40,7 +40,7 @@ Goal: production code that stays easy to change. Complexity is the enemy; every 
 
 ## 4. Functional core, imperative shell
 
-1. Core: pure functions over immutable data. No I/O, no clock, no randomness except injected (see `simulation` skill).
+1. Core: pure functions (no I/O, no clock, deterministic) over immutable inputs. A brain may update containers it owns inside its own state in place (ADR 0033); messages and value objects stay immutable. No I/O, no clock, no randomness except injected (see `simulation` skill).
 2. Shell: runners + adapters (NATS, ClickHouse, UI). Thin: translate, call core, perform effects.
 3. Dependencies point inward: core imports nothing from shell.
 

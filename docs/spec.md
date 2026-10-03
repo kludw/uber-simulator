@@ -68,7 +68,8 @@ Watch-only, live-only. Browser canvas: drivers as dots colored by state, waiting
 6. **Batched matching** (0030): dispatch strategy switch (greedy | batched every N ticks, min total pickup distance), `bun run sim -- --compare` prints both on one seed. Done.
 7. **Hotspot demand** (0031): rider demand model (uniform | hotspots, `city` preset), configurable demand rate and fleet size in `bun run sim` / `--compare`. Done.
 8. **Driver shifts** (0032): drivers alternate online/offline periods (finish trips first), dispatch/UI/invariants handle offline drivers, `--shifts on|off`. Done.
+9. **Scale to 10k drivers** (0033): profile-first (`docs/performance.md`), owned brain state for dispatch positions, rectangular matching, streaming run checks; target p95 < 1 s per tick at 10k.
 
 ## Later (not v1)
 
-Driver preferences / rejections, scaling to 10k+ drivers, replay. Pricing, surge, ratings, real roads, pooling stay out of scope.
+Driver preferences / rejections, replay. Pricing, surge, ratings, real roads, pooling stay out of scope.

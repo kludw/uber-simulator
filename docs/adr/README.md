@@ -36,3 +36,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0030 | [Batched matching](0030-batched-matching.md)                            | Accepted |
 | 0031 | [Hotspot demand](0031-hotspot-demand.md)                                | Accepted |
 | 0032 | [Driver shifts](0032-driver-shifts.md)                                  | Accepted |
+| 0033 | [Scale fixes](0033-scale-fixes.md)                                      | Accepted |
