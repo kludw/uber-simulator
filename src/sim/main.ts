@@ -3,6 +3,7 @@
 // 3 NATS unreachable.
 import { parseArgs } from "node:util";
 import * as z from "zod";
+import { specGrid } from "../shared/grid.ts";
 import {
 	type RunConfig,
 	type RunResult,
@@ -54,12 +55,12 @@ if (!args.success) {
 	process.exit(2);
 }
 
-// Spec defaults (docs/spec.md): 500 x 500 grid, 2 shards x 50 drivers,
+// Spec defaults (docs/spec.md): spec grid, 2 shards x 50 drivers,
 // 10 trip requests/min.
 const { bus, ...runArgs } = args.data;
 const config = {
 	...runArgs,
-	grid: { width: 500, height: 500 },
+	grid: specGrid,
 	driverShards: { count: 2, driversPerShard: 50 },
 	requestsPerMinute: 10,
 };
