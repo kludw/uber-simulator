@@ -1,14 +1,19 @@
 // `bun run report`: per-run analytics from ClickHouse (ADR 0029).
 // `--list` lists stored runs, `--run <id>` reports one. Exit codes: 0 ok,
-// 1 unknown run, ClickHouse unreachable or a query failed, 2 invalid args or
-// config.
+// 1 unknown run, 2 invalid args or config, 3 ClickHouse unreachable or a
+// query failed.
 import { parseArgs } from "node:util";
 import * as z from "zod";
 import { connectClickHouse } from "../persistence/clickhouse.ts";
 import { RunId } from "../shared/messages.ts";
 import { parseClickHouseConfig } from "../sim/config.ts";
 import { log, orExit } from "../sim/process.ts";
-import { listRuns, type RunReport, runReport } from "./report.ts";
+import {
+	listRuns,
+	type RunReport,
+	reportExitCode,
+	runReport,
+} from "./report.ts";
 
 const service = "report";
 
@@ -42,7 +47,7 @@ const config = orExit(service, parseClickHouseConfig(Bun.env));
 const connected = await connectClickHouse(config);
 if (!connected.ok) {
 	log(service, connected.error);
-	process.exit(1);
+	process.exit(reportExitCode(connected.error));
 }
 const clickhouse = connected.value;
 process.exitCode =
@@ -53,7 +58,7 @@ async function printRuns(): Promise<number> {
 	const runs = await listRuns(clickhouse);
 	if (!runs.ok) {
 		log(service, runs.error);
-		return 1;
+		return reportExitCode(runs.error);
 	}
 	if (runs.value.length === 0) console.log("no runs stored");
 	for (const run of runs.value) {
@@ -67,21 +72,14 @@ async function printRuns(): Promise<number> {
 async function printReport(runId: RunId): Promise<number> {
 	const report = await runReport(clickhouse, runId);
 	if (!report.ok) {
-		switch (report.error.type) {
-			case "unknown_run":
-				console.error(
-					`unknown run id: ${runId} (bun run report -- --list shows stored runs)`,
-				);
-				return 1;
-			case "clickhouse_connect_failed":
-			case "clickhouse_request_failed":
-				log(service, report.error);
-				return 1;
-			default: {
-				const unhandled: never = report.error;
-				throw new Error(`unhandled report error: ${unhandled}`);
-			}
+		if (report.error.type === "unknown_run") {
+			console.error(
+				`unknown run id: ${runId} (bun run report -- --list shows stored runs)`,
+			);
+		} else {
+			log(service, report.error);
 		}
+		return reportExitCode(report.error);
 	}
 	print(runId, report.value);
 	return 0;
