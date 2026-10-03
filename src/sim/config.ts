@@ -1,5 +1,6 @@
 import * as z from "zod";
 import type { ClickHouseConfig } from "../persistence/clickhouse.ts";
+import { cityDemand, type Demand } from "../rider/demand.ts";
 import { specGrid } from "../shared/grid.ts";
 import { RunId } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
@@ -28,6 +29,13 @@ const integer = z
 	.regex(z.regexes.integer, { error: "expected an integer" })
 	.transform(Number);
 
+// Demand models selectable by name, from env (DEMAND) or the CLI (--demand).
+export const DemandName = z.enum(["uniform", "city"]);
+
+export function demandNamed(name: z.infer<typeof DemandName>): Demand {
+	return name === "city" ? cityDemand : { type: "uniform" };
+}
+
 const Env = z.object({
 	NATS_URL: z.url(),
 	RUN_ID: RunId,
@@ -54,6 +62,8 @@ const Env = z.object({
 	// Dispatch only (ADR 0030). The window applies to batched alone.
 	MATCHING: z.enum(["greedy", "batched"]).default("greedy"),
 	BATCH_WINDOW_TICKS: integer.pipe(z.int().positive()).default(5),
+	// Riders only (ADR 0031).
+	DEMAND: DemandName.default("uniform"),
 });
 
 export function parseServiceConfig(
@@ -80,6 +90,7 @@ export function parseServiceConfig(
 				vars.MATCHING === "batched"
 					? { type: "batched", windowTicks: vars.BATCH_WINDOW_TICKS }
 					: { type: "greedy" },
+			demand: demandNamed(vars.DEMAND),
 		},
 	};
 }

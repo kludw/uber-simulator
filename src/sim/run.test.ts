@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { connect } from "@nats-io/transport-node";
 import * as z from "zod";
 import type { Matching } from "../dispatch/brain.ts";
+import { cityDemand } from "../rider/demand.ts";
+import { Cell, distance } from "../shared/grid.ts";
 import { checkInvariants } from "./invariants.ts";
 import {
 	type RunConfig,
@@ -80,6 +82,55 @@ describe("runInProcess", () => {
 			expect(checkInvariants(eventLog, grid)).toEqual([]);
 		},
 		// A simulated hour takes seconds in process.
+		30_000,
+	);
+
+	// ADR 0031: downtown is (250, 250), radius 50, about 2% of the spec grid,
+	// so uniform demand puts few pickups there and city demand nearly half.
+	test("city demand puts most pickups downtown that uniform demand spreads out", () => {
+		const config = {
+			seed: 1,
+			ticks: 600,
+			grid: { width: 500, height: 500 },
+			driverShards: { count: 1, driversPerShard: 10 },
+			requestsPerMinute: 60,
+		};
+		const downtownShare = (result: RunResult) => {
+			const pickups = result.eventLog.flatMap((message) =>
+				message.type === "trip.requested" ? [message.pickup] : [],
+			);
+			const downtown = pickups.filter(
+				(pickup) => distance(pickup, Cell.parse({ x: 250, y: 250 })) <= 50,
+			);
+			return downtown.length / pickups.length;
+		};
+
+		expect({
+			uniform: downtownShare(runInProcess(config)) < 0.1,
+			city:
+				downtownShare(runInProcess({ ...config, demand: cityDemand })) > 0.3,
+		}).toEqual({ uniform: true, city: true });
+	});
+
+	test.each<[string, Matching]>([
+		["greedy", { type: "greedy" }],
+		["batched", { type: "batched", windowTicks: 5 }],
+	])(
+		"a 3600-tick %s run under city demand breaks no invariant",
+		(_, matching) => {
+			const grid = { width: 500, height: 500 };
+			const { eventLog } = runInProcess({
+				seed: 1,
+				ticks: 3600,
+				grid,
+				driverShards: { count: 2, driversPerShard: 50 },
+				requestsPerMinute: 10,
+				matching,
+				demand: cityDemand,
+			});
+
+			expect(checkInvariants(eventLog, grid)).toEqual([]);
+		},
 		30_000,
 	);
 

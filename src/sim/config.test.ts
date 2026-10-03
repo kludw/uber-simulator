@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { cityDemand } from "../rider/demand.ts";
 import { RunId } from "../shared/messages.ts";
 import {
 	parseClickHouseConfig,
@@ -27,7 +28,31 @@ describe("parseServiceConfig", () => {
 				driverShards: { count: 2, driversPerShard: 50 },
 				requestsPerMinute: 10,
 				matching: { type: "greedy" },
+				demand: { type: "uniform" },
 			},
+		});
+	});
+
+	test("DEMAND=city spawns riders by the city preset", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			DEMAND: "city",
+		});
+
+		expect(parsed).toMatchObject({ ok: true, value: { demand: cityDemand } });
+	});
+
+	test("names an unknown DEMAND", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			DEMAND: "rush_hour",
+		});
+
+		expect(parsed).toMatchObject({
+			ok: false,
+			error: { type: "invalid_config", issues: [{ variable: "DEMAND" }] },
 		});
 	});
 

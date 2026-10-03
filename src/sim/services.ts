@@ -12,6 +12,7 @@ import {
 	startDriverShard,
 } from "../driver/brain.ts";
 import { decideRiders, type RidersInput, startRiders } from "../rider/brain.ts";
+import type { Demand } from "../rider/demand.ts";
 import type { Grid } from "../shared/grid.ts";
 import {
 	DriverId,
@@ -30,6 +31,8 @@ export type SimConfig = {
 	requestsPerMinute: number;
 	// Dispatch's strategy (ADR 0030); greedy when unset.
 	matching?: Matching | undefined;
+	// Riders' demand model (ADR 0031); uniform when unset.
+	demand?: Demand | undefined;
 };
 
 export type Rejected = InputRejected<Message, string>;
@@ -142,6 +145,7 @@ export function ridersService(config: SimConfig): SimService {
 					state: startRiders({
 						grid: config.grid,
 						requestsPerMinute: config.requestsPerMinute,
+						demand: config.demand,
 					}),
 					outputs: [],
 				},
