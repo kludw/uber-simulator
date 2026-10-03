@@ -2,7 +2,7 @@
 
 What lives where and how it connects. Behavior: [spec.md](spec.md). Why: [ADRs](adr/README.md). Terms: `.claude/skills/domain/SKILL.md`.
 
-Current state: milestones 2, 3, and 4 done. `bun run sim` runs everything in one process over an in-memory bus, or with `--bus nats` each service on its own NATS connection. Each service also runs as its own process over NATS ([0019](adr/0019-single-package-multiple-entrypoints.md), [0028](adr/0028-nats-bus-subjects-and-delivery.md)), all spawned by `bun run dev`. Integration tests check invariants on NATS runs. `bun run ui` serves the browser UI, which subscribes to NATS events over WebSocket. ClickHouse (5) is not built yet. Local NATS server runs via Docker Compose (see Local infra).
+Current state: milestones 2, 3, and 4 done. `bun run sim` runs everything in one process over an in-memory bus, or with `--bus nats` each service on its own NATS connection. Each service also runs as its own process over NATS ([0019](adr/0019-single-package-multiple-entrypoints.md), [0028](adr/0028-nats-bus-subjects-and-delivery.md)), all spawned by `bun run dev`. Integration tests check invariants on NATS runs. `bun run ui` serves the browser UI, which subscribes to NATS events over WebSocket. Milestone 5 (ClickHouse) in progress: local ClickHouse, the `events` table, and its adapter exist; nothing writes events to it yet. Local NATS and ClickHouse run via Docker Compose (see Local infra).
 
 ## Components
 
@@ -18,7 +18,7 @@ Current state: milestones 2, 3, and 4 done. `bun run sim` runs everything in one
 | Service shell | `src/bus/service.ts` | runs any brain on the bus: feeds accepted messages to `decide`, publishes outputs, logs `input_rejected` | [0026](adr/0026-brains-reject-invalid-inputs.md), [0027](adr/0027-in-process-bus-and-runner.md) |
 | Service wiring | `src/sim/services.ts` | per service (driver shard, dispatch, riders): name, seed stream, start config, `accepts` predicate, driver IDs and shard ownership. Shared by the runner and the entrypoints so both run identical services | [0017](adr/0017-independent-actor-services-with-pure-brains.md), [0023](adr/0023-own-seeded-prng.md) |
 | Runner | `src/sim/run.ts` | starts driver shards, dispatch, riders; acts as clock; returns event log + rejected inputs. `runInProcess`: one in-memory bus, `drain()` after each tick, same config gives the same log. `runOverNats`: one NATS connection per service plus one recording `sim.>` and publishing ticks; a tick has settled once nothing arrives for 10 ms; log differs between runs (only per-publisher order, 0028) | [0027](adr/0027-in-process-bus-and-runner.md) |
-| Service config | `src/sim/config.ts` | `parseServiceConfig(env)` (Zod): NATS URL, seed, speed, clock start delay, shard sizes, demand; `parseShardIndex` for driver processes; `parseUiConfig` for the UI server | [0005](adr/0005-use-zod-for-validation.md) |
+| Service config | `src/sim/config.ts` | `parseServiceConfig(env)` (Zod): NATS URL, seed, speed, clock start delay, shard sizes, demand; `parseShardIndex` for driver processes; `parseUiConfig` for the UI server; `parseClickHouseConfig` for ClickHouse clients | [0005](adr/0005-use-zod-for-validation.md) |
 | Process shell | `src/sim/process.ts` | for every entrypoint: reads config, connects the NATS bus, JSON log lines tagged with the service, closes the bus on SIGINT/SIGTERM, exit codes | [0019](adr/0019-single-package-multiple-entrypoints.md) |
 | Entrypoints | `src/dispatch/main.ts`, `src/rider/main.ts`, `src/driver/main.ts` (`SHARD_INDEX`) | one service process each: process shell + service wiring | [0019](adr/0019-single-package-multiple-entrypoints.md) |
 | Clock | `src/clock/main.ts`, `schedule.ts` | the only wall-time pacer: waits the start delay, then publishes `clock.ticked` from tick 1, due at fixed times 1 s / speed apart (`tickDueAt`, so late ticks don't drift the schedule) | [0008](adr/0008-deterministic-tick-based-simulation.md) |
@@ -30,9 +30,11 @@ Current state: milestones 2, 3, and 4 done. `bun run sim` runs everything in one
 | UI side panel | `src/ui/panel.ts` | `panelRows(view)`: label, value, and swatch per row: tick, drivers per state, waiting riders, active trips, trips completed / cancelled, mean ticks to pickup. Swatches use the renderer's colors and shapes, so the panel is the canvas's legend | [0020](adr/0020-browser-ui-canvas-nats-websocket.md) |
 | UI page | `src/ui/index.html`, `src/ui/main.ts` | browser entry: fetches `/config.json`, `wsconnect` (retries forever, before the first connection too), subscribes `sim.events.>`, parses each payload with `parseMessage` (invalid or non-event ones `console.warn`ed, dropped), `applyEvent`, `renderer.show`, side panel redrawn at most once per frame, connection status (connecting / live / disconnected) | [0020](adr/0020-browser-ui-canvas-nats-websocket.md) |
 | UI server | `src/ui/serve.ts` (`bun run ui`) | `Bun.serve` HTML import: bundles and serves the page on `UI_PORT` (default 3000), serves `NATS_WS_URL` as `/config.json` (env via `parseUiConfig` + `orExit`, exit 2 if invalid) | [0019](adr/0019-single-package-multiple-entrypoints.md), [0020](adr/0020-browser-ui-canvas-nats-websocket.md) |
+| ClickHouse adapter | `src/persistence/clickhouse.ts` | `connectClickHouse(config)`: `@clickhouse/client`, pinged with a `SELECT` so bad credentials fail at connect. `insertEvents(rows)` (`EventRow` -> `events` columns, async insert with wait), `query(sql, params)` (rows unvalidated, callers parse), `command(sql)`, `close()`. `migrate(clickhouse)` applies `infra/clickhouse/*.sql` in name order, every file every time (each idempotent). All failures are `Result`s | [0013](adr/0013-clickhouse-client.md), [0029](adr/0029-event-persistence.md) |
+| Migrate | `src/persistence/migrate.ts` (`bun run db:migrate`) | config, connect, `migrate`, JSON log line, exit codes | [0029](adr/0029-event-persistence.md) |
 | CLI | `src/sim/main.ts` (`bun run sim`) | parses args (Zod), runs in process or `--bus nats` (`NATS_URL`), prints summary, sets exit code | [0005](adr/0005-use-zod-for-validation.md), [0019](adr/0019-single-package-multiple-entrypoints.md) |
 
-Brains are the functional core: pure, seeded, no I/O ([0017](adr/0017-independent-actor-services-with-pure-brains.md), `simulation` skill). Shell: `src/bus/`, `src/sim/` (except invariants and summary), `src/*/main.ts`, `startRenderer` in `src/ui/render.ts`, `src/ui/main.ts`, `src/ui/serve.ts`. Invariant checker, summary, UI view, UI side panel, and the renderer's `cellToPixel` / `driverPosition` / `observeTick` / `tickFraction` are pure but not brains. Dependencies point inward: brains import only `src/shared/`.
+Brains are the functional core: pure, seeded, no I/O ([0017](adr/0017-independent-actor-services-with-pure-brains.md), `simulation` skill). Shell: `src/bus/`, `src/persistence/`, `src/sim/` (except invariants and summary), `src/*/main.ts`, `startRenderer` in `src/ui/render.ts`, `src/ui/main.ts`, `src/ui/serve.ts`. Invariant checker, summary, UI view, UI side panel, and the renderer's `cellToPixel` / `driverPosition` / `observeTick` / `tickFraction` are pure but not brains. Dependencies point inward: brains import only `src/shared/`.
 
 ## Data flow
 
@@ -72,13 +74,14 @@ Services never call each other: commands (`request_trip`, `cancel_trip`), offers
 
 ## Local infra
 
-Docker Compose ([0012](adr/0012-use-docker-compose-for-local-infra.md)), `compose.yaml`; app runs on the host via Bun. The NATS bus integration tests and `bun run dev` connect (`NATS_URL`; CI runs a plain `nats` service container for the tests).
+Docker Compose ([0012](adr/0012-use-docker-compose-for-local-infra.md)), `compose.yaml`; app runs on the host via Bun. The NATS bus integration tests and `bun run dev` connect (`NATS_URL`; CI runs a plain `nats` service container for the tests). ClickHouse adapter tests and `bun run db:migrate` connect to ClickHouse (`CLICKHOUSE_*`; CI runs the same image as a service container).
 
 | Service | Image | Ports | Config |
 | --- | --- | --- | --- |
 | NATS | `nats:2.15.0-alpine` | 4222 clients, 8222 monitoring (`/healthz` = healthcheck), 9222 websocket (no TLS, local only) | `infra/nats.conf`: JetStream on named volume `nats-data` (`/data`), websocket for the UI ([0020](adr/0020-browser-ui-canvas-nats-websocket.md), [0028](adr/0028-nats-bus-subjects-and-delivery.md)) |
+| ClickHouse | `clickhouse/clickhouse-server:26.9.8.3` | 8123 HTTP (app client; `/ping` = healthcheck via the image's `wget`), 9000 native | env `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` / `CLICKHOUSE_DB` (from `.env`, default `sim`) creates user and database on first start; data on named volume `clickhouse-data`; `nofile` ulimit 262144 per image docs. Tables: `infra/clickhouse/*.sql` via `bun run db:migrate` ([0029](adr/0029-event-persistence.md)) |
 
-Client URLs: `.env.example` (`NATS_URL`, `NATS_WS_URL`). The browser UI connects to the websocket port (`NATS_WS_URL`), everything else to `NATS_URL`.
+Client URLs: `.env.example` (`NATS_URL`, `NATS_WS_URL`, `CLICKHOUSE_URL` plus user, password, database). The browser UI connects to the websocket port (`NATS_WS_URL`), everything else to `NATS_URL`.
 
 ## Where decisions live
 
@@ -92,4 +95,5 @@ Client URLs: `.env.example` (`NATS_URL`, `NATS_WS_URL`). The browser UI connects
 - NATS subject per message: `subjectFor` in `src/bus/nats.ts` ([0028](adr/0028-nats-bus-subjects-and-delivery.md)).
 - Rejected-input handling: brains emit, shell logs ([0026](adr/0026-brains-reject-invalid-inputs.md)).
 - Default run config (spec scale) and exit codes: `src/sim/main.ts`.
+- `events` table DDL: `infra/clickhouse/001_events.sql` ([0029](adr/0029-event-persistence.md)); row -> column encoding: `src/persistence/clickhouse.ts`.
 - Legend colors and drawing shapes: `src/ui/render.ts`; the side panel reuses them.

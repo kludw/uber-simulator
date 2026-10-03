@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+	parseClickHouseConfig,
 	parseServiceConfig,
 	parseShardIndex,
 	parseUiConfig,
@@ -117,6 +118,46 @@ describe("parseUiConfig", () => {
 		).toMatchObject({
 			ok: false,
 			error: { type: "invalid_config", issues: [{ variable: "NATS_WS_URL" }] },
+		});
+	});
+});
+
+describe("parseClickHouseConfig", () => {
+	test("reads the connection settings", () => {
+		expect(
+			parseClickHouseConfig({
+				CLICKHOUSE_URL: "http://localhost:8123",
+				CLICKHOUSE_USER: "sim",
+				CLICKHOUSE_PASSWORD: "secret",
+				CLICKHOUSE_DB: "sim",
+			}),
+		).toEqual({
+			ok: true,
+			value: {
+				url: "http://localhost:8123",
+				username: "sim",
+				password: "secret",
+				database: "sim",
+			},
+		});
+	});
+
+	test("names every invalid or missing variable", () => {
+		expect(
+			parseClickHouseConfig({
+				CLICKHOUSE_URL: "nats://localhost:4222",
+				CLICKHOUSE_PASSWORD: "",
+			}),
+		).toMatchObject({
+			ok: false,
+			error: {
+				type: "invalid_config",
+				issues: [
+					{ variable: "CLICKHOUSE_URL" },
+					{ variable: "CLICKHOUSE_USER" },
+					{ variable: "CLICKHOUSE_DB" },
+				],
+			},
 		});
 	});
 });

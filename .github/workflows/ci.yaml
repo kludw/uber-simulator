@@ -20,8 +20,28 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      # For the ClickHouse adapter integration tests; same image and
+      # healthcheck as compose.yaml.
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.9.8.3
+        ports:
+          - 8123:8123
+        env:
+          CLICKHOUSE_USER: sim
+          CLICKHOUSE_PASSWORD: sim
+          CLICKHOUSE_DB: sim
+        options: >-
+          --ulimit nofile=262144:262144
+          --health-cmd "wget -q --spider http://localhost:8123/ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       NATS_URL: nats://localhost:4222
+      CLICKHOUSE_URL: http://localhost:8123
+      CLICKHOUSE_USER: sim
+      CLICKHOUSE_PASSWORD: sim
+      CLICKHOUSE_DB: sim
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2

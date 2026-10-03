@@ -12,7 +12,7 @@ import {
 import type { SimService } from "./services.ts";
 
 // One JSON line per entry on stdout, tagged with the service.
-function log(
+export function log(
 	service: string,
 	entry: { type: string; [field: string]: unknown },
 ): void {

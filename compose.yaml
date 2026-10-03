@@ -17,5 +17,31 @@ services:
       retries: 10
       start_period: 5s
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.9.8.3
+    # Same variables the app reads (.env, see .env.example); the image creates
+    # this user and database on first start.
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-sim}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-sim}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-sim}
+    ports:
+      - "8123:8123" # HTTP (app client)
+      - "9000:9000" # native (clickhouse-client)
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      # /ping needs no credentials; the image ships wget, not curl.
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
 volumes:
   nats-data:
+  clickhouse-data:
