@@ -49,12 +49,13 @@ import {
 // Online driver cells as last reported in events; may be stale (ADR 0018):
 // a driver offered a trip on the tick it went offline declines (ADR 0032).
 // tick: last clock tick, stamped on events caused by non-tick inputs.
+// driverCells is owned and updated in place (ADR 0033).
 export type DispatchState = {
 	grid: Grid;
 	tick: Tick;
 	matching: Matching;
 	trips: ReadonlyMap<TripId, Trip>;
-	driverCells: ReadonlyMap<DriverId, Cell>;
+	driverCells: Map<DriverId, Cell>;
 };
 
 // ADR 0030: batched matches only on ticks that are multiples of windowTicks.
@@ -349,20 +350,16 @@ function onDriverReported(
 	state: DispatchState,
 	report: DriverWentOnline | DriverMoved,
 ): Decision {
-	const driverCells = new Map(state.driverCells).set(
-		report.driverId,
-		report.cell,
-	);
-	return { state: { ...state, driverCells }, outputs: [] };
+	state.driverCells.set(report.driverId, report.cell);
+	return { state, outputs: [] };
 }
 
 function onDriverWentOffline(
 	state: DispatchState,
 	wentOffline: DriverWentOffline,
 ): Decision {
-	const driverCells = new Map(state.driverCells);
-	driverCells.delete(wentOffline.driverId);
-	return { state: { ...state, driverCells }, outputs: [] };
+	state.driverCells.delete(wentOffline.driverId);
+	return { state, outputs: [] };
 }
 
 // Replies to offers already declined, expired, or cancelled with their trip
