@@ -26,6 +26,51 @@ describe("parseServiceConfig", () => {
 				grid: { width: 500, height: 500 },
 				driverShards: { count: 2, driversPerShard: 50 },
 				requestsPerMinute: 10,
+				matching: { type: "greedy" },
+			},
+		});
+	});
+
+	test("MATCHING=batched matches every BATCH_WINDOW_TICKS ticks", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			MATCHING: "batched",
+			BATCH_WINDOW_TICKS: "10",
+		});
+
+		expect(parsed).toMatchObject({
+			ok: true,
+			value: { matching: { type: "batched", windowTicks: 10 } },
+		});
+	});
+
+	test("MATCHING=batched without a window defaults it to 5 ticks", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			MATCHING: "batched",
+		});
+
+		expect(parsed).toMatchObject({
+			ok: true,
+			value: { matching: { type: "batched", windowTicks: 5 } },
+		});
+	});
+
+	test("names an unknown MATCHING and a non-positive BATCH_WINDOW_TICKS", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			MATCHING: "fastest",
+			BATCH_WINDOW_TICKS: "0",
+		});
+
+		expect(parsed).toMatchObject({
+			ok: false,
+			error: {
+				type: "invalid_config",
+				issues: [{ variable: "MATCHING" }, { variable: "BATCH_WINDOW_TICKS" }],
 			},
 		});
 	});

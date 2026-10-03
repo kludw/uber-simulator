@@ -51,6 +51,9 @@ const Env = z.object({
 	DRIVER_SHARDS: integer.pipe(z.int().positive()).default(2),
 	DRIVERS_PER_SHARD: integer.pipe(z.int().positive()).default(50),
 	REQUESTS_PER_MINUTE: integer.pipe(z.int().min(0)).default(10),
+	// Dispatch only (ADR 0030). The window applies to batched alone.
+	MATCHING: z.enum(["greedy", "batched"]).default("greedy"),
+	BATCH_WINDOW_TICKS: integer.pipe(z.int().positive()).default(5),
 });
 
 export function parseServiceConfig(
@@ -73,6 +76,10 @@ export function parseServiceConfig(
 				driversPerShard: vars.DRIVERS_PER_SHARD,
 			},
 			requestsPerMinute: vars.REQUESTS_PER_MINUTE,
+			matching:
+				vars.MATCHING === "batched"
+					? { type: "batched", windowTicks: vars.BATCH_WINDOW_TICKS }
+					: { type: "greedy" },
 		},
 	};
 }
