@@ -2,7 +2,7 @@
 
 What lives where and how it connects. Behavior: [spec.md](spec.md). Why: [ADRs](adr/README.md). Terms: `.claude/skills/domain/SKILL.md`.
 
-Current state: milestones 2 and 3 done. `bun run sim` runs everything in one process over an in-memory bus, or with `--bus nats` each service on its own NATS connection. Each service also runs as its own process over NATS ([0019](adr/0019-single-package-multiple-entrypoints.md), [0028](adr/0028-nats-bus-subjects-and-delivery.md)), all spawned by `bun run dev`. Integration tests check invariants on NATS runs. UI (4) in progress: its view model and canvas renderer are built, the page and NATS wiring are not. ClickHouse (5) is not built yet. Local NATS server runs via Docker Compose (see Local infra).
+Current state: milestones 2, 3, and 4 done. `bun run sim` runs everything in one process over an in-memory bus, or with `--bus nats` each service on its own NATS connection. Each service also runs as its own process over NATS ([0019](adr/0019-single-package-multiple-entrypoints.md), [0028](adr/0028-nats-bus-subjects-and-delivery.md)), all spawned by `bun run dev`. Integration tests check invariants on NATS runs. `bun run ui` serves the browser UI, which subscribes to NATS events over WebSocket. ClickHouse (5) is not built yet. Local NATS server runs via Docker Compose (see Local infra).
 
 ## Components
 
@@ -26,10 +26,13 @@ Current state: milestones 2 and 3 done. `bun run sim` runs everything in one pro
 | Invariant checker | `src/sim/invariants.ts` | spec invariants from the event log alone, own trip model | [0017](adr/0017-independent-actor-services-with-pure-brains.md) |
 | Summary | `src/sim/summary.ts` | run result -> counts, mean ticks to pickup, violations | - |
 | UI view | `src/ui/view.ts` | `applyEvent(view, event)`: drivers (cell, previous cell, tick moved, state), waiting riders, active trips, counters, from `sim.events.>` alone. Tolerates a mid-run join: a driver first seen moving is shown idle, first seen arriving at its arrival cell. Ignores an arrival for a known idle driver (late over NATS, 0028) | [0020](adr/0020-browser-ui-canvas-nats-websocket.md) |
-| UI renderer | `src/ui/render.ts` | `startRenderer(canvas, grid).show(view)`: draws the latest view each animation frame. Grid fitted square and letterboxed (`cellToPixel`), backing store scaled by `devicePixelRatio`. Drivers as dots colored by state (legend colors defined once there), waiting riders as hollow squares, active trips as thin pickup -> dropoff lines. A driver that moved on the current tick slides from previous to current cell (`driverPosition`); fraction (`tickFraction`) = time since the latest tick's arrival / time between the last two arrivals (`observeTick`), capped at 1. Type-checked with DOM types via `src/ui/tsconfig.json`; the root config excludes `src/ui` so server code can't use browser globals | [0020](adr/0020-browser-ui-canvas-nats-websocket.md) |
+| UI renderer | `src/ui/render.ts` | `startRenderer(canvas, grid).show(view)`: draws the latest view each animation frame. Grid fitted square and letterboxed (`cellToPixel`), backing store scaled by `devicePixelRatio`. Drivers as dots colored by state (legend colors defined once there), waiting riders as hollow squares, active trips as thin pickup -> dropoff lines. A driver that moved on the current tick slides from previous to current cell (`driverPosition`); fraction (`tickFraction`) = time since the latest tick's arrival / time between the last two arrivals (`observeTick`), capped at 1, and 1 when the last two arrived in the same millisecond. Type-checked with DOM types via `src/ui/tsconfig.json`; the root config excludes `src/ui` so server code can't use browser globals | [0020](adr/0020-browser-ui-canvas-nats-websocket.md) |
+| UI side panel | `src/ui/panel.ts` | `panelRows(view)`: label, value, and swatch per row: tick, drivers per state, waiting riders, active trips, trips completed / cancelled, mean ticks to pickup. Swatches use the renderer's colors and shapes, so the panel is the canvas's legend | [0020](adr/0020-browser-ui-canvas-nats-websocket.md) |
+| UI page | `src/ui/index.html`, `src/ui/main.ts` | browser entry: fetches `/config.json`, `wsconnect` (retries forever, before the first connection too), subscribes `sim.events.>`, parses each payload with `parseMessage` (invalid or non-event ones `console.warn`ed, dropped), `applyEvent`, `renderer.show`, side panel redrawn at most once per frame, connection status (connecting / live / disconnected) | [0020](adr/0020-browser-ui-canvas-nats-websocket.md) |
+| UI server | `src/ui/serve.ts` (`bun run ui`) | `Bun.serve` HTML import: bundles and serves the page on `UI_PORT` (default 3000), serves `NATS_WS_URL` as `/config.json` (env Zod-validated, exit 2 if invalid) | [0019](adr/0019-single-package-multiple-entrypoints.md), [0020](adr/0020-browser-ui-canvas-nats-websocket.md) |
 | CLI | `src/sim/main.ts` (`bun run sim`) | parses args (Zod), runs in process or `--bus nats` (`NATS_URL`), prints summary, sets exit code | [0005](adr/0005-use-zod-for-validation.md), [0019](adr/0019-single-package-multiple-entrypoints.md) |
 
-Brains are the functional core: pure, seeded, no I/O ([0017](adr/0017-independent-actor-services-with-pure-brains.md), `simulation` skill). Shell: `src/bus/`, `src/sim/` (except invariants and summary), `src/*/main.ts`, `startRenderer` in `src/ui/render.ts`. Invariant checker, summary, UI view, and the renderer's `cellToPixel` / `driverPosition` / `observeTick` / `tickFraction` are pure but not brains. Dependencies point inward: brains import only `src/shared/`.
+Brains are the functional core: pure, seeded, no I/O ([0017](adr/0017-independent-actor-services-with-pure-brains.md), `simulation` skill). Shell: `src/bus/`, `src/sim/` (except invariants and summary), `src/*/main.ts`, `startRenderer` in `src/ui/render.ts`, `src/ui/main.ts`, `src/ui/serve.ts`. Invariant checker, summary, UI view, UI side panel, and the renderer's `cellToPixel` / `driverPosition` / `observeTick` / `tickFraction` are pure but not brains. Dependencies point inward: brains import only `src/shared/`.
 
 ## Data flow
 
@@ -53,6 +56,16 @@ clock: wait CLOCK_START_DELAY_MS, then clock.ticked every 1 s / SPEED --> NATS s
 every message: publisher --NATS sim.>--> every service's subscription --accepts--> its brain
 ```
 
+Browser UI (`bun run ui`):
+
+```
+serve.ts --GET /--> index.html + bundled main.ts; --GET /config.json--> { natsWsUrl }
+main.ts --wsconnect NATS_WS_URL--> subscribe sim.events.> --parseMessage--> applyEvent --> view
+view --> startRenderer.show (canvas, each animation frame) + panelRows (side panel)
+```
+
+The UI only subscribes; it builds its view from events alone and joins mid-run (ADR 0020).
+
 The start delay is what orders tick 1 after the other services subscribed; nothing waits for them explicitly. A lost `driver.went_online` costs nothing lasting: dispatch also learns drivers from `driver.moved`.
 
 Services never call each other: commands (`request_trip`, `cancel_trip`), offers, replies, and events are all bus messages. Dispatch is the only source of `trip.*` events ([0018](adr/0018-dispatch-matching-via-offers.md)). Offers reach only the shard owning the driver via the shard's subscription predicate.
@@ -65,7 +78,7 @@ Docker Compose ([0012](adr/0012-use-docker-compose-for-local-infra.md)), `compos
 | --- | --- | --- | --- |
 | NATS | `nats:2.15.0-alpine` | 4222 clients, 8222 monitoring (`/healthz` = healthcheck), 9222 websocket (no TLS, local only) | `infra/nats.conf`: JetStream on named volume `nats-data` (`/data`), websocket for the UI ([0020](adr/0020-browser-ui-canvas-nats-websocket.md), [0028](adr/0028-nats-bus-subjects-and-delivery.md)) |
 
-Client URLs: `.env.example` (`NATS_URL`, `NATS_WS_URL`).
+Client URLs: `.env.example` (`NATS_URL`, `NATS_WS_URL`). The browser UI connects to the websocket port (`NATS_WS_URL`), everything else to `NATS_URL`.
 
 ## Where decisions live
 
@@ -79,3 +92,5 @@ Client URLs: `.env.example` (`NATS_URL`, `NATS_WS_URL`).
 - NATS subject per message: `subjectFor` in `src/bus/nats.ts` ([0028](adr/0028-nats-bus-subjects-and-delivery.md)).
 - Rejected-input handling: brains emit, shell logs ([0026](adr/0026-brains-reject-invalid-inputs.md)).
 - Default run config (spec scale) and exit codes: `src/sim/main.ts`.
+- Legend colors and drawing shapes: `src/ui/render.ts`; the side panel reuses them.
+- UI grid size: `src/ui/main.ts`, a copy of the services' grid (`src/sim/config.ts`); keep them equal.

@@ -18,7 +18,7 @@ Snapshot verified against nats.js READMEs/migration.md + docs.nats.io on 2026-10
 
 1. `bun add @nats-io/transport-node` (README: "compatible with Bun"; re-exports `@nats-io/nats-core`). JetStream: `@nats-io/jetstream`. KV: `@nats-io/kv`.
 2. Never `nats` (deprecated: "Package moved").
-3. Browser UI: `wsconnect()` from core, direct to NATS (0020). Needs server websocket listener enabled; check docs when wiring.
+3. Browser UI: `wsconnect()` from `@nats-io/nats-core` (direct dependency; `transport-node` pulls in Node APIs), direct to NATS (0020). Server websocket listener on 9222 (`infra/nats.conf`). A `ws://` URL needs its port: the client assumes 80 otherwise (core README).
 
 ## Core API
 

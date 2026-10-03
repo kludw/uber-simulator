@@ -7,8 +7,9 @@ type Point = { x: number; y: number };
 // CSS pixels.
 type Size = { width: number; height: number };
 
-// Legend colors: the one place a driver state gets its color.
-const driverColors: Record<DriverView["state"], string> = {
+// Legend colors (the side panel shows them, src/ui/panel.ts): the one place a
+// driver state, a waiting rider, or an active trip gets its color.
+export const driverColors: Record<DriverView["state"], string> = {
 	idle: "#8b949e",
 	en_route: "#e3b341",
 	at_pickup: "#f0883e",
@@ -17,8 +18,8 @@ const driverColors: Record<DriverView["state"], string> = {
 };
 const backgroundColor = "#0d1117";
 const cityColor = "#161b22";
-const waitingRiderColor = "#ff7b72";
-const activeTripColor = "rgba(88, 166, 255, 0.35)";
+export const waitingRiderColor = "#ff7b72";
+export const activeTripColor = "rgba(88, 166, 255, 0.35)";
 const driverRadius = 3;
 const waitingRiderSize = 5;
 
@@ -81,9 +82,10 @@ export function observeTick(
 }
 
 // Share of the current tick elapsed, for driverPosition. 1 (drivers at their
-// cells) until a duration is known, and while the next tick is late.
+// cells) until a duration is known, and while the next tick is late. Two
+// ticks arriving in the same millisecond give no usable pace: 1 too.
 export function tickFraction(timing: TickTiming, now: number): number {
-	if (timing.seen !== "paced") return 1;
+	if (timing.seen !== "paced" || timing.duration <= 0) return 1;
 	return Math.min(1, (now - timing.arrivedAt) / timing.duration);
 }
 
