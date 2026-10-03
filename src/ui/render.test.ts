@@ -94,6 +94,12 @@ describe("tickFraction", () => {
 		expect(tickFraction(timing, 3500)).toBe(1);
 	});
 
+	test("is 1 when the last two ticks arrived in the same millisecond", () => {
+		const first = observeTick(noTickTiming, 1 as Tick, 2000);
+		const timing = observeTick(first, 2 as Tick, 2000);
+		expect(tickFraction(timing, 2000)).toBe(1);
+	});
+
 	test("ignores the latest tick seen again", () => {
 		const first = observeTick(noTickTiming, 1 as Tick, 1000);
 		const second = observeTick(first, 2 as Tick, 2000);

@@ -81,9 +81,10 @@ export function observeTick(
 }
 
 // Share of the current tick elapsed, for driverPosition. 1 (drivers at their
-// cells) until a duration is known, and while the next tick is late.
+// cells) until a duration is known, and while the next tick is late. Two
+// ticks arriving in the same millisecond give no usable pace: 1 too.
 export function tickFraction(timing: TickTiming, now: number): number {
-	if (timing.seen !== "paced") return 1;
+	if (timing.seen !== "paced" || timing.duration <= 0) return 1;
 	return Math.min(1, (now - timing.arrivedAt) / timing.duration);
 }
 
