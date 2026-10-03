@@ -1,4 +1,5 @@
 import * as z from "zod";
+import type { Shifts } from "../driver/brain.ts";
 import type { ClickHouseConfig } from "../persistence/clickhouse.ts";
 import { cityDemand, type Demand } from "../rider/demand.ts";
 import { specGrid } from "../shared/grid.ts";
@@ -36,6 +37,24 @@ export function demandNamed(name: z.infer<typeof DemandName>): Demand {
 	return name === "city" ? cityDemand : { type: "uniform" };
 }
 
+// Shift models selectable by name, from env (SHIFTS) or the CLI (--shifts).
+export const ShiftsName = z.enum(["off", "on"]);
+
+// The one shift preset (ADR 0032). Mean online 1800 ticks vs mean offline
+// 600 keeps about 75% of drivers online in steady state; starting 80% online
+// stays near that instead of a mass log-on. 20-40 min online means every
+// driver of a simulated hour changes shift at least once.
+const shiftPreset: Shifts = {
+	type: "shifts",
+	onlineTicks: { min: 1200, max: 2400 },
+	offlineTicks: { min: 300, max: 900 },
+	startOnlineShare: 0.8,
+};
+
+export function shiftsNamed(name: z.infer<typeof ShiftsName>): Shifts {
+	return name === "on" ? shiftPreset : { type: "always_online" };
+}
+
 const Env = z.object({
 	NATS_URL: z.url(),
 	RUN_ID: RunId,
@@ -64,6 +83,8 @@ const Env = z.object({
 	BATCH_WINDOW_TICKS: integer.pipe(z.int().positive()).default(5),
 	// Riders only (ADR 0031).
 	DEMAND: DemandName.default("uniform"),
+	// Driver shards only (ADR 0032).
+	SHIFTS: ShiftsName.default("off"),
 });
 
 export function parseServiceConfig(
@@ -91,6 +112,7 @@ export function parseServiceConfig(
 					? { type: "batched", windowTicks: vars.BATCH_WINDOW_TICKS }
 					: { type: "greedy" },
 			demand: demandNamed(vars.DEMAND),
+			shifts: shiftsNamed(vars.SHIFTS),
 		},
 	};
 }

@@ -238,6 +238,51 @@ describe("decideDriverShard with shifts", () => {
 		]);
 	});
 
+	test("driver at dropoff when the online period ends goes offline on the first tick after the trip completes", () => {
+		const random = shiftRandom([0, 0], {
+			"shift:d-1:0": [0.2, 2],
+			"shift:d-1:1": [3],
+		});
+		const started = startDriverShard(
+			{ grid, driverIds: [d1], tick: tick(0), shifts },
+			random,
+		);
+		const accepted = decideDriverShard(
+			started.state,
+			{ ...offer(d1), pickup: cell(1, 0), dropoff: cell(2, 0) },
+			random,
+		);
+		const atPickup = runTicks(accepted.state, 1, 1, random);
+		const pickedUp = decideDriverShard(
+			atPickup.state,
+			{ type: "trip.picked_up", tick: tick(1), tripId: t1, driverId: d1 },
+			random,
+		);
+		const atDropoff = runTicks(pickedUp.state, 2, 3, random);
+		const completed = decideDriverShard(
+			atDropoff.state,
+			{ type: "trip.completed", tick: tick(3), tripId: t1, driverId: d1 },
+			random,
+		);
+		const { outputs } = runTicks(completed.state, 4, 4, random);
+		expect([...atDropoff.outputs, ...completed.outputs, ...outputs]).toEqual([
+			{ type: "driver.moved", tick: tick(2), driverId: d1, cell: cell(2, 0) },
+			{
+				type: "driver.arrived_at_dropoff",
+				tick: tick(2),
+				driverId: d1,
+				tripId: t1,
+				cell: cell(2, 0),
+			},
+			{
+				type: "driver.went_offline",
+				tick: tick(4),
+				driverId: d1,
+				cell: cell(2, 0),
+			},
+		]);
+	});
+
 	function offlineAtStart() {
 		const random = shiftRandom([3, 4], { "shift:d-1:0": [0.7, 4] });
 		const { state } = startDriverShard(

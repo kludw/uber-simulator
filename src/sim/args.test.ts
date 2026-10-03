@@ -12,6 +12,7 @@ describe("parseSimArgs", () => {
 				matching: "greedy",
 				windowTicks: 5,
 				demandName: "uniform",
+				shiftsName: "off",
 				config: {
 					seed: 1,
 					ticks: 3600,
@@ -19,6 +20,25 @@ describe("parseSimArgs", () => {
 					driverShards: { count: 2, driversPerShard: 50 },
 					requestsPerMinute: 10,
 					demand: { type: "uniform" },
+					shifts: { type: "always_online" },
+				},
+			},
+		});
+	});
+
+	// One preset (ADR 0032): 20-40 min online, 5-15 min offline, 80% online at start.
+	test("--shifts on runs drivers on the shift preset", () => {
+		expect(parseSimArgs(["--shifts", "on"])).toMatchObject({
+			ok: true,
+			value: {
+				shiftsName: "on",
+				config: {
+					shifts: {
+						type: "shifts",
+						onlineTicks: { min: 1200, max: 2400 },
+						offlineTicks: { min: 300, max: 900 },
+						startOnlineShare: 0.8,
+					},
 				},
 			},
 		});
@@ -49,6 +69,7 @@ describe("parseSimArgs", () => {
 
 	test.each([
 		[["--demand", "rush_hour"]],
+		[["--shifts", "yes"]],
 		[["--requests-per-minute", "-1"]],
 		[["--requests-per-minute", "ten"]],
 		[["--drivers-per-shard", "0"]],

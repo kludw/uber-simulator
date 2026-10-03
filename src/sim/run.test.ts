@@ -4,6 +4,7 @@ import * as z from "zod";
 import type { Matching } from "../dispatch/brain.ts";
 import { cityDemand } from "../rider/demand.ts";
 import { Cell, distance } from "../shared/grid.ts";
+import { shiftsNamed } from "./config.ts";
 import { checkInvariants } from "./invariants.ts";
 import {
 	type RunConfig,
@@ -130,6 +131,43 @@ describe("runInProcess", () => {
 			});
 
 			expect(checkInvariants(eventLog, grid)).toEqual([]);
+		},
+		30_000,
+	);
+
+	// ADR 0032: the preset's online periods (at most 2400 ticks) end within
+	// the hour, so drivers go offline and some come back.
+	test.each<[string, Matching]>([
+		["greedy", { type: "greedy" }],
+		["batched", { type: "batched", windowTicks: 5 }],
+	])(
+		"a 3600-tick %s run with shifts breaks no invariant and drivers go offline and come back",
+		(_, matching) => {
+			const grid = { width: 500, height: 500 };
+			const { eventLog } = runInProcess({
+				seed: 1,
+				ticks: 3600,
+				grid,
+				driverShards: { count: 2, driversPerShard: 50 },
+				requestsPerMinute: 10,
+				matching,
+				shifts: shiftsNamed("on"),
+			});
+
+			const firstOffline = eventLog.find(
+				(message) => message.type === "driver.went_offline",
+			);
+			const backOnline = eventLog.some(
+				(message) =>
+					message.type === "driver.went_online" &&
+					firstOffline !== undefined &&
+					message.tick > firstOffline.tick,
+			);
+			expect({
+				violations: checkInvariants(eventLog, grid),
+				wentOffline: firstOffline !== undefined,
+				backOnline,
+			}).toEqual({ violations: [], wentOffline: true, backOnline: true });
 		},
 		30_000,
 	);

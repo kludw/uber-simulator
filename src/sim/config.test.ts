@@ -29,7 +29,41 @@ describe("parseServiceConfig", () => {
 				requestsPerMinute: 10,
 				matching: { type: "greedy" },
 				demand: { type: "uniform" },
+				shifts: { type: "always_online" },
 			},
+		});
+	});
+
+	test("SHIFTS=on runs drivers on the shift preset", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			SHIFTS: "on",
+		});
+
+		expect(parsed).toMatchObject({
+			ok: true,
+			value: {
+				shifts: {
+					type: "shifts",
+					onlineTicks: { min: 1200, max: 2400 },
+					offlineTicks: { min: 300, max: 900 },
+					startOnlineShare: 0.8,
+				},
+			},
+		});
+	});
+
+	test("names an unknown SHIFTS", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			SHIFTS: "yes",
+		});
+
+		expect(parsed).toMatchObject({
+			ok: false,
+			error: { type: "invalid_config", issues: [{ variable: "SHIFTS" }] },
 		});
 	});
 
