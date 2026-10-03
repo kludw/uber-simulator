@@ -2,7 +2,8 @@ name: bench
 
 # Manual only: `gh workflow run bench.yaml --ref master` runs the full set
 # (1k, 5k, 10k drivers x greedy, batched); narrow it with -f, e.g.
-# `-f drivers=10000 -f matching=greedy -f heap_profile=true`. Each run's
+# `-f drivers=10000 -f matching=greedy -f heap_profile=true`; measure peak
+# RSS with `-f cpu_profile=false` (--cpu-prof inflates it). Each run's
 # report, CPU profile, and machine note are uploaded as one artifact.
 on:
   workflow_dispatch:
@@ -23,6 +24,10 @@ on:
         description: Minutes before a run stops and is recorded as did not finish (under 100, fractions ok)
         type: number
         default: 30
+      cpu_profile:
+        description: Write a CPU profile (inflates peak RSS; turn off to measure memory)
+        type: boolean
+        default: true
       heap_profile:
         description: Also write a heap profile on exit (large at 10k drivers)
         type: boolean
@@ -62,6 +67,7 @@ jobs:
       MATCHING: ${{ matrix.run.matching }}
       TICKS: ${{ inputs.ticks }}
       TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+      CPU_PROFILE: ${{ inputs.cpu_profile }}
       HEAP_PROFILE: ${{ inputs.heap_profile }}
     steps:
       - uses: actions/checkout@v5
@@ -73,7 +79,10 @@ jobs:
         run: |
           mkdir -p out/profiles
           { echo "runner: $(nproc) cpus, $(free -m | awk '/Mem:/ {print $2}') MiB"; echo "load average: $(cut -d' ' -f1-3 /proc/loadavg)"; } > out/machine.txt
-          profile_flags="--cpu-prof --cpu-prof-md --cpu-prof-dir out/profiles"
+          profile_flags=""
+          if [ "$CPU_PROFILE" = "true" ]; then
+            profile_flags="--cpu-prof --cpu-prof-md --cpu-prof-dir out/profiles"
+          fi
           if [ "$HEAP_PROFILE" = "true" ]; then
             profile_flags="$profile_flags --heap-prof-md --heap-prof-dir out/profiles"
           fi
