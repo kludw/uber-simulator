@@ -11,11 +11,11 @@ Riders spawn uniformly over the grid (ADR 0016). Real demand clusters (downtown,
 
 We will:
 
-- Add a rider `demand` config: `{ type: "uniform" }` (default, unchanged) or `{ type: "hotspots", hotspotShare, hotspots: [{ center, radius, weight }] }`.
+- Add a rider `demand` config: `{ type: "uniform" }` (default, unchanged) or `{ type: "hotspots", hotspotShare, hotspots: [{ center, radius, weight }] }`. Constraints: `center` is a grid `Cell` (constructed via `cellIn`, so the clipped area always contains at least the center), `radius` integer >= 0, `weight` > 0, `hotspots` non-empty, `hotspotShare` in [0, 1]. Validated with Zod where config enters (CLI, env); a brain receiving an invalid config is a bug and throws.
 - In hotspot mode, each spawned rider's pickup comes from a hotspot with probability `hotspotShare`, else uniformly. A hotspot is chosen with probability proportional to `weight`; the pickup is uniform over cells within Manhattan `radius` of `center`, clipped to the grid. Dropoffs stay uniform (distinct from pickup). Spawn count (Poisson) and patience are unchanged.
-- Draw hotspot choices from a separate per-tick child stream (`hotspot:<tick>`), so uniform mode consumes exactly the same random draws as before and stays byte-identical.
+- Draw all three hotspot decisions (hotspot-or-uniform coin, weighted hotspot choice, cell within the hotspot) from a separate per-tick child stream (`hotspot:<tick>`), taken only in hotspot mode. Uniform pickups and dropoffs stay on `demand:<tick>`. `child()` depends only on seed and label (ADR 0023), so uniform mode consumes exactly the same draws as before and stays byte-identical.
 - Define one named preset (`city`: a downtown hotspot at the grid center and an airport hotspot near a corner) next to the spec defaults, used by the CLI and services.
-- Make the in-process comparison configurable: `bun run sim` (incl. `--compare`) gains `--demand uniform|city`, `--requests-per-minute`, `--drivers-per-shard`; services read `DEMAND` from env.
+- Make the in-process comparison configurable: `bun run sim` (incl. `--compare`) gains `--demand uniform|city`, `--requests-per-minute`, `--drivers-per-shard` (fleet size = 2 shards x drivers per shard); the rider service reads `DEMAND=uniform|city` from env (`REQUESTS_PER_MINUTE` / `DRIVERS_PER_SHARD` already exist).
 
 ## Rationale
 
