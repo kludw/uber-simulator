@@ -22,7 +22,7 @@ type TripDetails = {
 export type PendingOffer = { driverId: DriverId; offeredAt: Tick };
 
 // A requested trip without an offer is queued for matching.
-type QueuedTrip = TripDetails & { state: "requested"; offer: null };
+export type QueuedTrip = TripDetails & { state: "requested"; offer: null };
 
 export type Trip =
 	| QueuedTrip
