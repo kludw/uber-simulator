@@ -58,6 +58,7 @@ const dropoff = cell(3, 4);
 const samples: Message[] = [
 	{ type: "clock.ticked", tick },
 	{ type: "driver.went_online", tick, driverId, cell: pickup },
+	{ type: "driver.went_offline", tick, driverId, cell: pickup },
 	{ type: "driver.moved", tick, driverId, cell: pickup },
 	{ type: "driver.arrived_at_pickup", tick, driverId, tripId, cell: pickup },
 	{ type: "driver.arrived_at_dropoff", tick, driverId, tripId, cell: dropoff },

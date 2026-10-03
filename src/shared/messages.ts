@@ -36,6 +36,14 @@ export const DriverWentOnline = z.object({
 });
 export type DriverWentOnline = z.infer<typeof DriverWentOnline>;
 
+export const DriverWentOffline = z.object({
+	type: z.literal("driver.went_offline"),
+	tick: Tick,
+	driverId: DriverId,
+	cell: Cell,
+});
+export type DriverWentOffline = z.infer<typeof DriverWentOffline>;
+
 export const DriverMoved = z.object({
 	type: z.literal("driver.moved"),
 	tick: Tick,
@@ -216,6 +224,7 @@ export type TripRequested = z.infer<typeof TripRequested>;
 const Message = z.discriminatedUnion("type", [
 	ClockTicked,
 	DriverWentOnline,
+	DriverWentOffline,
 	DriverMoved,
 	DriverArrivedAtPickup,
 	DriverArrivedAtDropoff,
