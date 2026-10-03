@@ -95,8 +95,8 @@ if (compare) {
 	console.log(`ticks: ${config.ticks}`);
 	console.log(`batch window: ${windowTicks} ticks`);
 	printComparison(greedySummary, batchedSummary);
-	printViolations("greedy", greedySummary);
-	printViolations("batched", batchedSummary);
+	printAndFailOnViolations("greedy", greedySummary);
+	printAndFailOnViolations("batched", batchedSummary);
 } else {
 	const matching: Matching =
 		runArgs.matching === "batched" ? batched : { type: "greedy" };
@@ -116,7 +116,7 @@ if (compare) {
 	);
 	console.log(`rejected inputs: ${summary.rejectedInputs}`);
 	console.log(`invariant violations: ${summary.violations.length}`);
-	printViolations(null, summary);
+	printAndFailOnViolations(null, summary);
 }
 
 function printComparison(greedy: Summary, batched: Summary): void {
@@ -133,8 +133,11 @@ function printComparison(greedy: Summary, batched: Summary): void {
 	}
 }
 
-// Any violation fails the command.
-function printViolations(strategy: string | null, summary: Summary): void {
+// Prints each violation and fails the command (exit code 1) if any.
+function printAndFailOnViolations(
+	strategy: string | null,
+	summary: Summary,
+): void {
 	for (const violation of summary.violations) {
 		console.log(
 			JSON.stringify(strategy ? { strategy, ...violation } : violation),
