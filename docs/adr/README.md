@@ -33,3 +33,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0027 | [In-process bus, service shell, runner](0027-in-process-bus-and-runner.md) | Accepted |
 | 0028 | [NATS bus: subjects and delivery](0028-nats-bus-subjects-and-delivery.md) | Accepted |
 | 0029 | [Event persistence](0029-event-persistence.md)                           | Accepted |
+| 0030 | [Batched matching](0030-batched-matching.md)                            | Accepted |
