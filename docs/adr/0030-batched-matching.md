@@ -12,8 +12,8 @@ Dispatch matches greedily (ADR 0018): each tick, queued trips in FIFO order take
 We will:
 
 - Add a dispatch `matching` config: `{ type: "greedy" }` (default, unchanged) or `{ type: "batched", windowTicks }`.
-- In batched mode, dispatch matches only on ticks where `tick % windowTicks === 0`. It collects queued trips without a pending offer and known-idle drivers without a pending offer or active trip, builds a cost matrix of Manhattan distance driver -> pickup (pairs where the driver is excluded for that trip are not allowed), and picks the assignment with minimum total cost. Each pair gets an offer exactly as today; offer replies, expiry, and exclusions are unchanged.
-- Solve the assignment with the Hungarian algorithm (rectangular, O(n³)) in a pure module `src/dispatch/assignment.ts`. Ties are broken deterministically (trip FIFO order, then driver ID), so the dispatch brain stays deterministic.
+- In batched mode, dispatch matches only on ticks where `tick % windowTicks === 0`. It collects queued trips without a pending offer and known-idle drivers without a pending offer or active trip, builds a cost matrix of Manhattan distance driver -> pickup (pairs where the driver is excluded for that trip are not allowed), and picks a maximum-cardinality assignment (as many trips as possible get an offer, like greedy), with minimum total distance among those. Each pair gets an offer exactly as today; offer replies, exclusions, and offer expiry (still checked every tick) are unchanged. Declined or expired trips wait for the next window.
+- Solve it with the Hungarian algorithm (O(n³)) in a pure module `src/dispatch/matching.ts`. The rectangular matrix is padded to square; disallowed and padding cells get a finite sentinel cost larger than the sum of all real costs (not `Infinity`, which breaks the potentials), and sentinel pairs are dropped from the result. Input order is fixed (trips FIFO, drivers by ID) and no randomness is used, so the result is a pure function of the input; which of several equally optimal assignments is returned is not specified.
 - Select the strategy per run: in-process runner and `bun run sim` (`--matching greedy|batched`, `--batch-window`), services via env, and `bun run sim -- --compare` running both strategies on the same seed and printing their summaries side by side.
 
 ## Rationale
@@ -28,9 +28,10 @@ We will:
 - Replace greedy with batched: loses the baseline the experiment needs.
 - Greedy over all (trip, driver) pairs sorted by distance: simpler, not optimal.
 - Min-cost flow or an LP solver library: more general than needed; a dependency for a small exact problem.
-- Matching every tick with the batch solver: removes the waiting trade-off the experiment is about.
+- A lexicographic tie-break (trip FIFO, then driver ID) among optimal assignments: needs a post-pass or huge weights; determinism doesn't require it.
+- Note: `windowTicks: 1` (batch solver every tick) is allowed and isolates the objective's effect from the waiting effect.
 
 ## Consequences
 
-- In batched mode, trips can wait up to `windowTicks - 1` extra ticks before an offer; whether total wait improves is what `--compare` shows.
+- In batched mode, trips can wait up to `windowTicks - 1` extra ticks before an offer; whether total wait improves is what `--compare` shows. `--compare` runs in-process: rider demand is drawn per tick (`demand:<tick>` child streams), so both strategies see identical requests.
 - Persisted runs don't record their strategy; comparisons use `bun run sim -- --compare` (out of scope: tagging runs in ClickHouse).
