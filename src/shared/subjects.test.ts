@@ -12,6 +12,7 @@ import {
 	replaySubject,
 	replaySubjects,
 	simEventSubjects,
+	simSubjects,
 	subjectFor,
 } from "./subjects.ts";
 
@@ -134,6 +135,10 @@ describe("subjectFor", () => {
 	test.each(cases)("%p goes on %s", (message, subject) => {
 		expect(subjectFor(message)).toBe(subject);
 	});
+});
+
+test("simSubjects is the wildcard over every service subject", () => {
+	expect(simSubjects).toBe("sim.>");
 });
 
 test("simEventSubjects is the wildcard over every event subject", () => {

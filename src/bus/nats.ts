@@ -8,7 +8,7 @@ import {
 } from "@nats-io/transport-node";
 import { type Message, parseMessage, type RunId } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
-import { subjectFor } from "../shared/subjects.ts";
+import { simSubjects, subjectFor } from "../shared/subjects.ts";
 import type { Bus } from "./bus.ts";
 
 export type NatsBus = Bus & { close(): Promise<void> };
@@ -61,7 +61,7 @@ export async function connectNatsBus(options: {
 	} catch (cause) {
 		return failed(cause);
 	}
-	const subscription = connection.subscribe("sim.>");
+	const subscription = connection.subscribe(simSubjects);
 	try {
 		// The server has registered the subscription once flush resolves, so
 		// messages published after connect returns are delivered.

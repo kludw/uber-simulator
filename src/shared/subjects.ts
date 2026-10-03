@@ -4,6 +4,9 @@ import type { Message, RunId, SimEvent } from "./messages.ts";
 
 const simEventsPrefix = "sim.events";
 
+// Every service subject: each service's one subscription (ADR 0028).
+export const simSubjects = "sim.>";
+
 // Every event subject (ADR 0028), e.g. for the persister's stream.
 export const simEventSubjects = `${simEventsPrefix}.>`;
 
