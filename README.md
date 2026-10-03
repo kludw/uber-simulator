@@ -93,8 +93,8 @@ bun run sim -- --compare --seed 42 --ticks 3600 --demand city --requests-per-min
 | --- | ---: | ---: |
 | trips requested | 1717 | 1717 |
 | trips completed | 235 | 421 |
-| trips cancelled | 1358 | 1159 |
-| mean ticks from request to pickup | 186.8 | 126.2 |
+| trips cancelled | 1358 | 1160 |
+| mean ticks from request to pickup | 186.8 | 124.2 |
 | invariant violations | 0 | 0 |
 
 At spec load the strategies are within noise, but under overload batched matching completes about 1.8× the trips with a third less waiting, likely because greedy serves the oldest queued trips first from whatever idle driver is nearest to them, however far, while batched minimizes total pickup distance.
@@ -109,12 +109,12 @@ bun run sim -- --compare --seed 42 --ticks 3600 --demand city --requests-per-min
 | | spec load, greedy | spec load, batched | heavy load, greedy | heavy load, batched |
 | --- | ---: | ---: | ---: | ---: |
 | trips requested | 566 | 566 | 1717 | 1717 |
-| trips completed | 426 | 429 | 180 | 348 |
-| trips cancelled | 71 | 65 | 1413 | 1231 |
-| mean ticks from request to pickup | 79.9 | 77.3 | 190.4 | 124.1 |
+| trips completed | 426 | 433 | 180 | 352 |
+| trips cancelled | 71 | 63 | 1413 | 1227 |
+| mean ticks from request to pickup | 79.9 | 79.2 | 190.4 | 126.2 |
 | invariant violations | 0 | 0 | 0 | 0 |
 
-Shifts cost about 10% of completed trips at spec load (cancellations more than triple as waits grow by 15-19 ticks) and 17-23% under heavy load, where batched still completes about 1.9× greedy's trips.
+Shifts cost about 10% of completed trips at spec load (cancellations at least triple as waits grow by 17-19 ticks) and 16-23% under heavy load, where batched still completes about 2× greedy's trips.
 
 ### As separate processes over NATS
 

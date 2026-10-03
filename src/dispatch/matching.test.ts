@@ -107,23 +107,53 @@ describe("minCostMatching", () => {
 	test("matches a brute-force oracle on seeded random matrices", () => {
 		const random = createRandom(87);
 		for (let sample = 0; sample < 500; sample++) {
-			const costs = randomCosts(random);
+			const costs = randomCosts(random, random.int(0, 6), random.int(0, 6));
 			expect({ costs, ...outcome(costs) }).toEqual({
 				costs,
 				...bruteForce(costs),
 			});
 		}
 	});
+
+	test("matches a brute-force oracle on very unequal shapes", () => {
+		const random = createRandom(113);
+		for (let sample = 0; sample < 100; sample++) {
+			const small = random.int(1, 3);
+			const large = random.int(20, 40);
+			const wide = randomCosts(random, small, large);
+			const tall = transpose(wide);
+			expect({ wide, ...outcome(wide) }).toEqual({
+				wide,
+				...bruteForce(wide),
+			});
+			expect({ tall, ...outcome(tall) }).toEqual({
+				tall,
+				...bruteForce(wide),
+			});
+		}
+	});
+
+	test("50 x 10,000 matrix: every row matched", () => {
+		// Was padded to 10,000 x 10,000 (ADR 0033); now about 50^2 x 10,000 steps.
+		const random = createRandom(5);
+		const costs = randomCosts(random, 50, 10_000);
+		expect(minCostMatching(costs)).toHaveLength(50);
+	}, 10_000);
 });
 
-// Up to 6 x 6, about a quarter of cells disallowed.
-function randomCosts(random: Random): Cost[][] {
-	const rows = random.int(0, 6);
-	const columns = random.int(0, 6);
+// About a quarter of cells disallowed.
+function randomCosts(random: Random, rows: number, columns: number): Cost[][] {
 	return Array.from({ length: rows }, () =>
 		Array.from({ length: columns }, () =>
 			random.int(0, 3) === 0 ? null : random.int(0, 20),
 		),
+	);
+}
+
+function transpose(costs: Cost[][]): Cost[][] {
+	const columns = costs[0]?.length ?? 0;
+	return Array.from({ length: columns }, (_, column) =>
+		costs.map((row) => row[column] ?? null),
 	);
 }
 
