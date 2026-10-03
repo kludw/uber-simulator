@@ -8,10 +8,16 @@ import {
 
 describe("parseServiceConfig", () => {
 	test("unset variables default to the spec scale at real time", () => {
-		expect(parseServiceConfig({ NATS_URL: "nats://localhost:4222" })).toEqual({
+		expect(
+			parseServiceConfig({
+				NATS_URL: "nats://localhost:4222",
+				RUN_ID: "run-1",
+			}),
+		).toEqual({
 			ok: true,
 			value: {
 				natsUrl: "nats://localhost:4222",
+				runId: "run-1",
 				seed: 1,
 				speed: 1,
 				clockStartDelayMs: 2000,
@@ -25,6 +31,7 @@ describe("parseServiceConfig", () => {
 	test("set variables override the defaults", () => {
 		const parsed = parseServiceConfig({
 			NATS_URL: "nats://nats:4222",
+			RUN_ID: "0b9e5a64-1f6c-4c43-9f1e-6a3c2d1e8f70",
 			SEED: "42",
 			SPEED: "2.5",
 			CLOCK_START_DELAY_MS: "0",
@@ -37,6 +44,7 @@ describe("parseServiceConfig", () => {
 			ok: true,
 			value: {
 				natsUrl: "nats://nats:4222",
+				runId: "0b9e5a64-1f6c-4c43-9f1e-6a3c2d1e8f70",
 				seed: 42,
 				speed: 2.5,
 				clockStartDelayMs: 0,
@@ -55,10 +63,22 @@ describe("parseServiceConfig", () => {
 				type: "invalid_config",
 				issues: [
 					{ variable: "NATS_URL" },
+					{ variable: "RUN_ID" },
 					{ variable: "SEED" },
 					{ variable: "SPEED" },
 				],
 			},
+		});
+	});
+
+	// The run id travels as a NATS header value and is a ClickHouse column
+	// value and report argument (ADR 0029).
+	test.each([[""], ["run 1"], ["run\r\n1"]])("rejects RUN_ID %p", (runId) => {
+		expect(
+			parseServiceConfig({ NATS_URL: "nats://nats:4222", RUN_ID: runId }),
+		).toMatchObject({
+			ok: false,
+			error: { type: "invalid_config", issues: [{ variable: "RUN_ID" }] },
 		});
 	});
 });

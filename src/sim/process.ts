@@ -47,6 +47,7 @@ export async function connectProcess(
 	const stop = new AbortController();
 	const connected = await connectNatsBus({
 		url: config.natsUrl,
+		runId: config.runId,
 		log: (dropped) => log(service, { type: "message_dropped", ...dropped }),
 		logStatus: (status) => {
 			log(service, status);
@@ -70,7 +71,11 @@ export async function connectProcess(
 	};
 	process.on("SIGINT", shutDown);
 	process.on("SIGTERM", shutDown);
-	log(service, { type: "service_started", seed: config.seed });
+	log(service, {
+		type: "service_started",
+		runId: config.runId,
+		seed: config.seed,
+	});
 	return { bus, stopping: stop.signal };
 }
 

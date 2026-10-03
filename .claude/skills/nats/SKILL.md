@@ -30,6 +30,7 @@ Snapshot verified against nats.js READMEs/migration.md + docs.nats.io on 2026-10
 6. Incoming payloads are untrusted: `m.json()` result goes through Zod `safeParse` (see `validation` skill). Never cast.
 7. Errors are specific classes (`RequestError`, `TimeoutError`, `NoRespondersError`), not `NatsError`.
 8. Shutdown: `await nc.drain()` (delivers in-flight messages, then closes).
+9. Headers: `const h = headers(); h.set(key, value); nc.publish(subject, data, { headers: h })`; read `m.headers?.get(key)`. `set` throws on invalid values (CR/LF). Publishing with headers needs a server advertising `headers: true` in INFO (fake servers in tests too). The bus stamps `Run-Id` on every publish (0029).
 
 ## JetStream (durable streams)
 

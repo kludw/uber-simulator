@@ -48,16 +48,19 @@ export function runInProcess(config: RunConfig): RunResult {
 // Same services, each on its own NATS connection (the real network path),
 // recorded by one more connection on sim.> that also acts as clock. Only
 // per-publisher order holds (ADR 0028), so the event log differs between
-// runs of one config: assert invariants, not exact logs.
+// runs of one config: assert invariants, not exact logs. Every connection
+// stamps one fresh run id (ADR 0029), returned with the result.
 export async function runOverNats(
 	config: RunConfig & { url: string },
-): Promise<Result<RunResult, NatsConnectError>> {
+): Promise<Result<RunResult & { runId: string }, NatsConnectError>> {
+	const runId = crypto.randomUUID();
 	const services = allServices(config);
 	const buses: NatsBus[] = [];
 	// Runner first, so it is subscribed before any service publishes.
 	for (const name of ["runner", ...services.map((service) => service.name)]) {
 		const connected = await connectNatsBus({
 			url: config.url,
+			runId,
 			log: (dropped) =>
 				console.warn(
 					JSON.stringify({
@@ -105,7 +108,7 @@ export async function runOverNats(
 	// Runner last, so it records whatever the services flush on close.
 	await Promise.all(serviceBuses.map((bus) => bus.close()));
 	await runnerBus.close();
-	return { ok: true, value: result };
+	return { ok: true, value: { ...result, runId } };
 }
 
 // NATS has no drain(): a tick has settled once the runner has received

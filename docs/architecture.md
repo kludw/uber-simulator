@@ -14,15 +14,15 @@ Current state: milestones 2, 3, and 4 done. `bun run sim` runs everything in one
 | Rider brain | `src/rider/brain.ts` | demand generator, riders, patience, cancels | [0016](adr/0016-initial-domain-model.md), [0022](adr/0022-source-layout-and-brain-shape.md) |
 | Bus port | `src/bus/bus.ts` | `publish` / `subscribe` by type-guard predicate | [0027](adr/0027-in-process-bus-and-runner.md) |
 | In-memory bus | `src/bus/in-memory.ts` | FIFO queue, `drain()` delivers in publish order | [0027](adr/0027-in-process-bus-and-runner.md) |
-| NATS bus | `src/bus/nats.ts` | `connectNatsBus`: one connection, one `sim.>` subscription, Zod-parses each payload (invalid ones logged, dropped), then predicates; handlers one at a time in arrival order. Reports disconnect / reconnect / close. `close()` drains, or just closes when disconnected or already closed. `subjectFor` maps messages to subjects | [0028](adr/0028-nats-bus-subjects-and-delivery.md) |
+| NATS bus | `src/bus/nats.ts` | `connectNatsBus`: one connection, one `sim.>` subscription, Zod-parses each payload (invalid ones logged, dropped), then predicates; handlers one at a time in arrival order. Stamps every publish with a `Run-Id` header (its `runId` option, [0029](adr/0029-event-persistence.md)); the `Bus` port and message shapes don't carry it. Reports disconnect / reconnect / close. `close()` drains, or just closes when disconnected or already closed. `subjectFor` maps messages to subjects | [0028](adr/0028-nats-bus-subjects-and-delivery.md), [0029](adr/0029-event-persistence.md) |
 | Service shell | `src/bus/service.ts` | runs any brain on the bus: feeds accepted messages to `decide`, publishes outputs, logs `input_rejected` | [0026](adr/0026-brains-reject-invalid-inputs.md), [0027](adr/0027-in-process-bus-and-runner.md) |
 | Service wiring | `src/sim/services.ts` | per service (driver shard, dispatch, riders): name, seed stream, start config, `accepts` predicate, driver IDs and shard ownership. Shared by the runner and the entrypoints so both run identical services | [0017](adr/0017-independent-actor-services-with-pure-brains.md), [0023](adr/0023-own-seeded-prng.md) |
-| Runner | `src/sim/run.ts` | starts driver shards, dispatch, riders; acts as clock; returns event log + rejected inputs. `runInProcess`: one in-memory bus, `drain()` after each tick, same config gives the same log. `runOverNats`: one NATS connection per service plus one recording `sim.>` and publishing ticks; a tick has settled once nothing arrives for 10 ms; log differs between runs (only per-publisher order, 0028) | [0027](adr/0027-in-process-bus-and-runner.md) |
-| Service config | `src/sim/config.ts` | `parseServiceConfig(env)` (Zod): NATS URL, seed, speed, clock start delay, shard sizes, demand; `parseShardIndex` for driver processes; `parseUiConfig` for the UI server; `parseClickHouseConfig` for ClickHouse clients | [0005](adr/0005-use-zod-for-validation.md) |
+| Runner | `src/sim/run.ts` | starts driver shards, dispatch, riders; acts as clock; returns event log + rejected inputs. `runInProcess`: one in-memory bus, `drain()` after each tick, same config gives the same log. `runOverNats`: one NATS connection per service plus one recording `sim.>` and publishing ticks, all with one fresh run id (`crypto.randomUUID()`), returned with the result; a tick has settled once nothing arrives for 10 ms; log differs between runs (only per-publisher order, 0028) | [0027](adr/0027-in-process-bus-and-runner.md) |
+| Service config | `src/sim/config.ts` | `parseServiceConfig(env)` (Zod): NATS URL, run id (`RUN_ID`, required, `[A-Za-z0-9_-]+`), seed, speed, clock start delay, shard sizes, demand; `parseShardIndex` for driver processes; `parseUiConfig` for the UI server; `parseClickHouseConfig` for ClickHouse clients | [0005](adr/0005-use-zod-for-validation.md) |
 | Process shell | `src/sim/process.ts` | for every entrypoint: reads config, connects the NATS bus, JSON log lines tagged with the service, closes the bus on SIGINT/SIGTERM, exit codes | [0019](adr/0019-single-package-multiple-entrypoints.md) |
 | Entrypoints | `src/dispatch/main.ts`, `src/rider/main.ts`, `src/driver/main.ts` (`SHARD_INDEX`) | one service process each: process shell + service wiring | [0019](adr/0019-single-package-multiple-entrypoints.md) |
 | Clock | `src/clock/main.ts`, `schedule.ts` | the only wall-time pacer: waits the start delay, then publishes `clock.ticked` from tick 1, due at fixed times 1 s / speed apart (`tickDueAt`, so late ticks don't drift the schedule) | [0008](adr/0008-deterministic-tick-based-simulation.md) |
-| Dev launcher | `src/sim/dev.ts` (`bun run dev`) | spawns every entrypoint (`Bun.spawn`), prefixes their output; SIGINT/SIGTERM or any child exiting stops all | [0019](adr/0019-single-package-multiple-entrypoints.md) |
+| Dev launcher | `src/sim/dev.ts` (`bun run dev`) | generates one run id per start (`crypto.randomUUID()`, overrides any `RUN_ID`), prints it, passes it to every entrypoint as `RUN_ID`; spawns every entrypoint (`Bun.spawn`), prefixes their output; SIGINT/SIGTERM or any child exiting stops all | [0019](adr/0019-single-package-multiple-entrypoints.md) |
 | Invariant checker | `src/sim/invariants.ts` | spec invariants from the event log alone, own trip model | [0017](adr/0017-independent-actor-services-with-pure-brains.md) |
 | Summary | `src/sim/summary.ts` | run result -> counts, mean ticks to pickup, violations | - |
 | UI view | `src/ui/view.ts` | `applyEvent(view, event)`: drivers (cell, previous cell, tick moved, state), waiting riders, active trips, counters, from `sim.events.>` alone. Tolerates a mid-run join: a driver first seen moving is shown idle, first seen arriving at its arrival cell. Ignores an arrival for a known idle driver (late over NATS, 0028) | [0020](adr/0020-browser-ui-canvas-nats-websocket.md) |
@@ -52,10 +52,10 @@ runner --{ eventLog, rejected }--> summarize --> checkInvariants --> main.ts pri
 Separate processes (`bun run dev`):
 
 ```
-dev.ts --Bun.spawn--> dispatch, riders, driver-shard-0..n-1, clock (one process each, own NATS connection)
+dev.ts --Bun.spawn, RUN_ID--> dispatch, riders, driver-shard-0..n-1, clock (one process each, own NATS connection)
 each: process shell --connect--> NATS bus --> service wiring --> service shell + brain
 clock: wait CLOCK_START_DELAY_MS, then clock.ticked every 1 s / SPEED --> NATS sim.events.clock.ticked
-every message: publisher --NATS sim.>--> every service's subscription --accepts--> its brain
+every message: publisher --NATS sim.>, Run-Id header--> every service's subscription --accepts--> its brain
 ```
 
 Browser UI (`bun run ui`):
@@ -91,6 +91,7 @@ Client URLs: `.env.example` (`NATS_URL`, `NATS_WS_URL`, `CLICKHOUSE_URL` plus us
 - Randomness: `src/shared/random.ts`; seed streams per service (child stream named after the service): `src/sim/services.ts` ([0023](adr/0023-own-seeded-prng.md)).
 - Driver IDs and shard ownership: `src/sim/services.ts`, from shard index and shard sizes only, so every process agrees.
 - Tick pacing: `src/clock/schedule.ts`; service process and UI server config and their defaults: `src/sim/config.ts`.
+- Run id: generated by the shell (`src/sim/dev.ts`, `runOverNats`), never by brains; stamped as the `Run-Id` header in `src/bus/nats.ts` ([0029](adr/0029-event-persistence.md)).
 - Message delivery order: `src/bus/in-memory.ts` ([0027](adr/0027-in-process-bus-and-runner.md)), `src/bus/nats.ts` ([0028](adr/0028-nats-bus-subjects-and-delivery.md)).
 - NATS subject per message: `subjectFor` in `src/bus/nats.ts` ([0028](adr/0028-nats-bus-subjects-and-delivery.md)).
 - Rejected-input handling: brains emit, shell logs ([0026](adr/0026-brains-reject-invalid-inputs.md)).
