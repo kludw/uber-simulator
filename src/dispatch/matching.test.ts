@@ -86,6 +86,18 @@ describe("minCostMatching", () => {
 		).toEqual({ size: 2, cost: 20 });
 	});
 
+	test("ragged rows are a caller bug", () => {
+		expect(() => minCostMatching([[1, 2], [3]])).toThrow();
+	});
+
+	test("negative cost is a caller bug", () => {
+		expect(() => minCostMatching([[1, -2]])).toThrow();
+	});
+
+	test("non-integer cost is a caller bug", () => {
+		expect(() => minCostMatching([[1, 2.5]])).toThrow();
+	});
+
 	test("same input gives the same pairs", () => {
 		// Many equally optimal matchings: all costs equal.
 		const costs = Array.from({ length: 5 }, () => [3, 3, 3, 3]);

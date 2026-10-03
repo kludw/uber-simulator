@@ -10,10 +10,19 @@ export interface Pair {
  * non-negative integer or `null` (pair not allowed). Returns pairs ordered by row:
  * as many allowed pairs as possible, least total cost among those. Pure function of
  * the input; which of several optimal matchings comes back is not specified.
+ * Throws on ragged rows or a cost that is not a non-negative integer (caller bug).
  */
 export function minCostMatching(costs: readonly (readonly Cost[])[]): Pair[] {
 	const rows = costs.length;
 	const columns = costs[0]?.length ?? 0;
+	for (const row of costs) {
+		if (row.length !== columns) throw new Error("costs rows differ in length");
+		for (const cell of row) {
+			if (cell !== null && !(Number.isInteger(cell) && cell >= 0)) {
+				throw new Error(`cost ${cell} is not a non-negative integer`);
+			}
+		}
+	}
 	const size = Math.max(rows, columns);
 	// Disallowed and padding cells cost more than any whole set of real pairs, so the optimum
 	// uses as many real pairs as possible. Finite: Infinity breaks the potentials.
