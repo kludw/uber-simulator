@@ -11,14 +11,21 @@ import {
 	StorageType,
 } from "@nats-io/jetstream";
 import { type NatsConnection, nanos } from "@nats-io/transport-node";
-import type {
-	ClickHouse,
-	ClickHouseError,
-	EventRow,
+import {
+	type ClickHouse,
+	type ClickHouseError,
+	type EventRow,
+	type MigrationFailed,
+	migrate,
 } from "../persistence/clickhouse.ts";
-import { type Message, parseMessage, RunId } from "../shared/messages.ts";
+import {
+	type Message,
+	parseMessage,
+	RunId,
+	type SimEvent,
+} from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
-import { type SimEvent, toRow } from "./rows.ts";
+import { toRow } from "./rows.ts";
 
 // Where the persister reads from. Tests use their own stream and subjects;
 // a stream's subjects can't overlap another's.
@@ -67,6 +74,7 @@ export type PersisterLogEntry =
 	| { type: "batch_not_persisted"; firstSeq: number; lastSeq: number };
 
 export type PersisterError =
+	| MigrationFailed
 	| { type: "jetstream_setup_failed"; cause: unknown }
 	| { type: "fetch_failed"; cause: unknown };
 
@@ -77,14 +85,18 @@ export type Persister = {
 	stopped: Promise<Result<void, PersisterError>>;
 };
 
-// Ensures the stream and the durable consumer (creating or updating them to
-// this config), then persists batches until stopped.
+// Migrates the events table (idempotent, so `bun run dev` needs no separate
+// `bun run db:migrate`), ensures the stream and the durable consumer
+// (creating or updating them to this config), then persists batches until
+// stopped.
 export async function startPersister(options: {
 	nats: NatsConnection;
-	clickhouse: Pick<ClickHouse, "insertEvents">;
+	clickhouse: Pick<ClickHouse, "insertEvents" | "command">;
 	source: EventSource;
 	log: (entry: PersisterLogEntry) => void;
 }): Promise<Result<Persister, PersisterError>> {
+	const migrated = await migrate(options.clickhouse);
+	if (!migrated.ok) return migrated;
 	let consumer: Consumer;
 	try {
 		consumer = await ensureConsumer(options.nats, options.source);

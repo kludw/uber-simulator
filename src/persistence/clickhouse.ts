@@ -135,7 +135,7 @@ const migrationsDirectory = join(import.meta.dir, "../../infra/clickhouse");
 // file must be idempotent (IF NOT EXISTS), so rerunning is a no-op. Returns
 // the files applied.
 export async function migrate(
-	clickhouse: ClickHouse,
+	clickhouse: Pick<ClickHouse, "command">,
 ): Promise<Result<string[], MigrationFailed>> {
 	const files = (
 		await Array.fromAsync(new Bun.Glob("*.sql").scan(migrationsDirectory))

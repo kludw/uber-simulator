@@ -1,13 +1,7 @@
 // Event -> events table row (ADR 0029). Pure: the shell supplies the
 // delivery facts (run id header, stream sequence, wall-clock ingestion).
 import type { EventRow } from "../persistence/clickhouse.ts";
-import type { Message, RunId } from "../shared/messages.ts";
-
-// What sim.events.> carries (ADR 0028). Same as the UI's SimEvent.
-export type SimEvent = Extract<
-	Message,
-	{ type: `${"clock" | "driver" | "trip"}.${string}` }
->;
+import type { RunId, SimEvent } from "../shared/messages.ts";
 
 export function toRow(
 	event: SimEvent,

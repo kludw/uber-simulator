@@ -239,6 +239,13 @@ const Message = z.discriminatedUnion("type", [
 ]);
 export type Message = z.infer<typeof Message>;
 
+// What sim.events.> carries (ADR 0028): events, never offers, offer replies,
+// commands, or command replies.
+export type SimEvent = Extract<
+	Message,
+	{ type: `${"clock" | "driver" | "trip"}.${string}` }
+>;
+
 // Issues are Zod's plain data (code, path, message), fine to log; ZodError
 // itself never leaves this function.
 export function parseMessage(

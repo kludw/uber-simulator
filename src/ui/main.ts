@@ -3,10 +3,14 @@
 import { type Msg, wsconnect } from "@nats-io/nats-core";
 import * as z from "zod";
 import { specGrid } from "../shared/grid.ts";
-import { type Message, parseMessage } from "../shared/messages.ts";
+import {
+	type Message,
+	parseMessage,
+	type SimEvent,
+} from "../shared/messages.ts";
 import { type PanelRow, panelRows } from "./panel.ts";
 import { startRenderer } from "./render.ts";
-import { applyEvent, emptyView, type SimEvent } from "./view.ts";
+import { applyEvent, emptyView } from "./view.ts";
 
 const PageConfig = z.object({ natsWsUrl: z.url() });
 

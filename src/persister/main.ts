@@ -1,8 +1,8 @@
 // Persister process (ADR 0029): sim.events.> from JetStream into ClickHouse.
 // Config: NATS_URL and CLICKHOUSE_* (src/sim/config.ts). Exit codes: 0
-// stopped by SIGINT/SIGTERM, 1 NATS or ClickHouse unreachable, JetStream
-// setup failed, or fetching failed (e.g. NATS connection lost), 2 invalid
-// config.
+// stopped by SIGINT/SIGTERM, 1 NATS or ClickHouse unreachable, migration or
+// JetStream setup failed, or fetching failed (e.g. NATS connection lost), 2
+// invalid config.
 import { connect, type NatsConnection } from "@nats-io/transport-node";
 import { connectClickHouse } from "../persistence/clickhouse.ts";
 import { parsePersisterConfig } from "../sim/config.ts";

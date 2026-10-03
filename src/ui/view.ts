@@ -3,17 +3,10 @@ import type {
 	DriverArrivedAtDropoff,
 	DriverArrivedAtPickup,
 	DriverId,
-	Message,
+	SimEvent,
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
-
-// What the UI receives: messages on sim.events.> (ADR 0028), never offer
-// messages, offer replies, commands, or command replies.
-export type SimEvent = Extract<
-	Message,
-	{ type: `${"clock" | "driver" | "trip"}.${string}` }
->;
 
 type DriverState = "idle" | "en_route" | "at_pickup" | "on_trip" | "at_dropoff";
 

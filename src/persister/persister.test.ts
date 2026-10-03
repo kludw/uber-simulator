@@ -185,7 +185,11 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 		const crashing = await natsConnection();
 		let inserts = 0;
 		const { promise: crashed, resolve: crash } = Promise.withResolvers<void>();
-		const crashAfterPartialInsert: Pick<ClickHouse, "insertEvents"> = {
+		const crashAfterPartialInsert: Pick<
+			ClickHouse,
+			"insertEvents" | "command"
+		> = {
+			command: clickhouse.command,
 			async insertEvents(rows: EventRow[]) {
 				inserts += 1;
 				if (inserts === 1) return clickhouse.insertEvents(rows);
@@ -224,11 +228,37 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 		);
 	}, 20_000);
 
+	test("creates the events table on start", async () => {
+		if (!clickhouseConfig?.ok) throw new Error("invalid ClickHouse config");
+		const freshDatabase = `${testDatabase}_fresh`;
+		await succeeded(admin.command(`CREATE DATABASE ${freshDatabase}`));
+		const fresh = await succeeded(
+			connectClickHouse({ ...clickhouseConfig.value, database: freshDatabase }),
+		);
+		const persister = await succeeded(
+			startPersister({
+				nats: await natsConnection(),
+				clickhouse: fresh,
+				source: testSource(),
+				log: () => {},
+			}),
+		);
+		persister.stop();
+		await persister.stopped;
+
+		const exists = await fresh.query("EXISTS TABLE events");
+		await fresh.close();
+		await admin.command(`DROP DATABASE ${freshDatabase}`);
+
+		expect(exists).toEqual({ ok: true, value: [{ result: 1 }] });
+	}, 20_000);
+
 	test("a failed insert is logged and retried", async () => {
 		const source = testSource();
 		const nc = await natsConnection();
 		let inserts = 0;
-		const failingOnce: Pick<ClickHouse, "insertEvents"> = {
+		const failingOnce: Pick<ClickHouse, "insertEvents" | "command"> = {
+			command: clickhouse.command,
 			insertEvents(rows: EventRow[]) {
 				inserts += 1;
 				if (inserts > 1) return clickhouse.insertEvents(rows);

@@ -38,7 +38,7 @@ Snapshot verified against clickhouse.com/docs + clickhouse-js README/CHANGELOG o
 2. `LowCardinality(String)` for columns with < ~10,000 unique values (event type, state).
 3. Prefer `DateTime` over `DateTime64` unless sub-second precision needed. Sim time is tick-based (see `simulation` skill), store tick as integer; wall-clock ingestion time optional.
 4. Column/event names from `domain` skill.
-5. DDL lives in `infra/clickhouse/NNN_name.sql`, applied in name order by `bun run db:migrate` on every run. Each file must be idempotent (`IF NOT EXISTS`); no migrations table.
+5. DDL lives in `infra/clickhouse/NNN_name.sql`, applied in name order by `bun run db:migrate` and by the persister on every start. Each file must be idempotent (`IF NOT EXISTS`); no migrations table.
 
 ## Adapter
 
