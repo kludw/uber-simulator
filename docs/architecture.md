@@ -11,6 +11,7 @@ Current state: milestones 2, 3, 4, and 5 done. `bun run sim` runs everything in 
 | Shared domain | `src/shared/` | grid and cells, message types (`Message` union, `SimEvent` = what `sim.events.>` carries, `isSimEvent` guard), branded IDs, `Result`, seeded PRNG | [0016](adr/0016-initial-domain-model.md), [0009](adr/0009-result-type-for-expected-failures.md), [0023](adr/0023-own-seeded-prng.md) |
 | Driver brain | `src/driver/brain.ts` | one shard of drivers: placement, wandering, offers, driving to pickup/dropoff | [0022](adr/0022-source-layout-and-brain-shape.md), [0025](adr/0025-driver-at-dropoff-state.md) |
 | Dispatch brain | `src/dispatch/brain.ts`, `trip.ts` | owns every trip: queue, offers, matching, pickup, completion, cancel | [0018](adr/0018-dispatch-matching-via-offers.md) |
+| Matching solver | `src/dispatch/matching.ts` | `minCostMatching(costs)`: pure Hungarian solver for the batch assignment, maximum cardinality first, then least total cost; `null` cells not allowed; throws on ragged rows or negative / non-integer costs. Not wired into dispatch yet | [0030](adr/0030-batched-matching.md) |
 | Rider brain | `src/rider/brain.ts` | demand generator, riders, patience, cancels | [0016](adr/0016-initial-domain-model.md), [0022](adr/0022-source-layout-and-brain-shape.md) |
 | Bus port | `src/bus/bus.ts` | `publish` / `subscribe` by type-guard predicate | [0027](adr/0027-in-process-bus-and-runner.md) |
 | In-memory bus | `src/bus/in-memory.ts` | FIFO queue, `drain()` delivers in publish order | [0027](adr/0027-in-process-bus-and-runner.md) |
@@ -103,7 +104,7 @@ Client URLs: `.env.example` (`NATS_URL`, `NATS_WS_URL`, `CLICKHOUSE_URL` plus us
 
 - Grid geometry, distance, moves, spec grid size (`specGrid`): `src/shared/grid.ts`.
 - Message shapes, names, and wire parsing (Zod schemas, `parseMessage`): `src/shared/messages.ts` ([0005](adr/0005-use-zod-for-validation.md), [0016](adr/0016-initial-domain-model.md), `domain` skill). Parsed cells are checked for shape only; grid bounds are an invariant (`src/sim/invariants.ts`). Driver, trip, rider, and run IDs (branded `RunId`, carried only as the `Run-Id` header) are restricted to `[A-Za-z0-9_-]+` so they are valid NATS subject tokens (`sim.offers.<driverId>`, [0028](adr/0028-nats-bus-subjects-and-delivery.md)).
-- Trip transitions: `src/dispatch/trip.ts`; matching strategy: `src/dispatch/brain.ts` ([0018](adr/0018-dispatch-matching-via-offers.md)).
+- Trip transitions: `src/dispatch/trip.ts`; matching strategy: `src/dispatch/brain.ts` ([0018](adr/0018-dispatch-matching-via-offers.md)); batch assignment solver (padding, sentinel cost): `src/dispatch/matching.ts` ([0030](adr/0030-batched-matching.md)).
 - Randomness: `src/shared/random.ts`; seed streams per service (child stream named after the service): `src/sim/services.ts` ([0023](adr/0023-own-seeded-prng.md)).
 - Driver IDs and shard ownership: `src/sim/services.ts`, from shard index and shard sizes only, so every process agrees.
 - Tick pacing: `src/clock/schedule.ts`; service process and UI server config and their defaults: `src/sim/config.ts`.
