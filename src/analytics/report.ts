@@ -42,6 +42,22 @@ export type RunReportError =
 	| ClickHouseError
 	| { type: "unknown_run"; runId: RunId };
 
+// `bun run report`'s exit code for a failure: 1 not found, 3 infra
+// unreachable or failed, like `bun run replay` and `bun run sim`.
+export function reportExitCode(error: RunReportError): 1 | 3 {
+	switch (error.type) {
+		case "unknown_run":
+			return 1;
+		case "clickhouse_connect_failed":
+		case "clickhouse_request_failed":
+			return 3;
+		default: {
+			const unhandled: never = error;
+			throw new Error(`unhandled report error: ${unhandled}`);
+		}
+	}
+}
+
 export async function runReport(
 	clickhouse: Pick<ClickHouse, "query">,
 	runId: RunId,

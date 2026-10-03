@@ -10,7 +10,7 @@ import { isSimEvent, RunId, Tick } from "../shared/messages.ts";
 import { parseClickHouseConfig } from "../sim/config.ts";
 import { runInProcess } from "../sim/run.ts";
 import { summarize } from "../sim/summary.ts";
-import { listRuns, runReport } from "./report.ts";
+import { listRuns, reportExitCode, runReport } from "./report.ts";
 
 // Needs ClickHouse (CLICKHOUSE_* from .env or the environment); skipped
 // otherwise. Works in a throwaway database, one run id per test.
@@ -18,6 +18,27 @@ const config = Bun.env.CLICKHOUSE_URL ? parseClickHouseConfig(Bun.env) : null;
 if (!config) {
 	console.warn("CLICKHOUSE_URL unset: skipping run report tests");
 }
+
+describe("report exit code", () => {
+	test("an unknown run exits 1", () => {
+		const runId = RunId.parse("run-1");
+		expect(reportExitCode({ type: "unknown_run", runId })).toBe(1);
+	});
+
+	test("an unreachable ClickHouse exits 3", () => {
+		const error = {
+			type: "clickhouse_connect_failed",
+			url: "http://localhost:1",
+			cause: null,
+		} as const;
+		expect(reportExitCode(error)).toBe(3);
+	});
+
+	test("a failed query exits 3", () => {
+		const error = { type: "clickhouse_request_failed", cause: null } as const;
+		expect(reportExitCode(error)).toBe(3);
+	});
+});
 
 describe.skipIf(!config)("run report", () => {
 	const testDatabase = `test_${crypto.randomUUID().replaceAll("-", "")}`;
