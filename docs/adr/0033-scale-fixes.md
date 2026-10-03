@@ -11,16 +11,16 @@
 - Batched: `minCostMatching` pads the cost matrix to a square of max(trips, drivers); 99% of CPU, cost grows with drivers³ (~28 min per batch at 5k).
 - Memory: `runInProcess` keeps every message (~100-150 B each), so memory grows linearly with run length (several GiB for an hour at 10k).
 
-ADR 0022 defines brains as `decide(state, input, random) -> { state, outputs }` and the code treats state as immutable, copying on every update. The service shell (ADR 0027) never reuses a previous state.
+ADR 0022 defines brains as `decide(state, input, random) -> { state, outputs }`, pure and synchronous; it says nothing about copying, but the code copies state containers on every update by convention (also stated in the `design` skill as "pure functions over immutable data"). The service shell (ADR 0027) never reuses a previous state. Brain state holds references to objects from input messages (e.g. a driver's `Cell` from `driver.moved`), and the in-memory bus delivers the same message object to every subscriber and the event log.
 
 ## Decision
 
 We will:
 
-- Treat brain state as owned: `decide` may update the state it receives in place and return it; callers must not use a state after passing it to `decide`. Determinism and purity of inputs/outputs are unchanged (no I/O, no wall clock, seeded randomness). Apply it where a profile shows copying cost: dispatch's driver positions now. Tests that compare before/after states copy explicitly.
+- Treat brain state as owned: `decide` may update containers it created itself (maps, arrays, records inside its state) in place and return the state; callers must not use a state after passing it to `decide`. Input messages, value objects (`Cell`, IDs), and anything placed in an output stay immutable and may be shared. Determinism and the no-I/O / no-wall-clock / seeded-randomness rules are unchanged. Apply it where a profile shows copying cost: dispatch's driver positions now. Tests that compare before/after states copy explicitly.
 - Run the Hungarian algorithm on the rectangular matrix (rows = the smaller side, transposing if needed) instead of padding to a square: O(rows² x columns), exact, same objective and determinism guarantees (ADR 0030). With tens of trips per batch against thousands of drivers this is milliseconds.
-- Make the invariant checker and the run summary incremental observers (`observe(message)` then `result()`), fed while the run happens. `runInProcess` keeps the full event log only when a caller asks for it (tests); `bun run sim`, `--compare`, and `bun run bench` don't.
-- Re-measure with the CI bench workflow and update `docs/performance.md`. Target: 10k drivers, greedy and batched, p95 under 1,000 ms per tick on the CI runner; memory independent of run length.
+- Make the invariant checker and the run summary incremental observers (`observe(message)` then `result()`), fed while the run happens. `runInProcess` keeps the full event log only when a caller asks for it (tests) and always reports a message count; `bun run sim`, `--compare`, and `bun run bench` don't keep the log.
+- Re-measure with the CI bench workflow and update `docs/performance.md`. Targets: 10k drivers, greedy and batched, p95 under 1,000 ms per tick on the CI runner; memory grows with the number of trips (the checker and summary must remember every trip to flag late events), not with the number of messages. Memory is measured without `--cpu-prof` (it inflates RSS, `docs/performance.md`) by comparing peak RSS of two runs at 10k with different tick counts.
 
 ## Rationale
 
@@ -38,6 +38,6 @@ We will:
 
 ## Consequences
 
-- ADR 0022's "returns a new state" contract becomes "returns the (possibly updated) state"; the `simulation` skill states the ownership rule.
+- No ADR is superseded: 0022's interface is unchanged; the copy-on-update convention, which lived in code and the `design` skill, is narrowed. The `simulation` and `design` skills state the ownership rule.
 - Batched runs may pick a different (equally optimal) assignment than before, so batched comparison numbers can shift slightly; greedy and uniform defaults stay byte-identical.
 - Scaling past 10k (sharded dispatch, per-service subjects) stays out of scope until measured.
