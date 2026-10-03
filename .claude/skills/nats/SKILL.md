@@ -45,7 +45,7 @@ Snapshot verified against nats.js READMEs/migration.md + docs.nats.io on 2026-10
 
 1. Dot-delimited tokens, case-sensitive. Tokens: letters, digits, `-`, `_` only. Never start with `$` (reserved).
 2. Wildcards subscriber-only: `*` = exactly one token, `>` = one or more, last token only.
-3. Scheme (0028): `sim.events.<entity>.<verb>` (incl. `sim.events.clock.ticked`), `sim.commands.<name>`, `sim.offers.<driverId>`, `sim.replies.<name>`. Each service: one connection, one subscription on `sim.>`, Zod-parse, then its `accepts` predicate. Replay (0034): `replay.<runId>.<live subject>` (`replaySubject` in `src/replay/replay.ts`), plain connection, publish only, never `sim.*`.
+3. Scheme (0028), all names in `src/shared/subjects.ts` (pure, imported by bus, persister, replay, and UI): `sim.events.<entity>.<verb>` (incl. `sim.events.clock.ticked`), `sim.commands.<name>`, `sim.offers.<driverId>`, `sim.replies.<name>`. Each service: one connection, one subscription on `sim.>`, Zod-parse, then its `accepts` predicate. Replay (0034): `replay.<runId>.<live subject>` (`replaySubject`; UI wildcard `replaySubjects`), plain connection, publish only, never `sim.*`.
 
 ## Local setup
 

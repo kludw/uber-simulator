@@ -11,11 +11,12 @@ import {
 import * as z from "zod";
 import { connectClickHouse } from "../persistence/clickhouse.ts";
 import type { Tick } from "../shared/messages.ts";
+import { replaySubject } from "../shared/subjects.ts";
 import { parseClickHouseConfig } from "../sim/config.ts";
 import { log, orExit } from "../sim/process.ts";
 import { parseReplayArgs } from "./args.ts";
 import { readRunEvents } from "./events.ts";
-import { publishAt, replaySubject } from "./replay.ts";
+import { publishAt } from "./replay.ts";
 
 const service = "replay";
 
