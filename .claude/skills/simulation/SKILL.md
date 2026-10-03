@@ -11,7 +11,7 @@ Goal: each service's decision logic ("brain") is exact and replayable from a see
 
 ## Brains (pure, deterministic)
 
-1. Shape (ADR 0022): a start function `start<Service>(config, random?) -> state` (or `{ state, outputs }` when starting emits events), and `decide<Service>(state, input, random) -> { state, outputs }`. Input = discriminated union of received messages (tick, events, commands, offers). Outputs = messages to publish, in emission order. No I/O, no async.
+1. Shape (ADR 0022): a start function `start<Service>(config, random?) -> state` (or `{ state, outputs }` when starting emits events), and `decide<Service>(state, input, random) -> { state, outputs }`. Input = discriminated union of received messages (tick, events, commands, offers). Outputs = messages to publish, in emission order. No I/O, no async. State is owned (ADR 0033): `decide` may update the state it receives in place and return it; never reuse a state after passing it to `decide`.
 2. Brains never call `Date.now()`, `new Date()`, `performance.now()`, `setTimeout`/`setInterval`, `Math.random()`, `crypto.randomUUID()`.
 3. Seeded PRNG behind a small `Random` interface, injected. Seed per service in config, logged at service start. Independent concerns (e.g. demand vs patience) get child PRNGs derived from the seed. `child(label)` depends only on seed + label, so a child taken inside `decide` must be labeled per tick (e.g. `demand:${tick}`) or it replays the same draws.
 4. IDs from a deterministic generator (counter or seeded), not UUIDs. IDs must be unique across services: prefix with service/shard (e.g. driver IDs fixed by shard config).
