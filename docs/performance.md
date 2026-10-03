@@ -30,9 +30,9 @@ Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at
 | 5,000 | batched | 600 | | | | | | did not finish in 35 min (killed, no profile) |
 | 10,000 | batched | 600 | | | | | | did not finish in 35 min (killed, no profile) |
 
-- Greedy: at 10k, the mean is close to the 1 s real-time budget and p95 is over it. Cost per tick grows roughly with drivers² (1k to 10k: 107×).
+- Greedy: at 10k, the mean is close to the 1 s real-time budget and p95 is over it. Mean cost per tick grows superlinearly but noisily with fleet size: 1k to 5k is 68×, 5k to 10k is 1.56×, and 1k to 10k is 107×. These three points don't pin down an exponent. The mechanism (below) is O(drivers) work per driver report.
 - Batched: the time sits almost entirely in batch ticks (every 5th tick). In the 10-tick runs, p95 (here the slowest tick) is one batch tick: 113.5 s at 2k, 307.6 s at 3k, and 1,695 s (28 min) at 5k. That's about drivers³: 2k to 3k is 1.5³ ≈ 3.4 (measured 2.7), and 3k to 5k is (5/3)³ ≈ 4.6 (measured 5.5). A 600-tick run (120 batch ticks) at 5k or 10k can't finish. Extrapolated, one batch tick at 10k takes about 4 h.
-- Batched peak RSS reached 7.6 GiB at 5k after only 10 ticks, while the heap at the end was 14 MiB. Transient allocation in the batch tick is the likely source, but these runs don't break it down.
+- Peak RSS in this table is confounded by the profiler. Across the 8 finished runs it largely tracks the CPU profiler's sample count (4 k samples: 276 MiB; 0.2-0.65 M: 0.6-3.6 GiB; 3.0 M: 7.6 GiB), not the simulation's heap: 5k batched has a 14 MiB heap at the end but 7.6 GiB peak RSS. Don't read RSS as simulation memory; see Memory.
 
 ## Top hot spots (CPU profiles, self time)
 
@@ -55,12 +55,12 @@ Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at
 ## Memory
 
 - Heap object count at the end is about 2 objects per message in every 600-tick run: 1.26 M / 611 k, 6.16 M / 3.05 M, 12.33 M / 6.11 M. Messages such as `driver.moved` are one object plus a `cell` object. So the retained heap grows linearly with the event log `runInProcess` keeps, at roughly 100-150 B per message. Heap bytes vary with GC timing: 587 vs 888 MiB for the same 10k run. Extrapolating, a 1-hour run (3,600 ticks) at 10k drivers would hold about 37 M messages, roughly 3.5-5 GiB of heap for the log alone.
-- Peak RSS is 3-5× the heap at the end: 3.0-3.6 GiB at 10k greedy. The likely cause is garbage from the per-report map copies above: 10k-entry maps allocated about 10k times per tick. This isn't measured separately.
+- Peak RSS can't be attributed from these runs: every run had `--cpu-prof` on, and RSS tracks the profiler's sample count (see Results). Process memory needs an unprofiled run (`bun run bench` without the profile flags). That is a follow-up for the re-measure ticket that comes after the fixes (not created yet).
 - The `--heap-prof-md` snapshot from run 37147805973 is not useful. Bun takes it on exit, after the run's data is released, so it shows a 3.6 MB heap of modules and functions. Retained-object analysis needs a snapshot taken before exit (`Bun.generateHeapSnapshot()` or `heapStats().objectTypeCounts` at the end of the run), which is a small bench follow-up.
 
 ## Candidate fixes, ranked by measured impact
 
-1. **Dispatch: stop copying `driverCells` per driver report** (96-97% of CPU at 5k-10k greedy, 83% at 1k). Options: update in place inside the brain (it already owns its state; immutability across `decide` calls is the contract, copying per message is not), or apply a tick's reports as one batch. Expected effect: greedy per-tick cost drops from O(drivers²) to O(drivers), and most peak RSS goes with it. Needs ADR 0033, because it touches the brains' immutable-state convention.
+1. **Dispatch: stop copying `driverCells` per driver report** (96-97% of CPU at 5k-10k greedy, 83% at 1k). Options: update in place inside the brain (it already owns its state; immutability across `decide` calls is the contract, copying per message is not), or apply a tick's reports as one batch. Expected effect: greedy per-tick cost drops from O(drivers²) to O(drivers). Needs ADR 0033, because it touches the brains' immutable-state convention.
 2. **Batched matching: don't pad to a square of `max(trips, drivers)`** (98.8-99.7% of CPU in every batched run; one batch tick takes 28 min at 5k, and 600 ticks at 5k or 10k don't finish). Run the Hungarian loop over the smaller side only (rows = trips: O(trips² × drivers)), and/or limit candidates to the k nearest idle drivers per trip. Expected effect: a batch tick at 10k goes from hours to roughly the cost of a greedy tick.
 3. **Event log held in memory by `runInProcess`** (linear heap growth, about 2 objects per message, 0.6-0.9 GiB after 600 ticks at 10k). Let callers that only need counts or a summary (`bun run bench`, long `bun run sim` runs) consume messages as they come instead of keeping them all. Matters for 1-hour runs at 10k (several GiB); not a CPU cost.
 4. **In-memory bus `queue.shift()`** (0.1-1.0% self time). O(queue) per message in the worst case; not worth changing until 1-3 are done.
