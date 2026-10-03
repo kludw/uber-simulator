@@ -214,6 +214,14 @@ describe("runInProcess", () => {
 		expect<number[]>(ticks).toEqual([1, 2, 3]);
 	});
 
+	test("tells the caller each tick once it is done, in order", () => {
+		const done: number[] = [];
+
+		runInProcess(quietConfig, (tick) => done.push(tick));
+
+		expect(done).toEqual([1, 2, 3]);
+	});
+
 	test("starts every driver of every shard online at tick 0, before the first tick", () => {
 		const { eventLog } = runInProcess(quietConfig);
 
