@@ -62,7 +62,7 @@ Watch-only, live-only. Browser canvas: drivers as dots colored by state, waiting
 2. **In-process**: all services in one process over an in-memory bus, headless, invariant checker, run summary printed (`bun run sim`). Done.
 3. **Distributed**: same services over NATS as separate processes. Infra in Docker, `bun run dev` spawns services; NATS runs break no invariant (`bun run sim -- --bus nats`). Done.
 4. **UI**: live canvas view, served by `bun run ui`, subscribed to NATS events over WebSocket. Done.
-5. **Persistence**: persister -> ClickHouse, first analytics queries.
+5. **Persistence**: persister -> ClickHouse, first analytics queries (`bun run report`). Done.
 
 ## Later (not v1)
 

@@ -2,7 +2,7 @@
 
 What lives where and how it connects. Behavior: [spec.md](spec.md). Why: [ADRs](adr/README.md). Terms: `.claude/skills/domain/SKILL.md`.
 
-Current state: milestones 2, 3, and 4 done. `bun run sim` runs everything in one process over an in-memory bus, or with `--bus nats` each service on its own NATS connection. Each service also runs as its own process over NATS ([0019](adr/0019-single-package-multiple-entrypoints.md), [0028](adr/0028-nats-bus-subjects-and-delivery.md)), all spawned by `bun run dev`. Integration tests check invariants on NATS runs. `bun run ui` serves the browser UI, which subscribes to NATS events over WebSocket. Milestone 5 (ClickHouse) in progress: the persister (also spawned by `bun run dev`) stores every event from a JetStream stream into the ClickHouse `events` table; no analytics queries yet. Local NATS and ClickHouse run via Docker Compose (see Local infra).
+Current state: milestones 2, 3, 4, and 5 done. `bun run sim` runs everything in one process over an in-memory bus, or with `--bus nats` each service on its own NATS connection. Each service also runs as its own process over NATS ([0019](adr/0019-single-package-multiple-entrypoints.md), [0028](adr/0028-nats-bus-subjects-and-delivery.md)), all spawned by `bun run dev`. Integration tests check invariants on NATS runs. `bun run ui` serves the browser UI, which subscribes to NATS events over WebSocket. The persister (also spawned by `bun run dev`) stores every event from a JetStream stream into the ClickHouse `events` table; `bun run report` queries it per run. Local NATS and ClickHouse run via Docker Compose (see Local infra).
 
 ## Components
 
@@ -33,10 +33,12 @@ Current state: milestones 2, 3, and 4 done. `bun run sim` runs everything in one
 | UI page | `src/ui/index.html`, `src/ui/main.ts` | browser entry: fetches `/config.json`, `wsconnect` (retries forever, before the first connection too), subscribes `sim.events.>`, parses each payload with `parseMessage` (invalid or non-event ones `console.warn`ed, dropped), `applyEvent`, `renderer.show`, side panel redrawn at most once per frame, connection status (connecting / live / disconnected) | [0020](adr/0020-browser-ui-canvas-nats-websocket.md) |
 | UI server | `src/ui/serve.ts` (`bun run ui`) | `Bun.serve` HTML import: bundles and serves the page on `UI_PORT` (default 3000), serves `NATS_WS_URL` as `/config.json` (env via `parseUiConfig` + `orExit`, exit 2 if invalid) | [0019](adr/0019-single-package-multiple-entrypoints.md), [0020](adr/0020-browser-ui-canvas-nats-websocket.md) |
 | ClickHouse adapter | `src/persistence/clickhouse.ts` | `connectClickHouse(config)`: `@clickhouse/client`, runs `SELECT 1` in the configured database, so bad credentials or a missing database fail at connect. `insertEvents(rows)` (`EventRow` -> `events` columns, async insert with wait), `query(sql, params)` (rows unvalidated, callers parse), `command(sql)`, `close()`. `migrate(clickhouse)` applies `infra/clickhouse/*.sql` in name order, every file every time (each idempotent). All failures are `Result`s | [0013](adr/0013-clickhouse-client.md), [0029](adr/0029-event-persistence.md) |
+| Run report | `src/analytics/report.ts` | `listRuns(clickhouse)`: run id, first / last tick, event count per stored run, oldest first. `runReport(clickhouse, runId)`: trips requested / completed / cancelled, mean ticks request -> pickup, mean ticks pickup -> completion, completed trips per simulated minute (over the run's first-to-last tick span); `unknown_run` when the run has no events. One query each, `FINAL`, run id bound as a query parameter; rows Zod-parsed (a mismatch is a bug, thrown). Trip counts and mean ticks to pickup agree with `summarize` on the same event log (integration test) | [0029](adr/0029-event-persistence.md) |
+| Report CLI | `src/analytics/main.ts` (`bun run report`) | `--list` or `--run <id>` (Zod), connects ClickHouse, prints. Exit codes: 0 ok, 1 unknown run, ClickHouse unreachable or query failed, 2 invalid args or config | [0029](adr/0029-event-persistence.md) |
 | Migrate | `src/persistence/migrate.ts` (`bun run db:migrate`) | config, connect, `migrate`, JSON log line, exit codes | [0029](adr/0029-event-persistence.md) |
 | CLI | `src/sim/main.ts` (`bun run sim`) | parses args (Zod), runs in process or `--bus nats` (`NATS_URL`; prints the run id first), prints summary, sets exit code | [0005](adr/0005-use-zod-for-validation.md), [0019](adr/0019-single-package-multiple-entrypoints.md) |
 
-Brains are the functional core: pure, seeded, no I/O ([0017](adr/0017-independent-actor-services-with-pure-brains.md), `simulation` skill). Shell: `src/bus/`, `src/persistence/`, `src/persister/` (except `rows.ts`), `src/sim/` (except invariants and summary), `src/*/main.ts`, `startRenderer` in `src/ui/render.ts`, `src/ui/main.ts`, `src/ui/serve.ts`. Invariant checker, summary, `toRow`, UI view, UI side panel, and the renderer's `cellToPixel` / `driverPosition` / `observeTick` / `tickFraction` are pure but not brains. Dependencies point inward: brains import only `src/shared/`.
+Brains are the functional core: pure, seeded, no I/O ([0017](adr/0017-independent-actor-services-with-pure-brains.md), `simulation` skill). Shell: `src/bus/`, `src/persistence/`, `src/analytics/`, `src/persister/` (except `rows.ts`), `src/sim/` (except invariants and summary), `src/*/main.ts`, `startRenderer` in `src/ui/render.ts`, `src/ui/main.ts`, `src/ui/serve.ts`. Invariant checker, summary, `toRow`, UI view, UI side panel, and the renderer's `cellToPixel` / `driverPosition` / `observeTick` / `tickFraction` are pure but not brains. Dependencies point inward: brains import only `src/shared/`.
 
 ## Data flow
 
@@ -67,6 +69,7 @@ publisher --NATS sim.events.<entity>.<verb>, Run-Id header--> JetStream stream S
 persister: durable consumer `persister` --fetch <= 1,000 msgs or 1 s--> parse --toRow--> insertEvents (async insert, wait)
   insert ok --> ack batch; insert failed --> log, retry (1, 2, 4, 8 s), else leave unacked --> redelivered after 60 s
 ClickHouse events (ReplacingMergeTree on run_id, type, tick, stream_seq): redeliveries collapse; exact reads use FINAL
+bun run report --> listRuns / runReport --SELECT ... FINAL--> events --> printed
 ```
 
 Events published while the persister is down wait in the stream; core-NATS subscribers (services, UI) never wait on it.
@@ -87,7 +90,7 @@ Services never call each other: commands (`request_trip`, `cancel_trip`), offers
 
 ## Local infra
 
-Docker Compose ([0012](adr/0012-use-docker-compose-for-local-infra.md)), `compose.yaml`; app runs on the host via Bun. The NATS bus and persister integration tests and `bun run dev` connect (`NATS_URL`; CI runs the same image with `infra/nats.conf` via `docker run`, so JetStream is on). ClickHouse adapter and persister tests, the persister, and `bun run db:migrate` connect to ClickHouse (`CLICKHOUSE_*`; CI runs the same image as a service container).
+Docker Compose ([0012](adr/0012-use-docker-compose-for-local-infra.md)), `compose.yaml`; app runs on the host via Bun. The NATS bus and persister integration tests and `bun run dev` connect (`NATS_URL`; CI runs the same image with `infra/nats.conf` via `docker run`, so JetStream is on). ClickHouse adapter, run report, and persister tests, the persister, `bun run db:migrate`, and `bun run report` connect to ClickHouse (`CLICKHOUSE_*`; CI runs the same image as a service container).
 
 | Service | Image | Ports | Config |
 | --- | --- | --- | --- |
@@ -110,5 +113,6 @@ Client URLs: `.env.example` (`NATS_URL`, `NATS_WS_URL`, `CLICKHOUSE_URL` plus us
 - Rejected-input handling: brains emit, shell logs ([0026](adr/0026-brains-reject-invalid-inputs.md)).
 - Default run config (spec scale) and exit codes: `src/sim/main.ts`.
 - `events` table DDL: `infra/clickhouse/001_events.sql` ([0029](adr/0029-event-persistence.md)); row -> column encoding: `src/persistence/clickhouse.ts`; event -> row mapping: `src/persister/rows.ts`.
+- Run metric definitions (which trips count toward each mean, the per-minute span): `src/analytics/report.ts`.
 - Stream and consumer config, batch size and wait, ack-after-insert, insert retry policy: `src/persister/persister.ts` ([0029](adr/0029-event-persistence.md)).
 - Legend colors and drawing shapes: `src/ui/render.ts`; the side panel reuses them.
