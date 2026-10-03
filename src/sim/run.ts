@@ -23,8 +23,13 @@ export type RunResult = {
 };
 
 // Runs every service over one in-memory bus, the runner acting as clock
-// (ADR 0027). Same config gives the same eventLog.
-export function runInProcess(config: RunConfig): RunResult {
+// (ADR 0027). Same config gives the same eventLog. onTickDone runs once each
+// tick's messages are all delivered, with the result so far (`bun run bench`
+// times ticks and reports partial runs with it).
+export function runInProcess(
+	config: RunConfig,
+	onTickDone: (tick: Tick, soFar: RunResult) => void = () => {},
+): RunResult {
 	const bus = createInMemoryBus();
 	const result: RunResult = { eventLog: [], rejected: [] };
 	bus.subscribe(
@@ -39,8 +44,10 @@ export function runInProcess(config: RunConfig): RunResult {
 	bus.drain();
 
 	for (let tick = 1; tick <= config.ticks; tick++) {
-		bus.publish({ type: "clock.ticked", tick: Tick.parse(tick) });
+		const clockTick = Tick.parse(tick);
+		bus.publish({ type: "clock.ticked", tick: clockTick });
 		bus.drain();
+		onTickDone(clockTick, result);
 	}
 	return result;
 }

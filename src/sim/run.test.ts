@@ -214,6 +214,27 @@ describe("runInProcess", () => {
 		expect<number[]>(ticks).toEqual([1, 2, 3]);
 	});
 
+	test("tells the caller each tick once it is done, in order", () => {
+		const done: number[] = [];
+
+		runInProcess(quietConfig, (tick) => done.push(tick));
+
+		expect(done).toEqual([1, 2, 3]);
+	});
+
+	test("shows the caller the event log so far at each done tick", () => {
+		const ticksLogged: number[] = [];
+
+		runInProcess(quietConfig, (_tick, soFar) =>
+			ticksLogged.push(
+				soFar.eventLog.filter((message) => message.type === "clock.ticked")
+					.length,
+			),
+		);
+
+		expect(ticksLogged).toEqual([1, 2, 3]);
+	});
+
 	test("starts every driver of every shard online at tick 0, before the first tick", () => {
 		const { eventLog } = runInProcess(quietConfig);
 

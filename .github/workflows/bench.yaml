@@ -1,0 +1,109 @@
+name: bench
+
+# Manual only: `gh workflow run bench.yaml --ref master` runs the full set
+# (1k, 5k, 10k drivers x greedy, batched); narrow it with -f, e.g.
+# `-f drivers=10000 -f matching=greedy -f heap_profile=true`. Each run's
+# report, CPU profile, and machine note are uploaded as one artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      drivers:
+        description: Fleet sizes, space-separated
+        type: string
+        default: "1000 5000 10000"
+      matching:
+        description: Matching strategies, space-separated (greedy, batched)
+        type: string
+        default: "greedy batched"
+      ticks:
+        description: Ticks per run
+        type: number
+        default: 600
+      timeout_minutes:
+        description: Minutes before a run stops and is recorded as did not finish (under 100, fractions ok)
+        type: number
+        default: 30
+      heap_profile:
+        description: Also write a heap profile on exit (large at 10k drivers)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      runs: ${{ steps.runs.outputs.runs }}
+    steps:
+      - id: runs
+        env:
+          DRIVERS: ${{ inputs.drivers }}
+          MATCHING: ${{ inputs.matching }}
+        run: |
+          runs=$(jq -cn --arg d "$DRIVERS" --arg m "$MATCHING" \
+            '[($d | split(" ") | map(select(. != ""))[]) as $drivers
+              | ($m | split(" ") | map(select(. != ""))[]) as $matching
+              | {drivers: $drivers, matching: $matching}]')
+          echo "runs=$runs" >> "$GITHUB_OUTPUT"
+
+  bench:
+    needs: matrix
+    runs-on: ubuntu-latest
+    # Backstop above the per-run cap (timeout_minutes) for setup and upload.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        run: ${{ fromJSON(needs.matrix.outputs.runs) }}
+    env:
+      DRIVERS: ${{ matrix.run.drivers }}
+      MATCHING: ${{ matrix.run.matching }}
+      TICKS: ${{ inputs.ticks }}
+      TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+      HEAP_PROFILE: ${{ inputs.heap_profile }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - name: Bench
+        run: |
+          mkdir -p out/profiles
+          { echo "runner: $(nproc) cpus, $(free -m | awk '/Mem:/ {print $2}') MiB"; echo "load average: $(cut -d' ' -f1-3 /proc/loadavg)"; } > out/machine.txt
+          profile_flags="--cpu-prof --cpu-prof-md --cpu-prof-dir out/profiles"
+          if [ "$HEAP_PROFILE" = "true" ]; then
+            profile_flags="$profile_flags --heap-prof-md --heap-prof-dir out/profiles"
+          fi
+          # The bench stops itself between ticks at --max-minutes (exit 3, partial
+          # report and profile written); timeout is the backstop for a tick that
+          # never ends, and kills without a profile.
+          backstop=$(awk "BEGIN { print $TIMEOUT_MINUTES + 5 }")
+          set +e
+          # bun run bench, called directly so the profile flags reach the
+          # benchmark process itself.
+          timeout "${backstop}m" \
+            bun $profile_flags src/bench/main.ts --drivers "$DRIVERS" --ticks "$TICKS" --matching "$MATCHING" \
+              --max-minutes "$TIMEOUT_MINUTES" \
+            > out/report.txt 2> out/stderr.txt
+          code=$?
+          set -e
+          # 0 and 3: the bench printed its own status line (finished / did not
+          # finish). timeout exits 124 on expiry; the kernel OOM killer sends
+          # SIGKILL (137).
+          case $code in
+            0|3) status="" ;;
+            124|143) status="did not finish in ${backstop} min (killed, no profile)" ;;
+            137) status="out of memory (killed)" ;;
+            *) status="failed (exit $code)" ;;
+          esac
+          if [ -n "$status" ]; then echo "status: $status" >> out/report.txt; fi
+          cat out/machine.txt out/report.txt
+          tail -n 20 out/stderr.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: bench-${{ matrix.run.drivers }}-${{ matrix.run.matching }}
+          path: out/
