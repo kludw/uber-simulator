@@ -247,7 +247,7 @@ A single service: `bun src/clock/main.ts`, `bun src/dispatch/main.ts`, `bun src/
 
 ## Commands
 
-Integration tests need the local infra (`docker compose up -d --wait`) and its URLs (Bun loads `.env`): NATS tests (bus, distributed runs) need `NATS_URL`, ClickHouse adapter and run report tests need `CLICKHOUSE_URL` and the other `CLICKHOUSE_*` variables (they work in a throwaway database), persister tests need both (their own streams and a throwaway database). Without the URL, each group is skipped with a warning.
+Integration tests need the local infra (`docker compose up -d --wait`) and its URLs (Bun loads `.env`): NATS tests (bus, distributed runs) need `NATS_URL`, ClickHouse adapter, run report, and stored run reader tests need `CLICKHOUSE_URL` and the other `CLICKHOUSE_*` variables (they work in a throwaway database), persister tests need both (their own streams and a throwaway database). Without the URL, each group is skipped with a warning.
 
 ```bash
 bun run test
