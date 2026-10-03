@@ -19,7 +19,7 @@ Snapshot below verified against TS 7.0 announcement, TS 6.0 release notes, and b
 ## Tooling
 
 1. Install: `bun add -d typescript@latest @types/bun`.
-2. Type-check: `bunx tsc` (tsconfig has `noEmit`). Bun runs TS but type-check is a separate step.
+2. Type-check: `bun run typecheck` (runs `tsc` then `tsc -p src/ui`; both `noEmit`). Bun runs TS but type-check is a separate step.
 3. Don't pass file paths to `tsc` when a tsconfig exists: error in 7.0 unless `--ignoreConfig`.
 4. TS 7.0 ships no programmatic API (expected in 7.1). Tools importing `typescript` as a library may need `@typescript/typescript6` side-by-side. Check the 7.0 announcement before adding such a tool.
 5. `@typescript/native-preview` is superseded. Nightlies: `typescript@next`.
@@ -30,7 +30,8 @@ Snapshot below verified against TS 7.0 announcement, TS 6.0 release notes, and b
 2. `types` defaults to `[]`: list every `@types` package needed (`["bun"]`, ...). Missing globals like `Bun` = this.
 3. `rootDir` defaults to `./`. Set it explicitly if sources live in `src/` and output structure matters.
 4. Defaults now: `strict: true`, `module: esnext`, `noUncheckedSideEffectImports: true`, `stableTypeOrdering: true` (can't turn off).
-5. Removed (hard errors in 7.0), never use: `target: es5`, `downlevelIteration`, `moduleResolution: node`/`node10`/`classic`, `module: amd`/`umd`/`systemjs`/`none`, `baseUrl` (make `paths` relative to project root), `outFile`, `esModuleInterop: false`, `allowSyntheticDefaultImports: false`, `alwaysStrict: false`.
+5. Browser code (`src/ui/`) has its own `src/ui/tsconfig.json`: extends the root, adds `"DOM"` to `lib`. Root excludes `src/ui`, so DOM globals stay out of server code. New browser dirs go under `src/ui/`.
+6. Removed (hard errors in 7.0), never use: `target: es5`, `downlevelIteration`, `moduleResolution: node`/`node10`/`classic`, `module: amd`/`umd`/`systemjs`/`none`, `baseUrl` (make `paths` relative to project root), `outFile`, `esModuleInterop: false`, `allowSyntheticDefaultImports: false`, `alwaysStrict: false`.
 
 ## Syntax
 
