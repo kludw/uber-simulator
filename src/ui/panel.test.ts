@@ -2,11 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Cell } from "../shared/grid.ts";
 import { DriverId, Tick, TripId } from "../shared/messages.ts";
 import { panelRows } from "./panel.ts";
-import {
-	activeTripColor,
-	driverColors,
-	waitingRiderColor,
-} from "./render.ts";
+import { activeTripColor, driverColors, waitingRiderColor } from "./render.ts";
 import { emptyView, type View } from "./view.ts";
 
 function labelsAndValues(rows: ReturnType<typeof panelRows>): string[][] {

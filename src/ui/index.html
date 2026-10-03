@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>uber-simulator</title>
+		<style>
+			html,
+			body {
+				height: 100%;
+				margin: 0;
+				background: #0d1117;
+				color: #c9d1d9;
+				font: 14px system-ui, sans-serif;
+			}
+			body {
+				display: flex;
+			}
+			#city {
+				flex: 1;
+				min-width: 0;
+				height: 100%;
+			}
+			aside {
+				width: 240px;
+				padding: 16px;
+				border-left: 1px solid #30363d;
+			}
+			#status::before {
+				content: "";
+				display: inline-block;
+				width: 8px;
+				height: 8px;
+				margin-right: 6px;
+				border-radius: 50%;
+				background: #8b949e;
+			}
+			#status[data-status="live"]::before {
+				background: #3fb950;
+			}
+			#status[data-status="disconnected"]::before {
+				background: #f85149;
+			}
+			#panel {
+				width: 100%;
+				margin-top: 16px;
+				border-collapse: collapse;
+			}
+			#panel td {
+				padding: 3px 0;
+			}
+			#panel td:last-child {
+				text-align: right;
+				font-variant-numeric: tabular-nums;
+			}
+			.swatch {
+				display: inline-block;
+				width: 10px;
+				height: 10px;
+				margin-right: 8px;
+				box-sizing: border-box;
+				vertical-align: middle;
+			}
+			.swatch.dot {
+				border-radius: 50%;
+				background: currentColor;
+			}
+			.swatch.square {
+				border: 1.5px solid currentColor;
+			}
+			.swatch.line {
+				height: 0;
+				border-top: 2px solid currentColor;
+			}
+		</style>
+	</head>
+	<body>
+		<canvas id="city"></canvas>
+		<aside>
+			<div id="status" data-status="connecting">connecting</div>
+			<table id="panel"></table>
+		</aside>
+		<script type="module" src="./main.ts"></script>
+	</body>
+</html>

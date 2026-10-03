@@ -1,8 +1,4 @@
-import {
-	activeTripColor,
-	driverColors,
-	waitingRiderColor,
-} from "./render.ts";
+import { activeTripColor, driverColors, waitingRiderColor } from "./render.ts";
 import type { View } from "./view.ts";
 
 // How the canvas draws what a row counts, so the panel doubles as its legend.
