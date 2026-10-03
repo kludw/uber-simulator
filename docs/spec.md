@@ -65,7 +65,8 @@ Watch-only, live-only. Browser canvas: drivers as dots colored by state, waiting
 5. **Persistence**: persister -> ClickHouse, first analytics queries (`bun run report`). Done.
 6. **Batched matching** (0030): dispatch strategy switch (greedy | batched every N ticks, min total pickup distance), `bun run sim -- --compare` prints both on one seed. Done.
 7. **Hotspot demand** (0031): rider demand model (uniform | hotspots, `city` preset), configurable demand rate and fleet size in `bun run sim` / `--compare`. Done.
+8. **Driver shifts** (0032): drivers alternate online/offline periods (finish trips first), dispatch/UI/invariants handle offline drivers, `--shifts on|off`.
 
 ## Later (not v1)
 
-Driver preferences / rejections, shifts (online/offline), scaling to 10k+ drivers, replay. Pricing, surge, ratings, real roads, pooling stay out of scope.
+Driver preferences / rejections, scaling to 10k+ drivers, replay. Pricing, surge, ratings, real roads, pooling stay out of scope.
