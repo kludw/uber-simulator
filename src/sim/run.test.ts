@@ -4,6 +4,7 @@ import * as z from "zod";
 import type { Matching } from "../dispatch/brain.ts";
 import { cityDemand } from "../rider/demand.ts";
 import { Cell, distance } from "../shared/grid.ts";
+import type { Message } from "../shared/messages.ts";
 import { shiftsNamed } from "./config.ts";
 import { checkInvariants } from "./invariants.ts";
 import {
@@ -12,6 +13,7 @@ import {
 	runInProcess,
 	runOverNats,
 } from "./run.ts";
+import { createSummary, summarize } from "./summary.ts";
 
 const quietConfig = {
 	seed: 1,
@@ -42,21 +44,21 @@ const scarceConfig = {
 
 describe("runInProcess", () => {
 	test("riders' trips get completed by drivers across shards", () => {
-		const { eventLog } = runInProcess(busyConfig);
+		const { eventLog } = runInProcess({ ...busyConfig, keepEventLog: true });
 
 		expect(eventLog.map((message) => message.type)).toContain("trip.completed");
 	});
 
 	test("same seed and config give an identical event log", () => {
-		expect(runInProcess(busyConfig).eventLog).toEqual(
-			runInProcess(busyConfig).eventLog,
-		);
+		expect(
+			runInProcess({ ...busyConfig, keepEventLog: true }).eventLog,
+		).toEqual(runInProcess({ ...busyConfig, keepEventLog: true }).eventLog);
 	});
 
 	test("a different seed gives a different event log", () => {
-		expect(runInProcess({ ...busyConfig, seed: 8 }).eventLog).not.toEqual(
-			runInProcess(busyConfig).eventLog,
-		);
+		expect(
+			runInProcess({ ...busyConfig, seed: 8, keepEventLog: true }).eventLog,
+		).not.toEqual(runInProcess({ ...busyConfig, keepEventLog: true }).eventLog);
 	});
 
 	// FIFO delivery leaves no stale or out-of-order inputs in process.
@@ -72,6 +74,7 @@ describe("runInProcess", () => {
 		(_, matching) => {
 			const grid = { width: 500, height: 500 };
 			const { eventLog } = runInProcess({
+				keepEventLog: true,
 				seed: 1,
 				ticks: 3600,
 				grid,
@@ -96,7 +99,7 @@ describe("runInProcess", () => {
 			driverShards: { count: 1, driversPerShard: 10 },
 			requestsPerMinute: 60,
 		};
-		const downtownShare = (result: RunResult) => {
+		const downtownShare = (result: { eventLog: Message[] }) => {
 			const pickups = result.eventLog.flatMap((message) =>
 				message.type === "trip.requested" ? [message.pickup] : [],
 			);
@@ -107,9 +110,12 @@ describe("runInProcess", () => {
 		};
 
 		expect({
-			uniform: downtownShare(runInProcess(config)) < 0.1,
+			uniform:
+				downtownShare(runInProcess({ ...config, keepEventLog: true })) < 0.1,
 			city:
-				downtownShare(runInProcess({ ...config, demand: cityDemand })) > 0.3,
+				downtownShare(
+					runInProcess({ ...config, demand: cityDemand, keepEventLog: true }),
+				) > 0.3,
 		}).toEqual({ uniform: true, city: true });
 	});
 
@@ -121,6 +127,7 @@ describe("runInProcess", () => {
 		(_, matching) => {
 			const grid = { width: 500, height: 500 };
 			const { eventLog } = runInProcess({
+				keepEventLog: true,
 				seed: 1,
 				ticks: 3600,
 				grid,
@@ -145,6 +152,7 @@ describe("runInProcess", () => {
 		(_, matching) => {
 			const grid = { width: 500, height: 500 };
 			const { eventLog } = runInProcess({
+				keepEventLog: true,
 				seed: 1,
 				ticks: 3600,
 				grid,
@@ -175,6 +183,7 @@ describe("runInProcess", () => {
 	// ADR 0030: batched dispatch offers trips only on window ticks.
 	test("batched matching offers trips only on multiples of its window", () => {
 		const { eventLog } = runInProcess({
+			keepEventLog: true,
 			...busyConfig,
 			matching: { type: "batched", windowTicks: 4 },
 		});
@@ -189,14 +198,14 @@ describe("runInProcess", () => {
 	});
 
 	test("a scarce-supply run breaks no invariant", () => {
-		const { eventLog } = runInProcess(scarceConfig);
+		const { eventLog } = runInProcess({ ...scarceConfig, keepEventLog: true });
 
 		expect(checkInvariants(eventLog, scarceConfig.grid)).toEqual([]);
 	});
 
 	// Guards the test above: it must exercise cancels that free a driver.
 	test("a scarce-supply run cancels trips that name a driver to free", () => {
-		const { eventLog } = runInProcess(scarceConfig);
+		const { eventLog } = runInProcess({ ...scarceConfig, keepEventLog: true });
 
 		const freeingDriver = eventLog.filter(
 			(message) =>
@@ -206,7 +215,7 @@ describe("runInProcess", () => {
 	});
 
 	test("publishes clock.ticked for ticks 1..N in order", () => {
-		const { eventLog } = runInProcess(quietConfig);
+		const { eventLog } = runInProcess({ ...quietConfig, keepEventLog: true });
 
 		const ticks = eventLog.flatMap((message) =>
 			message.type === "clock.ticked" ? [message.tick] : [],
@@ -217,26 +226,63 @@ describe("runInProcess", () => {
 	test("tells the caller each tick once it is done, in order", () => {
 		const done: number[] = [];
 
-		runInProcess(quietConfig, (tick) => done.push(tick));
+		runInProcess(quietConfig, { onTickDone: (tick) => done.push(tick) });
 
 		expect(done).toEqual([1, 2, 3]);
 	});
 
-	test("shows the caller the event log so far at each done tick", () => {
-		const ticksLogged: number[] = [];
+	test("shows the caller the message count so far at each done tick", () => {
+		const seen: Message[] = [];
+		const counts: { seen: number; soFar: number }[] = [];
 
-		runInProcess(quietConfig, (_tick, soFar) =>
-			ticksLogged.push(
-				soFar.eventLog.filter((message) => message.type === "clock.ticked")
-					.length,
-			),
+		runInProcess(quietConfig, {
+			onMessage: (message) => seen.push(message),
+			onTickDone: (_tick, soFar) =>
+				counts.push({ seen: seen.length, soFar: soFar.messageCount }),
+		});
+
+		expect(counts.map((count) => count.soFar)).toEqual(
+			counts.map((count) => count.seen),
+		);
+	});
+
+	test("keeps no event log unless asked", () => {
+		expect("eventLog" in runInProcess(quietConfig)).toBe(false);
+	});
+
+	test("counts every message without keeping the log", () => {
+		expect(runInProcess(busyConfig).messageCount).toBe(
+			runInProcess({ ...busyConfig, keepEventLog: true }).eventLog.length,
+		);
+	});
+
+	test("shows the caller each message in publish order", () => {
+		const seen: Message[] = [];
+
+		const { eventLog } = runInProcess(
+			{ ...busyConfig, keepEventLog: true },
+			{ onMessage: (message) => seen.push(message) },
 		);
 
-		expect(ticksLogged).toEqual([1, 2, 3]);
+		expect(seen).toEqual(eventLog);
+	});
+
+	// ADR 0033: what `bun run sim` prints without keeping the log.
+	test("a summary fed during a run equals the summary of its event log", () => {
+		const live = createSummary(scarceConfig);
+
+		const result = runInProcess(
+			{ ...scarceConfig, keepEventLog: true },
+			{ onMessage: live.observe },
+		);
+
+		expect(live.result(result.rejected.length)).toEqual(
+			summarize(scarceConfig, result),
+		);
 	});
 
 	test("starts every driver of every shard online at tick 0, before the first tick", () => {
-		const { eventLog } = runInProcess(quietConfig);
+		const { eventLog } = runInProcess({ ...quietConfig, keepEventLog: true });
 
 		const start: unknown[][] = eventLog
 			.slice(0, 5)
@@ -256,6 +302,7 @@ describe("runInProcess", () => {
 
 	test("driver IDs sort in shard order under plain string comparison", () => {
 		const { eventLog } = runInProcess({
+			keepEventLog: true,
 			...quietConfig,
 			ticks: 0,
 			driverShards: { count: 2, driversPerShard: 6 },
@@ -290,7 +337,9 @@ if (!natsUrl) {
 }
 
 describe.skipIf(!natsUrl)("runOverNats", () => {
-	async function runOnServer(config: RunConfig): Promise<RunResult> {
+	async function runOnServer(
+		config: RunConfig,
+	): Promise<RunResult & { eventLog: Message[] }> {
 		const result = await runOverNats({ ...config, url: natsUrl ?? "" });
 		if (!result.ok) throw new Error("NATS unavailable", { cause: result });
 		return result.value;

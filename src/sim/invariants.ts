@@ -98,6 +98,20 @@ export function checkInvariants(
 	eventLog: readonly Message[],
 	grid: Grid,
 ): Violation[] {
+	const checker = createInvariantChecker(grid);
+	for (const message of eventLog) checker.observe(message);
+	return checker.violations();
+}
+
+export type InvariantChecker = {
+	observe(message: Message): void;
+	// Violations among the messages observed so far, in the order found.
+	violations(): Violation[];
+};
+
+// Checks a run as it happens (ADR 0033): memory grows with trips and
+// drivers, not with messages.
+export function createInvariantChecker(grid: Grid): InvariantChecker {
 	const violations: Violation[] = [];
 	const log: LogState = {
 		trips: new Map(),
@@ -106,59 +120,69 @@ export function checkInvariants(
 		driverPositions: new Map(),
 		offlineDrivers: new Set(),
 	};
-	for (const message of eventLog) {
-		switch (message.type) {
-			case "driver.went_online":
-				log.offlineDrivers.delete(message.driverId);
-				log.driverPositions.set(message.driverId, message);
-				break;
-			case "driver.went_offline": {
-				const tripId = log.activeTrips.get(message.driverId);
-				if (tripId !== undefined) {
-					violations.push({
-						type: "driver_went_offline_with_active_trip",
-						tick: message.tick,
-						driverId: message.driverId,
-						tripId,
-					});
-				}
-				log.offlineDrivers.add(message.driverId);
-				log.driverPositions.set(message.driverId, message);
-				break;
+	return {
+		observe: (message) => observe(log, grid, violations, message),
+		violations: () => [...violations],
+	};
+}
+
+// Appends message's violations to violations, then records message in log.
+function observe(
+	log: LogState,
+	grid: Grid,
+	violations: Violation[],
+	message: Message,
+): void {
+	switch (message.type) {
+		case "driver.went_online":
+			log.offlineDrivers.delete(message.driverId);
+			log.driverPositions.set(message.driverId, message);
+			break;
+		case "driver.went_offline": {
+			const tripId = log.activeTrips.get(message.driverId);
+			if (tripId !== undefined) {
+				violations.push({
+					type: "driver_went_offline_with_active_trip",
+					tick: message.tick,
+					driverId: message.driverId,
+					tripId,
+				});
 			}
-			case "driver.moved":
-				if (log.offlineDrivers.has(message.driverId)) {
-					violations.push({
-						type: "offline_driver_moved",
-						tick: message.tick,
-						driverId: message.driverId,
-						cell: message.cell,
-					});
-				}
-				violations.push(...checkMove(log, message));
-				if (!cellIn(grid, message.cell.x, message.cell.y).ok) {
-					violations.push({
-						type: "driver_left_grid",
-						tick: message.tick,
-						driverId: message.driverId,
-						cell: message.cell,
-					});
-				}
-				log.driverPositions.set(message.driverId, message);
-				break;
-			case "trip.requested":
-			case "trip.offered":
-			case "trip.offer_declined":
-			case "trip.offer_expired":
-			case "trip.matched":
-			case "trip.picked_up":
-			case "trip.completed":
-			case "trip.cancelled":
-				violations.push(...checkTripEvent(log, message));
-				break;
+			log.offlineDrivers.add(message.driverId);
+			log.driverPositions.set(message.driverId, message);
+			break;
 		}
+		case "driver.moved":
+			if (log.offlineDrivers.has(message.driverId)) {
+				violations.push({
+					type: "offline_driver_moved",
+					tick: message.tick,
+					driverId: message.driverId,
+					cell: message.cell,
+				});
+			}
+			violations.push(...checkMove(log, message));
+			if (!cellIn(grid, message.cell.x, message.cell.y).ok) {
+				violations.push({
+					type: "driver_left_grid",
+					tick: message.tick,
+					driverId: message.driverId,
+					cell: message.cell,
+				});
+			}
+			log.driverPositions.set(message.driverId, message);
+			break;
+		case "trip.requested":
+		case "trip.offered":
+		case "trip.offer_declined":
+		case "trip.offer_expired":
+		case "trip.matched":
+		case "trip.picked_up":
+		case "trip.completed":
+		case "trip.cancelled":
+			violations.push(...checkTripEvent(log, message));
+			break;
 	}
-	return violations;
 }
 
 // At most one 4-neighbor step per tick, measured from the last report.

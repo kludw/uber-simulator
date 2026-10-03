@@ -7,7 +7,7 @@ import {
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
-import { checkInvariants } from "./invariants.ts";
+import { checkInvariants, createInvariantChecker } from "./invariants.ts";
 
 const grid: Grid = { width: 10, height: 10 };
 const d1 = DriverId.parse("d-1");
@@ -441,5 +441,24 @@ describe("checkInvariants driver shifts", () => {
 				cell: cell(1, 0),
 			},
 		]);
+	});
+});
+
+describe("createInvariantChecker", () => {
+	// Completing t1 twice, then a 3-cell jump: one violation each.
+	test("reports the violations of the messages observed so far", () => {
+		const checker = createInvariantChecker(grid);
+		const found: number[] = [];
+
+		for (const message of [
+			...cleanTrip,
+			tripEvent("trip.completed", t1, d1, 4),
+			moved(d1, cell(5, 0), 5),
+		]) {
+			checker.observe(message);
+			found.push(checker.violations().length);
+		}
+
+		expect(found).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2]);
 	});
 });

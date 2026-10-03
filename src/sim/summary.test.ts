@@ -7,7 +7,12 @@ import {
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
-import { compareSummaries, type Summary, summarize } from "./summary.ts";
+import {
+	compareSummaries,
+	createSummary,
+	type Summary,
+	summarize,
+} from "./summary.ts";
 
 const grid: Grid = { width: 10, height: 10 };
 const d1 = DriverId.parse("d-1");
@@ -146,6 +151,23 @@ describe("summarize", () => {
 				event: "trip.completed",
 			},
 		]);
+	});
+});
+
+describe("createSummary", () => {
+	test("summarizes the messages observed as they come", () => {
+		const summary = createSummary(config);
+		for (const message of eventLog) summary.observe(message);
+
+		expect(summary.result(2)).toEqual({
+			seed: 42,
+			ticks: 20,
+			drivers: 6,
+			trips: { requested: 3, completed: 1, cancelled: 1 },
+			meanTicksToPickup: 1,
+			rejectedInputs: 2,
+			violations: [],
+		});
 	});
 });
 

@@ -18,17 +18,20 @@ const tickMs: number[] = [];
 const runStart = performance.now();
 // Tick 1 also includes starting the services.
 let tickStart = runStart;
-const result = runInProcess(config, (_tick, soFar) => {
-	const now = performance.now();
-	tickMs.push(now - tickStart);
-	tickStart = now;
-	// The run is one synchronous loop, so a signal handler (e.g. for
-	// `timeout`'s SIGTERM) would only run once it ends. The limit is checked
-	// here instead, between ticks: one slow tick can overshoot it by its own
-	// length. process.exit (not a signal) lets Bun write --cpu-prof profiles.
-	if (maxMinutes === undefined || now - runStart < maxMinutes * 60_000) return;
-	print(soFar, { type: "did_not_finish", maxMinutes });
-	process.exit(3);
+const result = runInProcess(config, {
+	onTickDone: (_tick, soFar) => {
+		const now = performance.now();
+		tickMs.push(now - tickStart);
+		tickStart = now;
+		// The run is one synchronous loop, so a signal handler (e.g. for
+		// `timeout`'s SIGTERM) would only run once it ends. The limit is checked
+		// here instead, between ticks: one slow tick can overshoot it by its own
+		// length. process.exit (not a signal) lets Bun write --cpu-prof profiles.
+		if (maxMinutes === undefined || now - runStart < maxMinutes * 60_000)
+			return;
+		print(soFar, { type: "did_not_finish", maxMinutes });
+		process.exit(3);
+	},
 });
 print(result, { type: "finished" });
 
@@ -37,7 +40,7 @@ function print(soFar: RunResult, status: BenchMeasurement["status"]): void {
 	console.log(
 		benchReport(config, {
 			tickMs,
-			messages: soFar.eventLog.length,
+			messages: soFar.messageCount,
 			// maxRSS is in kilobytes.
 			peakRssBytes: process.resourceUsage().maxRSS * 1024,
 			heapBytes: heap.heapSize,

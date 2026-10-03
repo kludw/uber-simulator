@@ -80,7 +80,7 @@ describe.skipIf(!config)("run report", () => {
 			driverShards: { count: 1, driversPerShard: 3 },
 			requestsPerMinute: 30,
 		};
-		const result = runInProcess(runConfig);
+		const result = runInProcess({ ...runConfig, keepEventLog: true });
 		const runId = RunId.parse("cross-check");
 		const ingestedAt = new Date("2026-10-03T12:00:00Z");
 		await succeeded(
