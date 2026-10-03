@@ -56,7 +56,7 @@ Checked from the event log alone, one message at a time, by `createInvariantChec
 
 ## UI (0020)
 
-Watch-only, live-only. Browser canvas: drivers as dots colored by state, waiting riders as markers, active trip lines. Side panel: counts per state, trip counters, mean ticks from request to pickup, legend, connection status. Interpolates between ticks.
+Watch-only: a live run, or a stored run's replay with `?replay=<runId>` (0034). Browser canvas: drivers as dots colored by state, waiting riders as markers, active trip lines. Side panel: counts per state, trip counters, mean ticks from request to pickup, legend, connection status and what is watched (live or replay). Interpolates between ticks.
 
 ## Milestones
 
@@ -69,7 +69,7 @@ Watch-only, live-only. Browser canvas: drivers as dots colored by state, waiting
 7. **Hotspot demand** (0031): rider demand model (uniform | hotspots, `city` preset), configurable demand rate and fleet size in `bun run sim` / `--compare`. Done.
 8. **Driver shifts** (0032): drivers alternate online/offline periods (finish trips first), dispatch/UI/invariants handle offline drivers, `--shifts on|off`. Done.
 9. **Scale to 10k drivers** (0033): profile-first (`docs/performance.md`), owned brain state for dispatch positions, rectangular matching, streaming run checks; target p95 < 1 s per tick at 10k. Done.
-10. **Replay** (0034): `bun run replay -- --run <id>` republishes a stored run from ClickHouse on `replay.<id>.*`, paced by tick; the UI watches it with `?replay=<id>`.
+10. **Replay** (0034): `bun run replay -- --run <id>` republishes a stored run from ClickHouse on `replay.<id>.*`, paced by tick; the UI watches it with `?replay=<id>`. Done.
 
 ## Later (not v1)
 

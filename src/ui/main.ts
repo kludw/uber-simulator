@@ -1,16 +1,18 @@
 // Browser entry (index.html): NATS over websocket -> view -> canvas + side
-// panel (ADR 0020). Watch-only: subscribes, never publishes.
+// panel (ADR 0020). Watch-only: subscribes, never publishes. Live, or a
+// replay with ?replay=<runId> (ADR 0034).
 import { type Msg, wsconnect } from "@nats-io/nats-core";
 import * as z from "zod";
 import { specGrid } from "../shared/grid.ts";
 import { isSimEvent, parseMessage, type SimEvent } from "../shared/messages.ts";
 import { type PanelRow, panelRows } from "./panel.ts";
 import { startRenderer } from "./render.ts";
+import { subscriptionFor } from "./subscription.ts";
 import { applyEvent, emptyView } from "./view.ts";
 
 const PageConfig = z.object({ natsWsUrl: z.url() });
 
-type ConnectionStatus = "connecting" | "live" | "disconnected";
+type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
 function element<T extends HTMLElement>(id: string, type: { new (): T }): T {
 	const found = document.getElementById(id);
@@ -22,9 +24,10 @@ const statusElement = element("status", HTMLElement);
 const panelElement = element("panel", HTMLTableElement);
 const renderer = startRenderer(element("city", HTMLCanvasElement), specGrid);
 
-function showStatus(status: ConnectionStatus): void {
+// Connected shows what is watched ("live" or "replay <runId>").
+function showStatus(status: ConnectionStatus, text: string = status): void {
 	statusElement.dataset.status = status;
-	statusElement.textContent = status;
+	statusElement.textContent = text;
 }
 
 function showPanel(rows: PanelRow[]): void {
@@ -70,6 +73,13 @@ function decode(received: Msg): SimEvent | null {
 async function watch(): Promise<void> {
 	showStatus("connecting");
 	showPanel(panelRows(emptyView()));
+	const watched = subscriptionFor(location.search);
+	if (!watched.ok) {
+		console.warn({ search: location.search, error: watched.error });
+		showStatus("disconnected", "invalid replay run id");
+		return;
+	}
+	const { subject, label } = watched.value;
 	const config = PageConfig.parse(await (await fetch("/config.json")).json());
 	// Keeps retrying, before the first connection too, so the page recovers
 	// from NATS starting late or restarting.
@@ -78,14 +88,14 @@ async function watch(): Promise<void> {
 		waitOnFirstConnect: true,
 		maxReconnectAttempts: -1,
 	});
-	const subscription = connection.subscribe("sim.events.>");
-	showStatus("live");
+	const subscription = connection.subscribe(subject);
+	showStatus("connected", label);
 	(async () => {
 		for await (const status of connection.status()) {
 			if (status.type === "disconnect" || status.type === "close") {
 				showStatus("disconnected");
 			} else if (status.type === "reconnect") {
-				showStatus("live");
+				showStatus("connected", label);
 			}
 		}
 	})();
