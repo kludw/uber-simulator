@@ -168,13 +168,16 @@ describe.skipIf(!natsUrl)("runOverNats", () => {
 		requestsPerMinute: 10,
 	};
 
-	test("a 600-tick run at spec defaults breaks no invariant and completes trips", async () => {
+	// Matches only: at this size the first completion lands near tick 400, too
+	// close to 600 once overtaken messages (ADR 0028) delay matching under load.
+	// The scarce-supply run's short trips cover completion.
+	test("a 600-tick run at spec defaults breaks no invariant and matches trips", async () => {
 		const { eventLog } = await runOnServer(specDefaultConfig);
 
 		expect({
 			violations: checkInvariants(eventLog, specDefaultConfig.grid),
-			completed: eventLog.some((message) => message.type === "trip.completed"),
-		}).toEqual({ violations: [], completed: true });
+			matched: eventLog.some((message) => message.type === "trip.matched"),
+		}).toEqual({ violations: [], matched: true });
 	}, 60_000);
 
 	test("every message of a run carries the run id it returns", async () => {
@@ -197,12 +200,13 @@ describe.skipIf(!natsUrl)("runOverNats", () => {
 		expect(runIds).toEqual(new Set([result.value.runId]));
 	});
 
-	test("a scarce-supply run breaks no invariant and cancels trips", async () => {
+	test("a scarce-supply run breaks no invariant, completes and cancels trips", async () => {
 		const { eventLog } = await runOnServer(scarceConfig);
 
 		expect({
 			violations: checkInvariants(eventLog, scarceConfig.grid),
+			completed: eventLog.some((message) => message.type === "trip.completed"),
 			cancelled: eventLog.some((message) => message.type === "trip.cancelled"),
-		}).toEqual({ violations: [], cancelled: true });
+		}).toEqual({ violations: [], completed: true, cancelled: true });
 	}, 60_000);
 });
