@@ -1169,3 +1169,109 @@ describe.each<Matching>([
 		]);
 	});
 });
+
+// Ended trips (completed, cancelled) still answer late and duplicate inputs.
+describe("decideDispatch ended trips", () => {
+	const completedT1: DispatchInput[] = [
+		requestTrip(t1, 1),
+		wentOnline(d1, cell(3, 3)),
+		wentOnline(d2, cell(9, 9)),
+		ticked(2),
+		ticked(5),
+		ticked(6),
+		accepted(t1, d2),
+		arrivedAtPickup(t1, d2, cell(1, 2)),
+		arrivedAtDropoff(t1, d2, cell(7, 8)),
+		ticked(7),
+	];
+
+	test("rejects a request reusing the ID of a completed trip", () => {
+		const { outputs } = run([...completedT1, requestTrip(t1, 8)]);
+
+		expect(outputs).toEqual([
+			{
+				type: "request_trip_rejected",
+				tripId: t1,
+				error: { type: "duplicate_trip_id" },
+			},
+		]);
+	});
+
+	test("rejects a request reusing the ID of a cancelled trip", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			cancelTrip(t1),
+			ticked(2),
+			requestTrip(t1, 3),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "request_trip_rejected",
+				tripId: t1,
+				error: { type: "duplicate_trip_id" },
+			},
+		]);
+	});
+
+	test("rejects cancelling a cancelled trip without announcing it", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			cancelTrip(t1),
+			ticked(2),
+			cancelTrip(t1),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "cancel_trip_rejected",
+				tripId: t1,
+				error: { type: "invalid_transition", from: "cancelled" },
+			},
+		]);
+	});
+
+	test("ignores a late accept from a driver whose offer expired", () => {
+		const { outputs } = run([...completedT1, accepted(t1, d1)]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("rejects an accept from the driver who completed the trip", () => {
+		const { outputs } = run([...completedT1, accepted(t1, d2)]);
+
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "no_pending_offer",
+				input: accepted(t1, d2),
+			},
+		]);
+	});
+
+	test("rejects a pickup arrival for a completed trip", () => {
+		const { outputs } = run([
+			...completedT1,
+			arrivedAtPickup(t1, d2, cell(1, 2)),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "invalid_transition",
+				input: arrivedAtPickup(t1, d2, cell(1, 2)),
+			},
+		]);
+	});
+
+	test("ignores a dropoff arrival for a cancelled trip", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			cancelTrip(t1),
+			ticked(2),
+			arrivedAtDropoff(t1, d1, cell(7, 8)),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+});
