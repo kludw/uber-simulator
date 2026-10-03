@@ -6,6 +6,7 @@
 		"sim": "bun src/sim/main.ts",
 		"dev": "bun src/sim/dev.ts",
 		"ui": "bun src/ui/serve.ts",
+		"db:migrate": "bun src/persistence/migrate.ts",
 		"test": "bun test",
 		"typecheck": "tsc && tsc -p src/ui",
 		"lint": "biome ci",
@@ -17,6 +18,7 @@
 		"typescript": "^7.0.2"
 	},
 	"dependencies": {
+		"@clickhouse/client": "^1.23.1",
 		"@nats-io/nats-core": "^3.4.0",
 		"@nats-io/transport-node": "^3.4.0",
 		"zod": "^4.6.5"

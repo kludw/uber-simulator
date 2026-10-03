@@ -30,7 +30,7 @@ Snapshot verified against docs.docker.com, Docker Hub pages for `nats` and `clic
 ## Services (from official image docs)
 
 1. **NATS** (`nats`, see `nats` skill): `-alpine` tag, since the default image is scratch (only `/nats-server`, no shell/wget); alpine has busybox `wget` for the healthcheck on `http://localhost:8222/healthz`. Ports 4222 clients, 8222 HTTP monitoring, 9222 websocket. Config file `infra/nats.conf` mounted at `/etc/nats/nats-server.conf` (JetStream `store_dir: /data` + volume on `/data`, websocket).
-2. **ClickHouse** (`clickhouse/clickhouse-server`, see `clickhouse` skill): ports 8123 HTTP (client uses this), 9000 native. Env `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DB`. Data volume on `/var/lib/clickhouse/`. Docs run it with `ulimits: nofile 262144`.
+2. **ClickHouse** (`clickhouse/clickhouse-server`, see `clickhouse` skill): ports 8123 HTTP (client uses this), 9000 native. Env `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DB`. Data volume on `/var/lib/clickhouse/`. Docs run it with `ulimits: nofile 262144`. Default (Ubuntu) image ships `wget`, not `curl`: healthcheck `wget -q --spider http://localhost:8123/ping` (`/ping` needs no credentials). Tag pinned in `compose.yaml` and CI's service container; bump both together.
 
 ## Commands
 

@@ -1,4 +1,5 @@
 import * as z from "zod";
+import type { ClickHouseConfig } from "../persistence/clickhouse.ts";
 import { specGrid } from "../shared/grid.ts";
 import type { Result } from "../shared/result.ts";
 import type { SimConfig } from "./services.ts";
@@ -86,6 +87,31 @@ export function parseUiConfig(
 	return {
 		ok: true,
 		value: { natsWsUrl: parsed.data.NATS_WS_URL, port: parsed.data.UI_PORT },
+	};
+}
+
+const ClickHouseEnv = z.object({
+	CLICKHOUSE_URL: z.url({ protocol: /^https?$/ }),
+	CLICKHOUSE_USER: z.string().min(1),
+	// Empty is a valid password.
+	CLICKHOUSE_PASSWORD: z.string(),
+	CLICKHOUSE_DB: z.string().min(1),
+});
+
+export function parseClickHouseConfig(
+	env: Record<string, string | undefined>,
+): Result<ClickHouseConfig, InvalidConfig> {
+	const parsed = ClickHouseEnv.safeParse(env);
+	if (!parsed.success) return invalidConfig(parsed.error);
+	const vars = parsed.data;
+	return {
+		ok: true,
+		value: {
+			url: vars.CLICKHOUSE_URL,
+			username: vars.CLICKHOUSE_USER,
+			password: vars.CLICKHOUSE_PASSWORD,
+			database: vars.CLICKHOUSE_DB,
+		},
 	};
 }
 

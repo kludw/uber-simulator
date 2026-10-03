@@ -2,12 +2,12 @@
 
 Ride-hailing simulator for learning and fun: drivers, riders, and dispatch run as independent services over NATS on a synthetic city grid, watched live in the browser. What it does: [docs/spec.md](docs/spec.md). Why: [docs/adr](docs/adr/README.md).
 
-Status: milestone 4 done. Driver brain places drivers, wanders idle ones, and carries trips from offer to completion. Dispatch brain accepts trip requests, tracks driver positions, each tick offers queued trips to the nearest idle driver, and matches accepted offers or requeues declined and expired ones, confirms pickup and completion on driver arrivals, and cancels trips before pickup. Rider brain spawns riders (Poisson demand) that request trips, cancel when their patience runs out, and leave once their trip completes or is cancelled. An in-memory bus delivers messages deterministically (publish order), and a generic service shell runs any brain on it (publishes outputs, logs rejected inputs). A runner starts driver shards, dispatch, and riders on that bus and drives them for N ticks, returning the event log; same seed and config give the same log. An invariant checker reports spec invariant violations (`docs/spec.md`) from an event log alone. `bun run sim` runs it all headless and prints a summary. A NATS bus adapter implements the same bus over a local NATS server (Docker Compose), and `bun run dev` runs clock, dispatch, riders, and each driver shard as its own process on it. `bun run sim -- --bus nats` runs the same simulation over NATS, each service on its own connection; integration tests check it breaks no invariant. `bun run ui` serves a browser page that subscribes to the events over NATS WebSocket and draws the live city on a canvas with a side panel of counters. How it fits together: [docs/architecture.md](docs/architecture.md).
+Status: milestone 4 done. Driver brain places drivers, wanders idle ones, and carries trips from offer to completion. Dispatch brain accepts trip requests, tracks driver positions, each tick offers queued trips to the nearest idle driver, and matches accepted offers or requeues declined and expired ones, confirms pickup and completion on driver arrivals, and cancels trips before pickup. Rider brain spawns riders (Poisson demand) that request trips, cancel when their patience runs out, and leave once their trip completes or is cancelled. An in-memory bus delivers messages deterministically (publish order), and a generic service shell runs any brain on it (publishes outputs, logs rejected inputs). A runner starts driver shards, dispatch, and riders on that bus and drives them for N ticks, returning the event log; same seed and config give the same log. An invariant checker reports spec invariant violations (`docs/spec.md`) from an event log alone. `bun run sim` runs it all headless and prints a summary. A NATS bus adapter implements the same bus over a local NATS server (Docker Compose), and `bun run dev` runs clock, dispatch, riders, and each driver shard as its own process on it. `bun run sim -- --bus nats` runs the same simulation over NATS, each service on its own connection; integration tests check it breaks no invariant. `bun run ui` serves a browser page that subscribes to the events over NATS WebSocket and draws the live city on a canvas with a side panel of counters. Milestone 5 in progress: a local ClickHouse (Docker Compose) with an `events` table (`bun run db:migrate`) and an adapter to insert and query events; nothing persists events yet. How it fits together: [docs/architecture.md](docs/architecture.md).
 
 ## Prerequisites
 
 - [Bun](https://bun.com) 1.4.2
-- [Docker](https://docs.docker.com) with Compose (for local NATS)
+- [Docker](https://docs.docker.com) with Compose (for local NATS and ClickHouse)
 
 ## Setup
 
@@ -21,7 +21,7 @@ cp .env.example .env
 
 ## Local infra
 
-NATS with JetStream and a websocket listener ([docs/architecture.md](docs/architecture.md#local-infra)). Start and wait until healthy:
+NATS with JetStream and a websocket listener, and ClickHouse ([docs/architecture.md](docs/architecture.md#local-infra)). ClickHouse's user, password, and database come from `.env` (`CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DB`) and are created on its first start. Start and wait until healthy:
 
 ```bash
 docker compose up -d --wait
@@ -37,7 +37,13 @@ docker compose ps
 docker compose logs -f nats
 ```
 
-Stop (keeps JetStream data in the `nats-data` volume):
+Create the ClickHouse `events` table (ADR 0029) from `infra/clickhouse/*.sql`; rerunning is a no-op. Exit code 0 applied, 1 ClickHouse unreachable or a migration failed, 2 invalid config:
+
+```bash
+bun run db:migrate
+```
+
+Stop (keeps JetStream data in the `nats-data` volume, ClickHouse data in `clickhouse-data`):
 
 ```bash
 docker compose down
@@ -108,7 +114,7 @@ A single service: `bun src/clock/main.ts`, `bun src/dispatch/main.ts`, `bun src/
 
 ## Commands
 
-NATS integration tests (bus, distributed runs) need the local NATS server (`docker compose up -d --wait`) and `NATS_URL` (Bun loads `.env`); without `NATS_URL` they are skipped with a warning.
+Integration tests need the local infra (`docker compose up -d --wait`) and its URLs (Bun loads `.env`): NATS tests (bus, distributed runs) need `NATS_URL`, ClickHouse adapter tests need `CLICKHOUSE_URL` and the other `CLICKHOUSE_*` variables (they work in a throwaway database). Without the URL, each group is skipped with a warning.
 
 ```bash
 bun run test
