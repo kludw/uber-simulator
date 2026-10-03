@@ -42,4 +42,4 @@ Snapshot verified against clickhouse.com/docs + clickhouse-js README/CHANGELOG o
 
 ## Adapter
 
-`src/persistence/clickhouse.ts`: `connectClickHouse(config)` (pings with a `SELECT`, so bad credentials fail here), `insertEvents`, `query(sql, params)` (rows unvalidated: parse with Zod), `command(sql)`, `close()`, `migrate(clickhouse)`. Config from env via `parseClickHouseConfig` (`src/sim/config.ts`). Integration tests use a throwaway database and skip without `CLICKHOUSE_URL`.
+`src/persistence/clickhouse.ts`: `connectClickHouse(config)` (runs `SELECT 1` in the configured database, so bad credentials or a missing database fail here), `insertEvents`, `query(sql, params)` (rows unvalidated: parse with Zod), `command(sql)`, `close()`, `migrate(clickhouse)`. Config from env via `parseClickHouseConfig` (`src/sim/config.ts`). Integration tests use a throwaway database and skip without `CLICKHOUSE_URL`.

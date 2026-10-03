@@ -3,6 +3,7 @@
 // back as a Result.
 import { join } from "node:path";
 import { type ClickHouseClient, createClient } from "@clickhouse/client";
+import type { RunId, Tick } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
 
 export type ClickHouseConfig = {
@@ -14,9 +15,9 @@ export type ClickHouseConfig = {
 
 // One row of the events table. IDs are empty when the event has none.
 export type EventRow = {
-	runId: string;
+	runId: RunId;
 	type: string;
-	tick: number;
+	tick: Tick;
 	streamSeq: number;
 	tripId: string;
 	driverId: string;
@@ -53,20 +54,23 @@ export async function connectClickHouse(
 	config: ClickHouseConfig,
 ): Promise<Result<ClickHouse, ClickHouseError>> {
 	const client = createClient(config);
-	// A SELECT, not /ping: checks credentials and database too.
-	const ping = await client.ping({ select: true });
-	if (!ping.success) {
+	// A query, not ping(): ping({ select: true }) checks credentials but not
+	// the database; a query runs in the configured database, so a missing one
+	// fails here too.
+	const clickhouse = wrap(client);
+	const reached = await clickhouse.command("SELECT 1");
+	if (!reached.ok) {
 		await client.close();
 		return {
 			ok: false,
 			error: {
 				type: "clickhouse_connect_failed",
 				url: config.url,
-				cause: ping.error,
+				cause: reached.error.cause,
 			},
 		};
 	}
-	return { ok: true, value: wrap(client) };
+	return { ok: true, value: clickhouse };
 }
 
 function wrap(client: ClickHouseClient): ClickHouse {

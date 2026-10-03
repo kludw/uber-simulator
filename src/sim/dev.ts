@@ -13,6 +13,9 @@ if (!config.ok) {
 console.log(`[dev] run id: ${config.value.runId}`);
 
 const services = [
+	// First: its stream must exist before the clock's first tick, or events
+	// published until then aren't stored.
+	{ name: "persister", entrypoint: "src/persister/main.ts", env: {} },
 	{ name: "dispatch", entrypoint: "src/dispatch/main.ts", env: {} },
 	{ name: "riders", entrypoint: "src/rider/main.ts", env: {} },
 	...Array.from({ length: config.value.driverShards.count }, (_, shard) => ({

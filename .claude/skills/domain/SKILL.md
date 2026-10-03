@@ -33,6 +33,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Input rejected**: brain output for an input addressed to one of its entities but invalid for that entity's state. Logged by the shell, never published.
 - **Violation**: a broken spec invariant (`docs/spec.md`) found in an event log, tagged by `type` (e.g. `illegal_trip_transition`).
 - **Clock**: service publishing ticks.
+- **Persister**: service storing every event in ClickHouse from a JetStream stream, tagged with its run id (0029). Shell only, no brain.
 - **Speed**: sim seconds per wall second; the clock publishes one tick per 1 s / speed.
 - **Shard**: fixed set of drivers owned by one driver service instance.
 - **Dispatch**: service owning all trips; matches trips to drivers (0018).

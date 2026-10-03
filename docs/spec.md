@@ -23,7 +23,7 @@ Independent processes, each owning its state, talking over NATS. Each service's 
 | driver (×2, 50 drivers each, fixed shard) | driver position, state | moves drivers each tick, answers offers, reports arrivals |
 | rider | riders, demand generator | spawns riders (Poisson, random cells), requests trips, cancels on lost patience |
 | dispatch (single) | trips | queues requests, matches, owns every trip transition |
-| persister (later) | — | writes all events to ClickHouse |
+| persister | stream position (JetStream consumer) | writes all events to ClickHouse, at-least-once |
 | UI (browser) | — | renders a view built from events |
 
 Nobody owns "the world". Views (dispatch's driver positions, UI) are built from events.
