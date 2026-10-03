@@ -34,6 +34,9 @@ export type Trip =
 	// null when no driver was involved.
 	| (TripDetails & { state: "cancelled"; driverId: DriverId | null });
 
+// No transition leaves these states.
+export type EndedTrip = Extract<Trip, { state: "completed" | "cancelled" }>;
+
 export type NoPendingOffer = {
 	type: "no_pending_offer";
 	tripId: TripId;

@@ -35,6 +35,7 @@ import {
 	acceptOffer,
 	cancel,
 	complete,
+	type EndedTrip,
 	type NoPendingOffer,
 	offerTo,
 	pickUp,
@@ -44,17 +45,20 @@ import {
 	withdrawOffer,
 } from "./trip.ts";
 
-// Every known trip by ID, in request order: the queue is the requested trips
-// without an offer, in that order (FIFO).
+// trips: trips not yet ended by ID, in request order: the queue is the
+// requested trips without an offer, in that order (FIFO).
+// endedTrips: completed and cancelled trips, out of the per-tick scan but kept
+// to answer late and duplicate inputs for them.
 // Online driver cells as last reported in events; may be stale (ADR 0018):
 // a driver offered a trip on the tick it went offline declines (ADR 0032).
 // tick: last clock tick, stamped on events caused by non-tick inputs.
-// driverCells is owned and updated in place (ADR 0033).
+// trips, endedTrips, and driverCells are owned and updated in place (ADR 0033).
 export type DispatchState = {
 	grid: Grid;
 	tick: Tick;
 	matching: Matching;
-	trips: ReadonlyMap<TripId, Trip>;
+	trips: Map<TripId, Trip>;
+	endedTrips: Map<TripId, EndedTrip>;
 	driverCells: Map<DriverId, Cell>;
 };
 
@@ -120,6 +124,7 @@ export function startDispatch(config: {
 		tick: config.tick,
 		matching,
 		trips: new Map(),
+		endedTrips: new Map(),
 		driverCells: new Map(),
 	};
 }
@@ -156,9 +161,8 @@ export function decideDispatch(
 
 function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 	const outputs: DispatchOutput[] = [];
-	const trips = new Map(state.trips);
 	for (const { trip, driverId } of offerPairs(state, ticked.tick)) {
-		trips.set(trip.id, offerTo(trip, driverId, ticked.tick));
+		storeTrip(state, offerTo(trip, driverId, ticked.tick));
 		outputs.push(
 			{
 				type: "offer",
@@ -177,7 +181,7 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 		if (ticked.tick < trip.offer.offeredAt + offerTimeoutTicks) continue;
 		const queued = withdrawOffer(trip, trip.offer.driverId);
 		if (!queued.ok) throw new Error(`pending offer for ${trip.id} not found`);
-		trips.set(trip.id, queued.value);
+		storeTrip(state, queued.value);
 		outputs.push({
 			type: "trip.offer_expired",
 			tick: ticked.tick,
@@ -185,7 +189,8 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 			driverId: trip.offer.driverId,
 		});
 	}
-	return { state: { ...state, tick: ticked.tick, trips }, outputs };
+	state.tick = ticked.tick;
+	return { state, outputs };
 }
 
 type OfferPair = { trip: QueuedTrip; driverId: DriverId };
@@ -273,7 +278,7 @@ function cellOf(state: DispatchState, driverId: DriverId): Cell {
 }
 
 function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
-	if (state.trips.has(request.tripId)) {
+	if (knownTrip(state, request.tripId) !== undefined) {
 		return {
 			state,
 			outputs: [
@@ -285,9 +290,9 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 			],
 		};
 	}
-	const trip = requestedTrip(request);
+	storeTrip(state, requestedTrip(request));
 	return {
-		state: { ...state, trips: new Map(state.trips).set(trip.id, trip) },
+		state,
 		outputs: [
 			{ type: "request_trip_accepted", tripId: request.tripId },
 			{
@@ -303,7 +308,7 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 }
 
 function onCancelTrip(state: DispatchState, command: CancelTrip): Decision {
-	const trip = state.trips.get(command.tripId);
+	const trip = knownTrip(state, command.tripId);
 	if (trip === undefined) {
 		return {
 			state,
@@ -329,11 +334,9 @@ function onCancelTrip(state: DispatchState, command: CancelTrip): Decision {
 			],
 		};
 	}
+	storeTrip(state, cancelled.value);
 	return {
-		state: {
-			...state,
-			trips: new Map(state.trips).set(trip.id, cancelled.value),
-		},
+		state,
 		outputs: [
 			{ type: "cancel_trip_accepted", tripId: trip.id },
 			{
@@ -368,7 +371,7 @@ function onOfferReply(
 	state: DispatchState,
 	reply: OfferAccepted | OfferDeclined,
 ): Decision {
-	const trip = state.trips.get(reply.tripId);
+	const trip = knownTrip(state, reply.tripId);
 	if (trip === undefined) return { state, outputs: [] };
 	if (trip.state === "cancelled") return { state, outputs: [] };
 	if (trip.excludedDrivers.has(reply.driverId)) return { state, outputs: [] };
@@ -384,8 +387,9 @@ function onOfferReply(
 			],
 		};
 	}
+	storeTrip(state, next.value);
 	return {
-		state: { ...state, trips: new Map(state.trips).set(trip.id, next.value) },
+		state,
 		outputs: [
 			{
 				type: accepted ? "trip.matched" : "trip.offer_declined",
@@ -401,7 +405,7 @@ function onArrival(
 	state: DispatchState,
 	arrival: DriverArrivedAtPickup | DriverArrivedAtDropoff,
 ): Decision {
-	const trip = state.trips.get(arrival.tripId);
+	const trip = knownTrip(state, arrival.tripId);
 	if (trip === undefined) return { state, outputs: [] };
 	// The rider's cancel reached dispatch first: a legitimate race, not an error.
 	if (trip.state === "cancelled") return { state, outputs: [] };
@@ -417,8 +421,9 @@ function onArrival(
 			],
 		};
 	}
+	storeTrip(state, next.value);
 	return {
-		state: { ...state, trips: new Map(state.trips).set(trip.id, next.value) },
+		state,
 		outputs: [
 			{
 				type: atPickup ? "trip.picked_up" : "trip.completed",
@@ -428,4 +433,19 @@ function onArrival(
 			},
 		],
 	};
+}
+
+function knownTrip(state: DispatchState, tripId: TripId): Trip | undefined {
+	return state.trips.get(tripId) ?? state.endedTrips.get(tripId);
+}
+
+// An ended trip moves to endedTrips; a trip keeps its place in request order
+// until then.
+function storeTrip(state: DispatchState, trip: Trip): void {
+	if (trip.state !== "completed" && trip.state !== "cancelled") {
+		state.trips.set(trip.id, trip);
+		return;
+	}
+	state.trips.delete(trip.id);
+	state.endedTrips.set(trip.id, trip);
 }
