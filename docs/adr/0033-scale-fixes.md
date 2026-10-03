@@ -27,7 +27,7 @@ We will:
 - Each fix targets one measured hot spot (>80% of CPU or linear memory growth); nothing speculative (`design` skill §6).
 - Owned state is the smallest change that removes O(n) copies per message; it keeps every brain's interface and determinism, and matches how the shell already uses state.
 - Rectangular Hungarian keeps batched matching exact; candidate pruning (k nearest drivers) would be faster still but gives up optimality, and isn't needed once padding is gone.
-- Streaming checks keep the invariant checker an independent oracle (it still sees only messages) while making memory flat.
+- Streaming checks keep the invariant checker an independent oracle (it still sees only messages) while memory no longer grows with the number of messages.
 
 ## Alternatives considered
 
