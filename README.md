@@ -212,6 +212,21 @@ completed trips per simulated minute: 6.3
 
 Events still in the JetStream stream when `bun run dev` stops are stored on the persister's next start, so a report right after Ctrl+C can be slightly short. Means count trips with both ends stored (`n/a` when none); trips per simulated minute is over the run's first-to-last tick span (1 tick = 1 simulated second). Trip counts and mean ticks to pickup are the same numbers `bun run sim` prints for an in-process run of the same events. Exit codes: 0 ok, 1 unknown run id (`unknown run id: <id>`), ClickHouse unreachable, or a query failed (e.g. the `events` table doesn't exist yet: run `bun run db:migrate`), 2 invalid args (neither or both of `--list` / `--run`, or a malformed run id) or invalid `CLICKHOUSE_*` config.
 
+### Replay a run
+
+`bun run replay` republishes a stored run's events on NATS under `replay.<run id>.<live subject>` (e.g. `replay.<run id>.sim.events.driver.moved`), in `tick, stream_seq` order, paced by tick: a tick's events go out `(tick - start tick) / speed` seconds after the first replayed tick ([ADR 0034](docs/adr/0034-replay.md)). It never publishes on `sim.*`, so replays aren't stored again, and it exits once the run's events are exhausted. Needs the local infra and a run stored by `bun run dev` (see [Report a run](#report-a-run): `bun run report -- --list` shows stored runs).
+
+```bash
+bun run replay -- --run <run id> --speed 20
+```
+
+```
+{"service":"replay","type":"replay_started","runId":"d1381885-6d24-4935-8d3b-6dad1056bab3","startTick":0,"speed":20}
+{"service":"replay","type":"replay_finished","runId":"d1381885-6d24-4935-8d3b-6dad1056bab3","events":76249}
+```
+
+`--speed N` (default `1`, any positive number): sim seconds per wall second, like `SPEED`. `--from-tick T` starts at the first stored tick >= `T` (trips already in flight then). Watch it with any NATS subscriber on `replay.<run id>.>`. Log lines: `replay_started`, `stored_event_skipped` (a stored payload that doesn't parse as an event), `replay_finished` (events published). Exit codes: 0 replayed, 1 no stored events for the run id (from `--from-tick`), 2 invalid args (missing `--run`, a malformed run id, a non-positive speed, a negative or fractional start tick) or invalid `NATS_URL` / `CLICKHOUSE_*` config, 3 NATS or ClickHouse unreachable or a query failed (e.g. the `events` table doesn't exist yet: run `bun run db:migrate`).
+
 ### Benchmark
 
 One in-process run at a given fleet size, demand scaled with it at the spec ratio (10 requests/min per 100 drivers), uniform demand, shifts off. Defaults: `--drivers 1000 --ticks 600 --matching greedy --batch-window 5 --shards 2 --seed 1`; `--drivers` must split evenly over `--shards`. `--max-minutes` (positive, fractions ok; default no limit) stops the run once a tick ends past that much wall time.
@@ -247,7 +262,7 @@ A single service: `bun src/clock/main.ts`, `bun src/dispatch/main.ts`, `bun src/
 
 ## Commands
 
-Integration tests need the local infra (`docker compose up -d --wait`) and its URLs (Bun loads `.env`): NATS tests (bus, distributed runs) need `NATS_URL`, ClickHouse adapter, run report, and stored run reader tests need `CLICKHOUSE_URL` and the other `CLICKHOUSE_*` variables (they work in a throwaway database), persister tests need both (their own streams and a throwaway database). Without the URL, each group is skipped with a warning.
+Integration tests need the local infra (`docker compose up -d --wait`) and its URLs (Bun loads `.env`): NATS tests (bus, distributed runs) need `NATS_URL`, ClickHouse adapter, run report, and stored run reader tests need `CLICKHOUSE_URL` and the other `CLICKHOUSE_*` variables (they work in a throwaway database), persister and replay tests need both (their own streams or run ids and a throwaway database). Without the URL, each group is skipped with a warning.
 
 ```bash
 bun run test

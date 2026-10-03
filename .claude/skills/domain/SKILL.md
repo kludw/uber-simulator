@@ -34,6 +34,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Run report**: a persisted run's headline numbers queried from ClickHouse (`bun run report`, `src/analytics/report.ts`): trip counts, mean ticks from request to pickup and from pickup to completion, completed trips per simulated minute. Its trip counts and mean ticks to pickup agree with the summary of the same event log.
 - **Input rejected**: brain output for an input addressed to one of its entities but invalid for that entity's state. Logged by the shell, never published.
 - **Violation**: a broken spec invariant (`docs/spec.md`) found in an event log, tagged by `type` (e.g. `illegal_trip_transition`).
+- **Replay**: republishing a stored run's events on `replay.<runId>.<live subject>`, in `tick, stream_seq` order, paced by tick from the first replayed tick (`bun run replay`, 0034). Never on `sim.*`.
 - **Clock**: service publishing ticks.
 - **Persister**: service storing every event in ClickHouse from a JetStream stream, tagged with its run id (0029). Shell only, no brain.
 - **Speed**: sim seconds per wall second; the clock publishes one tick per 1 s / speed.
