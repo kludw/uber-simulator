@@ -53,6 +53,10 @@ function wentOnline(driverId: DriverId, at: Cell): DispatchInput {
 	return { type: "driver.went_online", tick: tick(0), driverId, cell: at };
 }
 
+function wentOffline(driverId: DriverId, at: Cell): DispatchInput {
+	return { type: "driver.went_offline", tick: tick(0), driverId, cell: at };
+}
+
 function ticked(n: number): DispatchInput {
 	return { type: "clock.ticked", tick: tick(n) };
 }
@@ -1119,4 +1123,49 @@ describe("decideDispatch batched matching", () => {
 			).toThrow();
 		},
 	);
+});
+
+// ADR 0032. Ticks are even so the batched window (2) is open on each.
+describe.each<Matching>([
+	{ type: "greedy" },
+	{ type: "batched", windowTicks: 2 },
+])("decideDispatch driver shifts ($type)", (matching) => {
+	test("does not offer a trip to a driver that went offline", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(3, 3)),
+				wentOffline(d1, cell(3, 3)),
+				ticked(2),
+			],
+			matching,
+		);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("offers a trip to an offline driver once it is back online", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(3, 3)),
+				wentOffline(d1, cell(3, 3)),
+				ticked(2),
+				wentOnline(d1, cell(3, 3)),
+				ticked(4),
+			],
+			matching,
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(4), tripId: t1, driverId: d1 },
+		]);
+	});
 });

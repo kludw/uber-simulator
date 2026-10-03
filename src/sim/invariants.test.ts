@@ -56,6 +56,10 @@ function wentOnline(driverId: DriverId, at: Cell): Message {
 	return { type: "driver.went_online", tick: tick(0), driverId, cell: at };
 }
 
+function wentOffline(driverId: DriverId, at: Cell, when: number): Message {
+	return { type: "driver.went_offline", tick: tick(when), driverId, cell: at };
+}
+
 function moved(driverId: DriverId, to: Cell, at: number): Message {
 	return { type: "driver.moved", tick: tick(at), driverId, cell: to };
 }
@@ -335,6 +339,107 @@ describe("checkInvariants", () => {
 
 		expect(checkInvariants(log, grid)).toEqual([
 			{ type: "driver_left_grid", tick: tick(1), driverId: d1, cell: offGrid },
+		]);
+	});
+});
+
+// ADR 0032.
+describe("checkInvariants driver shifts", () => {
+	test("a driver offered a trip as it goes offline, declining, then back online is clean", () => {
+		const log: Message[] = [
+			...cleanTrip,
+			requested(t2, 4),
+			wentOffline(d1, cell(2, 0), 4),
+			tripEvent("trip.offered", t2, d1, 4),
+			tripEvent("trip.offer_declined", t2, d1, 4),
+			{
+				type: "driver.went_online",
+				tick: tick(8),
+				driverId: d1,
+				cell: cell(2, 0),
+			},
+			moved(d1, cell(2, 1), 9),
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([]);
+	});
+
+	test("an offline driver moving is flagged", () => {
+		const log = [
+			wentOnline(d1, cell(0, 0)),
+			wentOffline(d1, cell(0, 0), 1),
+			moved(d1, cell(1, 0), 2),
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([
+			{
+				type: "offline_driver_moved",
+				tick: tick(2),
+				driverId: d1,
+				cell: cell(1, 0),
+			},
+		]);
+	});
+
+	test("a trip matched to an offline driver is flagged", () => {
+		const log = [
+			wentOnline(d1, cell(0, 0)),
+			requested(t1, 1),
+			tripEvent("trip.offered", t1, d1, 1),
+			wentOffline(d1, cell(0, 0), 1),
+			tripEvent("trip.matched", t1, d1, 2),
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([
+			{
+				type: "offline_driver_matched",
+				tick: tick(2),
+				tripId: t1,
+				driverId: d1,
+			},
+		]);
+	});
+
+	test("a driver going offline with an active trip is flagged", () => {
+		const log = [
+			wentOnline(d1, cell(0, 0)),
+			requested(t1, 1),
+			tripEvent("trip.offered", t1, d1, 1),
+			tripEvent("trip.matched", t1, d1, 1),
+			wentOffline(d1, cell(0, 0), 2),
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([
+			{
+				type: "driver_went_offline_with_active_trip",
+				tick: tick(2),
+				driverId: d1,
+				tripId: t1,
+			},
+		]);
+	});
+
+	test.each<Message>([
+		{ type: "trip.cancelled", tick: tick(2), tripId: t1, driverId: d1 },
+		tripEvent("trip.offer_declined", t1, d1, 2),
+		tripEvent("trip.offer_expired", t1, d1, 2),
+	])("$type naming an offline driver keeps it offline", (freed) => {
+		const log = [
+			wentOnline(d1, cell(0, 0)),
+			requested(t1, 1),
+			tripEvent("trip.offered", t1, d1, 1),
+			wentOffline(d1, cell(0, 0), 1),
+			freed,
+			moved(d1, cell(1, 0), 3),
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([
+			{
+				type: "offline_driver_moved",
+				tick: tick(3),
+				driverId: d1,
+				cell: cell(1, 0),
+			},
 		]);
 	});
 });

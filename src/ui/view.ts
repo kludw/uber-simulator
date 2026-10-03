@@ -135,9 +135,11 @@ export function applyEvent(view: View, event: SimEvent): View {
 			if (event.driverId === null) return next;
 			return withDriverState(next, event.driverId, "idle");
 		}
-		// No run emits it until shifts are wired in (ADR 0032).
+		// Offline drivers leave the view (ADR 0032): they emit nothing until
+		// back online, so a UI joining mid-run could not count them anyway.
+		// Later events naming one (cancel, decline, expiry) find no driver.
 		case "driver.went_offline":
-			return view;
+			return withoutDriver(view, event.driverId);
 		// Offers don't change a driver's state until trip.matched.
 		case "trip.offered":
 		case "trip.offer_declined":
@@ -182,7 +184,8 @@ function withArrival(
 	});
 }
 
-// The only place drivers change, so driversPerState always matches drivers.
+// withDriver and withoutDriver are the only places drivers change, so
+// driversPerState always matches drivers.
 function withDriver(view: View, driverId: DriverId, driver: DriverView): View {
 	const drivers = new Map(view.drivers);
 	const driversPerState = { ...view.driversPerState };
@@ -190,6 +193,16 @@ function withDriver(view: View, driverId: DriverId, driver: DriverView): View {
 	if (previous !== undefined) driversPerState[previous.state]--;
 	driversPerState[driver.state]++;
 	drivers.set(driverId, driver);
+	return { ...view, drivers, driversPerState };
+}
+
+function withoutDriver(view: View, driverId: DriverId): View {
+	const previous = view.drivers.get(driverId);
+	if (previous === undefined) return view;
+	const drivers = new Map(view.drivers);
+	const driversPerState = { ...view.driversPerState };
+	driversPerState[previous.state]--;
+	drivers.delete(driverId);
 	return { ...view, drivers, driversPerState };
 }
 
