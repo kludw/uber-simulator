@@ -38,7 +38,7 @@ Nobody owns "the world". Views (dispatch's driver positions, UI) are built from 
 6. Rider patience expires before pickup -> `cancel_trip` to dispatch -> reply `cancel_trip_accepted` + `trip.cancelled` (driverId = driver to free: the matched driver or the one holding a pending offer, null if none), that driver `idle`, rider removed. A pending offer is dropped; a late reply to it is ignored. Trip picked up, completed, already cancelled, or unknown -> reply `cancel_trip_rejected` (`invalid_transition` / `unknown_trip`), no event. Rider: completed or cancelled trip -> removed, even if riding (its trip event was lost); unknown trip -> cancelling rider removed (request lost); picked up -> waits for `trip.picked_up` / `trip.completed`.
 7. Races resolved by dispatch: whichever of arrival / cancel reaches dispatch first wins. Arrival first -> picked up, cancel rejected. Cancel first -> cancelled, arrival ignored.
 
-Idle drivers wander: pick a random target cell, drive there, repeat. All 100 drivers online the whole run. A crashed driver shard's drivers just disappear.
+Idle drivers wander: pick a random target cell, drive there, repeat. By default all 100 drivers online the whole run. With shifts (0032) a driver goes offline (`driver.went_offline`) only when idle and comes back with `driver.went_online`; dispatch makes no new offers to it in between. Dispatch's view can be stale: an offer made on the tick a driver goes offline is declined, and a `trip.cancelled` / `trip.offer_expired` / `trip.offer_declined` naming an offline driver leaves it offline. A crashed driver shard's drivers just disappear.
 
 ## Invariants (system tests)
 
@@ -49,6 +49,8 @@ Idle drivers wander: pick a random target cell, drive there, repeat. All 100 dri
 - Every completed trip was matched and picked up.
 - A `trip.cancelled` naming a driver comes after that trip's `trip.offered` to that driver (else the driver could get stuck).
 - A `trip.cancelled` names the driver to free: the matched driver, else the driver holding the pending offer, else null.
+- An offline driver (from `driver.went_offline` until `driver.went_online`) never moves and is never matched (`trip.matched`). Offers to it are allowed (stale view; it declines), and events freeing it (cancel, expiry, decline) don't bring it online.
+- A driver goes offline only with no active trip.
 
 Checked from the event log alone by `checkInvariants` (`src/sim/invariants.ts`), independent of brain code.
 

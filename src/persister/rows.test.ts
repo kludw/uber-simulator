@@ -36,6 +36,10 @@ describe("toRow", () => {
 			{ tripId: "", driverId: "d-7", riderId: "" },
 		],
 		[
+			{ type: "driver.went_offline", tick, driverId, cell },
+			{ tripId: "", driverId: "d-7", riderId: "" },
+		],
+		[
 			{ type: "driver.moved", tick, driverId, cell },
 			{ tripId: "", driverId: "d-7", riderId: "" },
 		],

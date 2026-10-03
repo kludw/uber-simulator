@@ -302,6 +302,50 @@ describe("offers", () => {
 	});
 });
 
+// ADR 0032: offline drivers are out of the view, not a state of it.
+describe("going offline", () => {
+	const wentOffline: SimEvent = {
+		type: "driver.went_offline",
+		tick: tick(4),
+		driverId: d1,
+		cell: cell(2, 3),
+	};
+
+	test("a driver going offline leaves the view", () => {
+		const view = viewOf([online(d1, 0, cell(2, 3)), wentOffline]);
+		expect(view.drivers.has(d1)).toBe(false);
+	});
+
+	test("a driver going offline is no longer counted", () => {
+		const view = viewOf([online(d1, 0, cell(2, 3)), wentOffline]);
+		expect(view.driversPerState.idle).toBe(0);
+	});
+
+	test.each<SimEvent>([
+		cancelled(t1, d1, 5),
+		{ type: "trip.offer_declined", tick: tick(5), tripId: t1, driverId: d1 },
+		{ type: "trip.offer_expired", tick: tick(5), tripId: t1, driverId: d1 },
+	])("$type naming an offline driver keeps it out of the view", (freed) => {
+		const view = viewOf([
+			online(d1, 0, cell(2, 3)),
+			requested(t1, 1, pickup, dropoff),
+			{ type: "trip.offered", tick: tick(4), tripId: t1, driverId: d1 },
+			wentOffline,
+			freed,
+		]);
+		expect(view.drivers.has(d1)).toBe(false);
+	});
+
+	test("a driver back online is idle at its cell", () => {
+		const view = viewOf([
+			online(d1, 0, cell(2, 3)),
+			wentOffline,
+			online(d1, 9, cell(2, 3)),
+		]);
+		expect(view.drivers.get(d1)?.state).toBe("idle");
+	});
+});
+
 function online(driverId: DriverId, at: number, to: Cell): SimEvent {
 	return { type: "driver.went_online", tick: tick(at), driverId, cell: to };
 }

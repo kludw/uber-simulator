@@ -65,7 +65,22 @@ export type Violation =
 			from: Cell;
 			to: Cell;
 	  }
-	| { type: "driver_left_grid"; tick: Tick; driverId: DriverId; cell: Cell };
+	| { type: "driver_left_grid"; tick: Tick; driverId: DriverId; cell: Cell }
+	// ADR 0032. Offers to an offline driver are not violations: dispatch's view
+	// may be stale, and the driver declines.
+	| { type: "offline_driver_moved"; tick: Tick; driverId: DriverId; cell: Cell }
+	| {
+			type: "offline_driver_matched";
+			tick: Tick;
+			tripId: TripId;
+			driverId: DriverId;
+	  }
+	| {
+			type: "driver_went_offline_with_active_trip";
+			tick: Tick;
+			driverId: DriverId;
+			tripId: TripId;
+	  };
 
 // What the log has shown so far, rebuilt only from events.
 type LogState = {
@@ -75,6 +90,8 @@ type LogState = {
 	activeTrips: Map<DriverId, TripId>;
 	// Last reported position and the tick it was reported at.
 	driverPositions: Map<DriverId, { cell: Cell; tick: Tick }>;
+	// From driver.went_offline until driver.went_online; no trip event changes it.
+	offlineDrivers: Set<DriverId>;
 };
 
 export function checkInvariants(
@@ -87,13 +104,37 @@ export function checkInvariants(
 		offeredDrivers: new Map(),
 		activeTrips: new Map(),
 		driverPositions: new Map(),
+		offlineDrivers: new Set(),
 	};
 	for (const message of eventLog) {
 		switch (message.type) {
 			case "driver.went_online":
+				log.offlineDrivers.delete(message.driverId);
 				log.driverPositions.set(message.driverId, message);
 				break;
+			case "driver.went_offline": {
+				const tripId = log.activeTrips.get(message.driverId);
+				if (tripId !== undefined) {
+					violations.push({
+						type: "driver_went_offline_with_active_trip",
+						tick: message.tick,
+						driverId: message.driverId,
+						tripId,
+					});
+				}
+				log.offlineDrivers.add(message.driverId);
+				log.driverPositions.set(message.driverId, message);
+				break;
+			}
 			case "driver.moved":
+				if (log.offlineDrivers.has(message.driverId)) {
+					violations.push({
+						type: "offline_driver_moved",
+						tick: message.tick,
+						driverId: message.driverId,
+						cell: message.cell,
+					});
+				}
 				violations.push(...checkMove(log, message));
 				if (!cellIn(grid, message.cell.x, message.cell.y).ok) {
 					violations.push({
@@ -210,6 +251,14 @@ function checkTripEvent(log: LogState, event: TripEvent): Violation[] {
 		}
 	}
 	if (next.state === "matched") {
+		if (log.offlineDrivers.has(next.driverId)) {
+			violations.push({
+				type: "offline_driver_matched",
+				tick: event.tick,
+				tripId: event.tripId,
+				driverId: next.driverId,
+			});
+		}
 		const activeTripId = log.activeTrips.get(next.driverId);
 		if (activeTripId !== undefined) {
 			violations.push({

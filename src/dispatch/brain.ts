@@ -8,6 +8,7 @@ import type {
 	DriverArrivedAtPickup,
 	DriverId,
 	DriverMoved,
+	DriverWentOffline,
 	DriverWentOnline,
 	InputRejected,
 	Offer,
@@ -45,7 +46,8 @@ import {
 
 // Every known trip by ID, in request order: the queue is the requested trips
 // without an offer, in that order (FIFO).
-// Driver cells as last reported in events; may be stale (ADR 0018).
+// Online driver cells as last reported in events; may be stale (ADR 0018):
+// a driver offered a trip on the tick it went offline declines (ADR 0032).
 // tick: last clock tick, stamped on events caused by non-tick inputs.
 export type DispatchState = {
 	grid: Grid;
@@ -65,6 +67,7 @@ export type DispatchInput =
 	| RequestTrip
 	| CancelTrip
 	| DriverWentOnline
+	| DriverWentOffline
 	| DriverMoved
 	| OfferAccepted
 	| OfferDeclined
@@ -135,6 +138,8 @@ export function decideDispatch(
 		case "driver.went_online":
 		case "driver.moved":
 			return onDriverReported(state, input);
+		case "driver.went_offline":
+			return onDriverWentOffline(state, input);
 		case "offer_accepted":
 		case "offer_declined":
 			return onOfferReply(state, input);
@@ -348,6 +353,15 @@ function onDriverReported(
 		report.driverId,
 		report.cell,
 	);
+	return { state: { ...state, driverCells }, outputs: [] };
+}
+
+function onDriverWentOffline(
+	state: DispatchState,
+	wentOffline: DriverWentOffline,
+): Decision {
+	const driverCells = new Map(state.driverCells);
+	driverCells.delete(wentOffline.driverId);
 	return { state: { ...state, driverCells }, outputs: [] };
 }
 
