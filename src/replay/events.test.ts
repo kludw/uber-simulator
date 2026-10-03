@@ -58,7 +58,7 @@ describe.skipIf(!config)("readRunEvents", () => {
 		await succeeded(
 			clickhouse.insertEvents([
 				row(runId, moved(2), 5),
-				row(runId, moved(0), 2),
+				row(runId, moved(1), 2),
 				row(runId, moved(1), 4),
 				row(runId, moved(1), 3),
 				row(runId, moved(0), 1),
@@ -66,11 +66,12 @@ describe.skipIf(!config)("readRunEvents", () => {
 			]),
 		);
 
+		// Pages of 2: the first page ends inside tick 1.
 		const events = await readAll(clickhouse, runId, { pageSize: 2 });
 
 		expect(events.map(({ tick, streamSeq }) => [tick, streamSeq])).toEqual([
 			[0, 1],
-			[0, 2],
+			[1, 2],
 			[1, 3],
 			[1, 4],
 			[2, 5],
@@ -79,12 +80,10 @@ describe.skipIf(!config)("readRunEvents", () => {
 
 	test("reads a redelivered event once", async () => {
 		const runId = RunId.parse("redelivered");
-		await succeeded(
-			clickhouse.insertEvents([
-				row(runId, moved(0), 1),
-				row(runId, moved(0), 1),
-			]),
-		);
+		// Separate inserts: duplicates within one insert collapse on write, so
+		// only FINAL collapses these.
+		await succeeded(clickhouse.insertEvents([row(runId, moved(0), 1)]));
+		await succeeded(clickhouse.insertEvents([row(runId, moved(0), 1)]));
 
 		const events = await readAll(clickhouse, runId, {});
 
