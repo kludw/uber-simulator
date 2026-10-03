@@ -4,7 +4,8 @@ name: bench
 # (1k, 5k, 10k drivers x greedy, batched); narrow it with -f, e.g.
 # `-f drivers=10000 -f matching=greedy -f heap_profile=true`; measure peak
 # RSS with `-f cpu_profile=false` (--cpu-prof inflates it). Each run's
-# report, CPU profile, and machine note are uploaded as one artifact.
+# report, machine note, and profiles (when enabled) are uploaded as one
+# artifact.
 on:
   workflow_dispatch:
     inputs:
