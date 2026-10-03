@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import * as z from "zod";
 import { specGrid } from "../shared/grid.ts";
 import type { Result } from "../shared/result.ts";
-import { DemandName, demandNamed } from "./config.ts";
+import { DemandName, demandNamed, ShiftsName, shiftsNamed } from "./config.ts";
 import type { RunConfig } from "./run.ts";
 
 export type SimArgs = {
@@ -15,6 +15,8 @@ export type SimArgs = {
 	windowTicks: number;
 	// For the printed summary; config.demand is the model it names.
 	demandName: z.infer<typeof DemandName>;
+	// For the printed summary; config.shifts is the model it names.
+	shiftsName: z.infer<typeof ShiftsName>;
 	config: Omit<RunConfig, "matching">;
 };
 
@@ -41,6 +43,7 @@ const Args = z
 		"batch-window": integerArg.pipe(z.int().positive()),
 		compare: z.boolean(),
 		demand: DemandName,
+		shifts: ShiftsName,
 		"requests-per-minute": integerArg.pipe(z.int().min(0)),
 		"drivers-per-shard": integerArg.pipe(z.int().positive()),
 	})
@@ -64,6 +67,7 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 				compare: { type: "boolean", default: false },
 				// Spec defaults (docs/spec.md).
 				demand: { type: "string", default: "uniform" },
+				shifts: { type: "string", default: "off" },
 				"requests-per-minute": { type: "string", default: "10" },
 				"drivers-per-shard": { type: "string", default: "50" },
 			},
@@ -93,6 +97,7 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 			matching: args.matching,
 			windowTicks: args["batch-window"],
 			demandName: args.demand,
+			shiftsName: args.shifts,
 			config: {
 				seed: args.seed,
 				ticks: args.ticks,
@@ -101,6 +106,7 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 				driverShards: { count: 2, driversPerShard: args["drivers-per-shard"] },
 				requestsPerMinute: args["requests-per-minute"],
 				demand: demandNamed(args.demand),
+				shifts: shiftsNamed(args.shifts),
 			},
 		},
 	};

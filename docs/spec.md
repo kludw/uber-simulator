@@ -38,7 +38,7 @@ Nobody owns "the world". Views (dispatch's driver positions, UI) are built from 
 6. Rider patience expires before pickup -> `cancel_trip` to dispatch -> reply `cancel_trip_accepted` + `trip.cancelled` (driverId = driver to free: the matched driver or the one holding a pending offer, null if none), that driver `idle`, rider removed. A pending offer is dropped; a late reply to it is ignored. Trip picked up, completed, already cancelled, or unknown -> reply `cancel_trip_rejected` (`invalid_transition` / `unknown_trip`), no event. Rider: completed or cancelled trip -> removed, even if riding (its trip event was lost); unknown trip -> cancelling rider removed (request lost); picked up -> waits for `trip.picked_up` / `trip.completed`.
 7. Races resolved by dispatch: whichever of arrival / cancel reaches dispatch first wins. Arrival first -> picked up, cancel rejected. Cancel first -> cancelled, arrival ignored.
 
-Idle drivers wander: pick a random target cell, drive there, repeat. By default all 100 drivers online the whole run. With shifts (0032) a driver goes offline (`driver.went_offline`) only when idle and comes back with `driver.went_online`; dispatch makes no new offers to it in between. Dispatch's view can be stale: an offer made on the tick a driver goes offline is declined, and a `trip.cancelled` / `trip.offer_expired` / `trip.offer_declined` naming an offline driver leaves it offline. A crashed driver shard's drivers just disappear.
+Idle drivers wander: pick a random target cell, drive there, repeat. By default (shifts off) all 100 drivers online the whole run. With shifts on (`--shifts on`, `SHIFTS=on`, 0032) each driver alternates online periods of 1200-2400 ticks and offline periods of 300-900 ticks, 80% start online (about 75% online on average); a driver goes offline (`driver.went_offline`) only when idle and comes back with `driver.went_online`; dispatch makes no new offers to it in between. Dispatch's view can be stale: an offer made on the tick a driver goes offline is declined, and a `trip.cancelled` / `trip.offer_expired` / `trip.offer_declined` naming an offline driver leaves it offline. A crashed driver shard's drivers just disappear.
 
 ## Invariants (system tests)
 
@@ -67,7 +67,7 @@ Watch-only, live-only. Browser canvas: drivers as dots colored by state, waiting
 5. **Persistence**: persister -> ClickHouse, first analytics queries (`bun run report`). Done.
 6. **Batched matching** (0030): dispatch strategy switch (greedy | batched every N ticks, min total pickup distance), `bun run sim -- --compare` prints both on one seed. Done.
 7. **Hotspot demand** (0031): rider demand model (uniform | hotspots, `city` preset), configurable demand rate and fleet size in `bun run sim` / `--compare`. Done.
-8. **Driver shifts** (0032): drivers alternate online/offline periods (finish trips first), dispatch/UI/invariants handle offline drivers, `--shifts on|off`.
+8. **Driver shifts** (0032): drivers alternate online/offline periods (finish trips first), dispatch/UI/invariants handle offline drivers, `--shifts on|off`. Done.
 
 ## Later (not v1)
 

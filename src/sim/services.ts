@@ -9,6 +9,7 @@ import {
 import {
 	type DriverShardInput,
 	decideDriverShard,
+	type Shifts,
 	startDriverShard,
 } from "../driver/brain.ts";
 import { decideRiders, type RidersInput, startRiders } from "../rider/brain.ts";
@@ -33,6 +34,8 @@ export type SimConfig = {
 	matching?: Matching | undefined;
 	// Riders' demand model (ADR 0031); uniform when unset.
 	demand?: Demand | undefined;
+	// Driver shards' shift model (ADR 0032); always online when unset.
+	shifts?: Shifts | undefined;
 };
 
 export type Rejected = InputRejected<Message, string>;
@@ -70,7 +73,12 @@ export function driverShardService(
 			const random = createRandom(config.seed).child(name);
 			startService(bus, {
 				start: startDriverShard(
-					{ grid: config.grid, driverIds, tick: startTick },
+					{
+						grid: config.grid,
+						driverIds,
+						tick: startTick,
+						shifts: config.shifts,
+					},
 					random,
 				),
 				accepts: (message): message is DriverShardInput => {
