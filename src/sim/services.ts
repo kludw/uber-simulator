@@ -3,6 +3,7 @@ import { startService } from "../bus/service.ts";
 import {
 	type DispatchInput,
 	decideDispatch,
+	type Matching,
 	startDispatch,
 } from "../dispatch/brain.ts";
 import {
@@ -27,6 +28,8 @@ export type SimConfig = {
 	grid: Grid;
 	driverShards: { count: number; driversPerShard: number };
 	requestsPerMinute: number;
+	// Dispatch's strategy (ADR 0030); greedy when unset.
+	matching?: Matching | undefined;
 };
 
 export type Rejected = InputRejected<Message, string>;
@@ -98,7 +101,11 @@ export function dispatchService(config: SimConfig): SimService {
 			startService(bus, {
 				// Bare-state start: dispatch publishes nothing when it starts.
 				start: {
-					state: startDispatch({ grid: config.grid, tick: startTick }),
+					state: startDispatch({
+						grid: config.grid,
+						tick: startTick,
+						matching: config.matching,
+					}),
 					outputs: [],
 				},
 				accepts: (message): message is DispatchInput => {

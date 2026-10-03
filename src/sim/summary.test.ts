@@ -7,7 +7,7 @@ import {
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
-import { summarize } from "./summary.ts";
+import { compareSummaries, type Summary, summarize } from "./summary.ts";
 
 const grid: Grid = { width: 10, height: 10 };
 const d1 = DriverId.parse("d-1");
@@ -145,6 +145,46 @@ describe("summarize", () => {
 				from: "completed",
 				event: "trip.completed",
 			},
+		]);
+	});
+});
+
+describe("compareSummaries", () => {
+	const greedy: Summary = {
+		seed: 42,
+		ticks: 3600,
+		drivers: 100,
+		trips: { requested: 600, completed: 550, cancelled: 20 },
+		meanTicksToPickup: 101.25,
+		rejectedInputs: 0,
+		violations: [],
+	};
+	const batched: Summary = {
+		...greedy,
+		trips: { requested: 600, completed: 548, cancelled: 25 },
+		meanTicksToPickup: null,
+		violations: [
+			{
+				type: "illegal_trip_transition",
+				tick: tick(7),
+				tripId: t1,
+				from: "completed",
+				event: "trip.completed",
+			},
+		],
+	};
+
+	test("lines up each headline number of both strategies", () => {
+		expect(compareSummaries(greedy, batched)).toEqual([
+			{ metric: "trips requested", greedy: "600", batched: "600" },
+			{ metric: "trips completed", greedy: "550", batched: "548" },
+			{ metric: "trips cancelled", greedy: "20", batched: "25" },
+			{
+				metric: "mean ticks from request to pickup",
+				greedy: "101.3",
+				batched: "n/a",
+			},
+			{ metric: "invariant violations", greedy: "0", batched: "1" },
 		]);
 	});
 });

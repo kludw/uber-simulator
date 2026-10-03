@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { connect } from "@nats-io/transport-node";
 import * as z from "zod";
+import type { Matching } from "../dispatch/brain.ts";
 import { checkInvariants } from "./invariants.ts";
 import {
 	type RunConfig,
@@ -60,17 +61,42 @@ describe("runInProcess", () => {
 		expect(runInProcess(busyConfig).rejected).toEqual([]);
 	});
 
-	test("a 600-tick run at spec defaults breaks no invariant", () => {
-		const grid = { width: 500, height: 500 };
+	test.each<[string, Matching]>([
+		["greedy", { type: "greedy" }],
+		["batched", { type: "batched", windowTicks: 5 }],
+	])(
+		"a 3600-tick %s run at spec defaults breaks no invariant",
+		(_, matching) => {
+			const grid = { width: 500, height: 500 };
+			const { eventLog } = runInProcess({
+				seed: 1,
+				ticks: 3600,
+				grid,
+				driverShards: { count: 2, driversPerShard: 50 },
+				requestsPerMinute: 10,
+				matching,
+			});
+
+			expect(checkInvariants(eventLog, grid)).toEqual([]);
+		},
+		// A simulated hour takes seconds in process.
+		30_000,
+	);
+
+	// ADR 0030: batched dispatch offers trips only on window ticks.
+	test("batched matching offers trips only on multiples of its window", () => {
 		const { eventLog } = runInProcess({
-			seed: 1,
-			ticks: 600,
-			grid,
-			driverShards: { count: 2, driversPerShard: 50 },
-			requestsPerMinute: 10,
+			...busyConfig,
+			matching: { type: "batched", windowTicks: 4 },
 		});
 
-		expect(checkInvariants(eventLog, grid)).toEqual([]);
+		const offerTicks = eventLog.flatMap((message) =>
+			message.type === "trip.offered" ? [message.tick] : [],
+		);
+		expect({
+			offered: offerTicks.length > 0,
+			offWindow: offerTicks.filter((tick) => tick % 4 !== 0),
+		}).toEqual({ offered: true, offWindow: [] });
 	});
 
 	test("a scarce-supply run breaks no invariant", () => {

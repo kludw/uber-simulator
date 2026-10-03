@@ -50,3 +50,27 @@ export function summarize(config: RunConfig, result: RunResult): Summary {
 		violations: checkInvariants(result.eventLog, config.grid),
 	};
 }
+
+// One headline number of two runs on the same seed (ADR 0030), formatted.
+export type ComparisonRow = { metric: string; greedy: string; batched: string };
+
+export function compareSummaries(
+	greedy: Summary,
+	batched: Summary,
+): ComparisonRow[] {
+	const metrics: [string, (summary: Summary) => string][] = [
+		["trips requested", (summary) => String(summary.trips.requested)],
+		["trips completed", (summary) => String(summary.trips.completed)],
+		["trips cancelled", (summary) => String(summary.trips.cancelled)],
+		[
+			"mean ticks from request to pickup",
+			(summary) => summary.meanTicksToPickup?.toFixed(1) ?? "n/a",
+		],
+		["invariant violations", (summary) => String(summary.violations.length)],
+	];
+	return metrics.map(([metric, format]) => ({
+		metric,
+		greedy: format(greedy),
+		batched: format(batched),
+	}));
+}
