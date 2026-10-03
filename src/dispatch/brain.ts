@@ -28,6 +28,7 @@ import type {
 	TripRequested,
 } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
+import { minCostMatching } from "./matching.ts";
 import {
 	type ArrivalRejected,
 	acceptOffer,
@@ -36,6 +37,7 @@ import {
 	type NoPendingOffer,
 	offerTo,
 	pickUp,
+	type QueuedTrip,
 	requestedTrip,
 	type Trip,
 	withdrawOffer,
@@ -48,9 +50,15 @@ import {
 export type DispatchState = {
 	grid: Grid;
 	tick: Tick;
+	matching: Matching;
 	trips: ReadonlyMap<TripId, Trip>;
 	driverCells: ReadonlyMap<DriverId, Cell>;
 };
+
+// ADR 0030: batched matches only on ticks that are multiples of windowTicks.
+export type Matching =
+	| { type: "greedy" }
+	| { type: "batched"; windowTicks: number };
 
 export type DispatchInput =
 	| ClockTicked
@@ -91,10 +99,22 @@ const offerTimeoutTicks = 3;
 export function startDispatch(config: {
 	grid: Grid;
 	tick: Tick;
+	matching?: Matching | undefined;
 }): DispatchState {
+	const matching = config.matching ?? { type: "greedy" };
+	// Parsed at the edge; a bad window here is a caller bug.
+	if (
+		matching.type === "batched" &&
+		!(Number.isInteger(matching.windowTicks) && matching.windowTicks > 0)
+	) {
+		throw new Error(
+			`windowTicks ${matching.windowTicks} is not a positive integer`,
+		);
+	}
 	return {
 		grid: config.grid,
 		tick: config.tick,
+		matching,
 		trips: new Map(),
 		driverCells: new Map(),
 	};
@@ -131,24 +151,7 @@ export function decideDispatch(
 function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 	const outputs: DispatchOutput[] = [];
 	const trips = new Map(state.trips);
-	const busy = new Set<DriverId>();
-	for (const trip of state.trips.values()) {
-		if (trip.state === "matched" || trip.state === "picked_up") {
-			busy.add(trip.driverId);
-		}
-		if (trip.state === "requested" && trip.offer !== null) {
-			busy.add(trip.offer.driverId);
-		}
-	}
-	for (const trip of state.trips.values()) {
-		if (trip.state !== "requested" || trip.offer !== null) continue;
-		const driverId = nearestDriver(
-			state,
-			trip.pickup,
-			(id) => busy.has(id) || trip.excludedDrivers.has(id),
-		);
-		if (driverId === undefined) continue;
-		busy.add(driverId);
+	for (const { trip, driverId } of offerPairs(state, ticked.tick)) {
 		trips.set(trip.id, offerTo(trip, driverId, ticked.tick));
 		outputs.push(
 			{
@@ -179,22 +182,88 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 	return { state: { ...state, tick: ticked.tick, trips }, outputs };
 }
 
-function nearestDriver(
-	state: DispatchState,
-	pickup: Cell,
-	isUnavailable: (driverId: DriverId) => boolean,
-): DriverId | undefined {
-	let nearest: { driverId: DriverId; distance: number } | undefined;
-	// Ordered by ID so the strict < below leaves ties to the lowest ID.
-	for (const driverId of [...state.driverCells.keys()].toSorted()) {
-		if (isUnavailable(driverId)) continue;
-		const cell = state.driverCells.get(driverId);
-		if (cell === undefined) throw new Error(`no cell for ${driverId}`);
-		const toPickup = distance(cell, pickup);
-		if (nearest !== undefined && toPickup >= nearest.distance) continue;
-		nearest = { driverId, distance: toPickup };
+type OfferPair = { trip: QueuedTrip; driverId: DriverId };
+
+// Pairs in trip FIFO order. Eligible: queued trips; known drivers without a
+// pending offer or active trip, never one excluded for the trip.
+function offerPairs(state: DispatchState, tick: Tick): OfferPair[] {
+	const queued: QueuedTrip[] = [];
+	const busy = new Set<DriverId>();
+	for (const trip of state.trips.values()) {
+		if (trip.state === "matched" || trip.state === "picked_up") {
+			busy.add(trip.driverId);
+		}
+		if (trip.state !== "requested") continue;
+		if (trip.offer === null) queued.push(trip);
+		else busy.add(trip.offer.driverId);
 	}
-	return nearest?.driverId;
+	const idle = [...state.driverCells.keys()]
+		.toSorted()
+		.filter((id) => !busy.has(id));
+	switch (state.matching.type) {
+		case "greedy":
+			return greedyPairs(state, queued, idle);
+		case "batched":
+			if (tick % state.matching.windowTicks !== 0) return [];
+			return batchedPairs(state, queued, idle);
+		default: {
+			const unhandled: never = state.matching;
+			throw new Error(`unhandled matching: ${unhandled}`);
+		}
+	}
+}
+
+// Each trip in turn takes the nearest remaining driver; ties to the lowest ID
+// because idle is ordered by ID and the strict < keeps the first.
+function greedyPairs(
+	state: DispatchState,
+	queued: readonly QueuedTrip[],
+	idle: readonly DriverId[],
+): OfferPair[] {
+	const pairs: OfferPair[] = [];
+	const taken = new Set<DriverId>();
+	for (const trip of queued) {
+		let nearest: { driverId: DriverId; distance: number } | undefined;
+		for (const driverId of idle) {
+			if (taken.has(driverId) || trip.excludedDrivers.has(driverId)) continue;
+			const toPickup = distance(cellOf(state, driverId), trip.pickup);
+			if (nearest !== undefined && toPickup >= nearest.distance) continue;
+			nearest = { driverId, distance: toPickup };
+		}
+		if (nearest === undefined) continue;
+		taken.add(nearest.driverId);
+		pairs.push({ trip, driverId: nearest.driverId });
+	}
+	return pairs;
+}
+
+// ADR 0030: as many pairs as possible, least total pickup distance among those.
+function batchedPairs(
+	state: DispatchState,
+	queued: readonly QueuedTrip[],
+	idle: readonly DriverId[],
+): OfferPair[] {
+	const costs = queued.map((trip) =>
+		idle.map((driverId) =>
+			trip.excludedDrivers.has(driverId)
+				? null
+				: distance(cellOf(state, driverId), trip.pickup),
+		),
+	);
+	return minCostMatching(costs).map(({ row, column }) => {
+		const trip = queued[row];
+		const driverId = idle[column];
+		if (trip === undefined || driverId === undefined) {
+			throw new Error(`matching pair (${row}, ${column}) out of range`);
+		}
+		return { trip, driverId };
+	});
+}
+
+function cellOf(state: DispatchState, driverId: DriverId): Cell {
+	const cell = state.driverCells.get(driverId);
+	if (cell === undefined) throw new Error(`no cell for ${driverId}`);
+	return cell;
 }
 
 function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {

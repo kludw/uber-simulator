@@ -59,7 +59,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
   - `requested` -> `matched` -> `picked_up` -> `completed`.
   - `requested` | `matched` -> `cancelled`.
 - **Pickup** / **Dropoff**: trip start / end cells.
-- **Matching**: assigning an idle driver to a requested trip. v1: nearest known-idle driver, ties by driver ID.
+- **Matching**: assigning an idle driver to a requested trip. Strategy per run (0030): `greedy` (default): each tick, each queued trip in FIFO order takes the nearest known-idle driver, ties by driver ID. `batched`: every `windowTicks` ticks (the batch window), all queued trips and idle drivers matched at once, as many pairs as possible with least total pickup distance.
 - **Ordered by ID**: plain string comparison of IDs (default `toSorted()`, so `d-10` < `d-2`). Every brain uses it for iteration order and tie-breaks.
 - **Offer**: dispatch asking one driver to take a trip; driver accepts or declines, or the offer expires (3 ticks). Message `offer` (tripId, driverId, pickup, dropoff); driver replies `offer_accepted` or `offer_declined` (tripId, driverId). Replies are not events: dispatch turns them into `trip.*` events.
 - **Excluded drivers**: drivers that declined or let an offer expire for a trip; never offered that trip again, and their late replies for it are stale (ignored).

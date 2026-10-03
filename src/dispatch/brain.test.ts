@@ -12,6 +12,7 @@ import {
 	type DispatchInput,
 	type DispatchState,
 	decideDispatch,
+	type Matching,
 	startDispatch,
 } from "./brain.ts";
 
@@ -44,6 +45,10 @@ function requestTrip(tripId: TripId, at: number): RequestTrip {
 	};
 }
 
+function requestTripAt(tripId: TripId, pickup: Cell): DispatchInput {
+	return { ...requestTrip(tripId, 1), pickup };
+}
+
 function wentOnline(driverId: DriverId, at: Cell): DispatchInput {
 	return { type: "driver.went_online", tick: tick(0), driverId, cell: at };
 }
@@ -53,8 +58,8 @@ function ticked(n: number): DispatchInput {
 }
 
 // Feeds inputs in order from a fresh dispatch; returns the last input's outputs.
-function run(inputs: DispatchInput[]) {
-	let state: DispatchState = startDispatch({ grid, tick: tick(0) });
+function run(inputs: DispatchInput[], matching?: Matching) {
+	let state: DispatchState = startDispatch({ grid, tick: tick(0), matching });
 	let outputs: unknown[] = [];
 	for (const input of inputs) {
 		({ state, outputs } = decideDispatch(state, input, random));
@@ -858,4 +863,260 @@ describe("decideDispatch cancel_trip", () => {
 
 		expect(outputs).toEqual([]);
 	});
+});
+
+describe("decideDispatch batched matching", () => {
+	const batched: Matching = { type: "batched", windowTicks: 2 };
+
+	test("makes no offer on a tick outside the batch window", () => {
+		const { outputs } = run(
+			[requestTrip(t1, 1), wentOnline(d1, cell(3, 3)), ticked(3)],
+			batched,
+		);
+
+		expect(outputs).toEqual([]);
+	});
+
+	// d-1 at (1,0) is nearest both pickups. Greedy gives it to t-1 (FIFO) and
+	// sends d-2 four cells to t-2: total 1 + 4 = 5. Batched swaps: 2 + 1 = 3.
+	const contested: DispatchInput[] = [
+		requestTripAt(t1, cell(2, 0)),
+		requestTripAt(t2, cell(0, 0)),
+		wentOnline(d1, cell(1, 0)),
+		wentOnline(d2, cell(4, 0)),
+		ticked(2),
+	];
+
+	test("greedy gives the first trip its nearest driver", () => {
+		const { outputs } = run(contested);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d1,
+				pickup: cell(2, 0),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d1 },
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d2,
+				pickup: cell(0, 0),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t2, driverId: d2 },
+		]);
+	});
+
+	test("batched offers the pairs with least total pickup distance", () => {
+		const { outputs } = run(contested, batched);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d2,
+				pickup: cell(2, 0),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d2 },
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d1,
+				pickup: cell(0, 0),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t2, driverId: d1 },
+		]);
+	});
+
+	test("matches the trip when the driver accepts a batched offer", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(3, 3)),
+				ticked(2),
+				accepted(t1, d1),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([
+			{ type: "trip.matched", tick: tick(2), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("does not offer a batch trip to a driver matched to a trip", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(3, 3)),
+				ticked(2),
+				accepted(t1, d1),
+				requestTrip(t2, 3),
+				ticked(4),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("offers a declined trip at the next window to another driver", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(3, 3)),
+				wentOnline(d2, cell(9, 9)),
+				ticked(2),
+				declined(t1, d1),
+				ticked(3),
+				ticked(4),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d2,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(4), tripId: t1, driverId: d2 },
+		]);
+	});
+
+	test("does not offer a declined trip again before the next window", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(3, 3)),
+				wentOnline(d2, cell(9, 9)),
+				ticked(2),
+				declined(t1, d1),
+				ticked(3),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("never offers a trip again to a driver who declined it", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(3, 3)),
+				ticked(2),
+				declined(t1, d1),
+				ticked(4),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("expires a batched offer on a tick outside the window", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(3, 3)),
+				wentOnline(d2, cell(9, 9)),
+				ticked(2),
+				ticked(5),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([
+			{ type: "trip.offer_expired", tick: tick(5), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("offers an expired trip at the next window to another driver", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(3, 3)),
+				wentOnline(d2, cell(9, 9)),
+				ticked(2),
+				ticked(5),
+				ticked(6),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d2,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(6), tripId: t1, driverId: d2 },
+		]);
+	});
+
+	test("cancels a trip with a pending batched offer and names the driver", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(3, 3)),
+				ticked(2),
+				cancelTrip(t1),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([
+			{ type: "cancel_trip_accepted", tripId: t1 },
+			{ type: "trip.cancelled", tick: tick(2), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("offers a batch trip to a driver whose matched trip was cancelled", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(3, 3)),
+				ticked(2),
+				accepted(t1, d1),
+				requestTrip(t2, 3),
+				cancelTrip(t1),
+				ticked(4),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(4), tripId: t2, driverId: d1 },
+		]);
+	});
+
+	test.each([0, -2, 1.5])(
+		"rejects a batch window of %p ticks as a bug",
+		(windowTicks) => {
+			expect(() =>
+				startDispatch({
+					grid,
+					tick: tick(0),
+					matching: { type: "batched", windowTicks },
+				}),
+			).toThrow();
+		},
+	);
 });
