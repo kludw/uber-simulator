@@ -96,5 +96,7 @@ async function run(config: RunConfig): Promise<RunResult> {
 		);
 		process.exit(3);
 	}
+	// Key for this run's persisted events (ADR 0029).
+	console.log(`run id: ${result.value.runId}`);
 	return result.value;
 }
