@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { Cell } from "../shared/grid.ts";
-import { DriverId, RiderId, Tick, TripId } from "../shared/messages.ts";
-import { applyEvent, emptyView, type SimEvent, type View } from "./view.ts";
+import {
+	DriverId,
+	RiderId,
+	type SimEvent,
+	Tick,
+	TripId,
+} from "../shared/messages.ts";
+import { applyEvent, emptyView, type View } from "./view.ts";
 
 const d1 = DriverId.parse("d-1");
 const r1 = RiderId.parse("r-1");

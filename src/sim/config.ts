@@ -108,14 +108,36 @@ export function parseClickHouseConfig(
 ): Result<ClickHouseConfig, InvalidConfig> {
 	const parsed = ClickHouseEnv.safeParse(env);
 	if (!parsed.success) return invalidConfig(parsed.error);
-	const vars = parsed.data;
+	return { ok: true, value: clickHouseConfig(parsed.data) };
+}
+
+function clickHouseConfig(
+	vars: z.infer<typeof ClickHouseEnv>,
+): ClickHouseConfig {
+	return {
+		url: vars.CLICKHOUSE_URL,
+		username: vars.CLICKHOUSE_USER,
+		password: vars.CLICKHOUSE_PASSWORD,
+		database: vars.CLICKHOUSE_DB,
+	};
+}
+
+export type PersisterConfig = { natsUrl: string; clickhouse: ClickHouseConfig };
+
+const PersisterEnv = z
+	.object({ NATS_URL: z.url() })
+	.extend(ClickHouseEnv.shape);
+
+export function parsePersisterConfig(
+	env: Record<string, string | undefined>,
+): Result<PersisterConfig, InvalidConfig> {
+	const parsed = PersisterEnv.safeParse(env);
+	if (!parsed.success) return invalidConfig(parsed.error);
 	return {
 		ok: true,
 		value: {
-			url: vars.CLICKHOUSE_URL,
-			username: vars.CLICKHOUSE_USER,
-			password: vars.CLICKHOUSE_PASSWORD,
-			database: vars.CLICKHOUSE_DB,
+			natsUrl: parsed.data.NATS_URL,
+			clickhouse: clickHouseConfig(parsed.data),
 		},
 	};
 }

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { RunId } from "../shared/messages.ts";
 import {
 	parseClickHouseConfig,
+	parsePersisterConfig,
 	parseServiceConfig,
 	parseShardIndex,
 	parseUiConfig,
@@ -178,6 +179,47 @@ describe("parseClickHouseConfig", () => {
 					{ variable: "CLICKHOUSE_USER" },
 					{ variable: "CLICKHOUSE_DB" },
 				],
+			},
+		});
+	});
+});
+
+describe("parsePersisterConfig", () => {
+	test("reads the NATS URL and the ClickHouse connection settings", () => {
+		expect(
+			parsePersisterConfig({
+				NATS_URL: "nats://localhost:4222",
+				CLICKHOUSE_URL: "http://localhost:8123",
+				CLICKHOUSE_USER: "sim",
+				CLICKHOUSE_PASSWORD: "secret",
+				CLICKHOUSE_DB: "sim",
+			}),
+		).toEqual({
+			ok: true,
+			value: {
+				natsUrl: "nats://localhost:4222",
+				clickhouse: {
+					url: "http://localhost:8123",
+					username: "sim",
+					password: "secret",
+					database: "sim",
+				},
+			},
+		});
+	});
+
+	test("names every invalid or missing variable", () => {
+		expect(
+			parsePersisterConfig({
+				CLICKHOUSE_URL: "http://localhost:8123",
+				CLICKHOUSE_PASSWORD: "",
+				CLICKHOUSE_DB: "sim",
+			}),
+		).toMatchObject({
+			ok: false,
+			error: {
+				type: "invalid_config",
+				issues: [{ variable: "NATS_URL" }, { variable: "CLICKHOUSE_USER" }],
 			},
 		});
 	});

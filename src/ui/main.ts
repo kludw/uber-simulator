@@ -3,10 +3,10 @@
 import { type Msg, wsconnect } from "@nats-io/nats-core";
 import * as z from "zod";
 import { specGrid } from "../shared/grid.ts";
-import { type Message, parseMessage } from "../shared/messages.ts";
+import { isSimEvent, parseMessage, type SimEvent } from "../shared/messages.ts";
 import { type PanelRow, panelRows } from "./panel.ts";
 import { startRenderer } from "./render.ts";
-import { applyEvent, emptyView, type SimEvent } from "./view.ts";
+import { applyEvent, emptyView } from "./view.ts";
 
 const PageConfig = z.object({ natsWsUrl: z.url() });
 
@@ -43,11 +43,6 @@ function showPanel(rows: PanelRow[]): void {
 			return tr;
 		}),
 	);
-}
-
-// sim.events.> carries only events (ADR 0028), but a payload is untrusted.
-function isSimEvent(message: Message): message is SimEvent {
-	return /^(clock|driver|trip)\./.test(message.type);
 }
 
 function decode(received: Msg): SimEvent | null {

@@ -239,6 +239,18 @@ const Message = z.discriminatedUnion("type", [
 ]);
 export type Message = z.infer<typeof Message>;
 
+// What sim.events.> carries (ADR 0028): events, never offers, offer replies,
+// commands, or command replies.
+export type SimEvent = Extract<
+	Message,
+	{ type: `${"clock" | "driver" | "trip"}.${string}` }
+>;
+
+// sim.events.> carries only events, but a payload is untrusted.
+export function isSimEvent(message: Message): message is SimEvent {
+	return /^(clock|driver|trip)\./.test(message.type);
+}
+
 // Issues are Zod's plain data (code, path, message), fine to log; ZodError
 // itself never leaves this function.
 export function parseMessage(

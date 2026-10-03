@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { RunId, Tick } from "../shared/messages.ts";
 import { parseClickHouseConfig } from "../sim/config.ts";
 import {
 	type ClickHouse,
+	type ClickHouseConfig,
 	connectClickHouse,
 	type EventRow,
 	migrate,
@@ -50,9 +52,9 @@ describe.skipIf(!config)("ClickHouse", () => {
 	});
 
 	const row: EventRow = {
-		runId: "run-1",
+		runId: RunId.parse("run-1"),
 		type: "driver.moved",
-		tick: 7,
+		tick: Tick.parse(7),
 		streamSeq: 42,
 		tripId: "",
 		driverId: "d-1",
@@ -91,7 +93,9 @@ describe.skipIf(!config)("ClickHouse", () => {
 
 	test("migrating again keeps the table and its events", async () => {
 		await succeeded(migrate(clickhouse));
-		await succeeded(clickhouse.insertEvents([{ ...row, runId: "run-2" }]));
+		await succeeded(
+			clickhouse.insertEvents([{ ...row, runId: RunId.parse("run-2") }]),
+		);
 
 		const rerun = await migrate(clickhouse);
 		const read = await clickhouse.query(
@@ -122,11 +126,21 @@ describe.skipIf(!config)("ClickHouse", () => {
 			error: { type: "clickhouse_connect_failed", url },
 		});
 	});
+
+	test("an unknown database fails to connect", async () => {
+		if (!config?.ok) throw new Error("invalid ClickHouse config");
+		const url = config.value.url;
+
+		expect(
+			await connectClickHouse({ ...config.value, database: "no_such_db" }),
+		).toMatchObject({
+			ok: false,
+			error: { type: "clickhouse_connect_failed", url },
+		});
+	});
 });
 
-async function connected(
-	config: Parameters<typeof connectClickHouse>[0],
-): Promise<ClickHouse> {
+async function connected(config: ClickHouseConfig): Promise<ClickHouse> {
 	const result = await connectClickHouse(config);
 	if (!result.ok) throw new Error("connect failed", { cause: result.error });
 	return result.value;
