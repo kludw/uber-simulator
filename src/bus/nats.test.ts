@@ -34,6 +34,10 @@ describe("subjectFor", () => {
 			{ type: "driver.went_online", tick, driverId, cell },
 			"sim.events.driver.went_online",
 		],
+		[
+			{ type: "driver.went_offline", tick, driverId, cell },
+			"sim.events.driver.went_offline",
+		],
 		[{ type: "driver.moved", tick, driverId, cell }, "sim.events.driver.moved"],
 		[
 			{ type: "driver.arrived_at_pickup", tick, driverId, tripId, cell },

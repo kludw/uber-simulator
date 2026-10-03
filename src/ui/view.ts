@@ -135,6 +135,9 @@ export function applyEvent(view: View, event: SimEvent): View {
 			if (event.driverId === null) return next;
 			return withDriverState(next, event.driverId, "idle");
 		}
+		// No run emits it until shifts are wired in (ADR 0032).
+		case "driver.went_offline":
+			return view;
 		// Offers don't change a driver's state until trip.matched.
 		case "trip.offered":
 		case "trip.offer_declined":

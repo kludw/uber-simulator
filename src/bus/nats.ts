@@ -156,6 +156,7 @@ export function subjectFor(message: Message): string {
 	switch (message.type) {
 		case "clock.ticked":
 		case "driver.went_online":
+		case "driver.went_offline":
 		case "driver.moved":
 		case "driver.arrived_at_pickup":
 		case "driver.arrived_at_dropoff":
