@@ -95,6 +95,8 @@ bun run ui
 
 Open http://localhost:3000. The canvas shows the city: drivers as dots colored by state, waiting riders as hollow squares, active trips as pickup -> dropoff lines. The side panel shows the tick, counters, the legend, and the connection status (connecting / live / disconnected). The page joins mid-run and reconnects on its own if NATS restarts.
 
+![Live city at SPEED=10: drivers, waiting riders, trip lines, side panel](docs/images/ui-live.jpg)
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `NATS_WS_URL` | (required) | NATS websocket the browser connects to |
