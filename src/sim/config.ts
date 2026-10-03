@@ -1,4 +1,5 @@
 import * as z from "zod";
+import { specGrid } from "../shared/grid.ts";
 import type { Result } from "../shared/result.ts";
 import type { SimConfig } from "./services.ts";
 
@@ -60,13 +61,31 @@ export function parseServiceConfig(
 			seed: vars.SEED,
 			speed: vars.SPEED,
 			clockStartDelayMs: vars.CLOCK_START_DELAY_MS,
-			grid: { width: 500, height: 500 },
+			grid: specGrid,
 			driverShards: {
 				count: vars.DRIVER_SHARDS,
 				driversPerShard: vars.DRIVERS_PER_SHARD,
 			},
 			requestsPerMinute: vars.REQUESTS_PER_MINUTE,
 		},
+	};
+}
+
+export type UiConfig = { natsWsUrl: string; port: number };
+
+const UiEnv = z.object({
+	NATS_WS_URL: z.url({ protocol: /^wss?$/ }),
+	UI_PORT: integer.pipe(z.int().min(1).max(65535)).default(3000),
+});
+
+export function parseUiConfig(
+	env: Record<string, string | undefined>,
+): Result<UiConfig, InvalidConfig> {
+	const parsed = UiEnv.safeParse(env);
+	if (!parsed.success) return invalidConfig(parsed.error);
+	return {
+		ok: true,
+		value: { natsWsUrl: parsed.data.NATS_WS_URL, port: parsed.data.UI_PORT },
 	};
 }
 

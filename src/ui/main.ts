@@ -2,13 +2,11 @@
 // panel (ADR 0020). Watch-only: subscribes, never publishes.
 import { type Msg, wsconnect } from "@nats-io/nats-core";
 import * as z from "zod";
+import { specGrid } from "../shared/grid.ts";
 import { type Message, parseMessage } from "../shared/messages.ts";
 import { type PanelRow, panelRows } from "./panel.ts";
 import { startRenderer } from "./render.ts";
 import { applyEvent, emptyView, type SimEvent } from "./view.ts";
-
-// Must match the services' grid (src/sim/config.ts).
-const grid = { width: 500, height: 500 };
 
 const PageConfig = z.object({ natsWsUrl: z.url() });
 
@@ -22,7 +20,7 @@ function element<T extends HTMLElement>(id: string, type: { new (): T }): T {
 
 const statusElement = element("status", HTMLElement);
 const panelElement = element("panel", HTMLTableElement);
-const renderer = startRenderer(element("city", HTMLCanvasElement), grid);
+const renderer = startRenderer(element("city", HTMLCanvasElement), specGrid);
 
 function showStatus(status: ConnectionStatus): void {
 	statusElement.dataset.status = status;

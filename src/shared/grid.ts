@@ -4,6 +4,9 @@ import type { Result } from "./result.ts";
 
 export type Grid = { width: number; height: number };
 
+// v1 grid (docs/spec.md); services and the UI must agree on it.
+export const specGrid: Grid = { width: 500, height: 500 };
+
 // Branded so a Cell comes only from cellIn (inside this grid) or from parsing
 // a message. A message can't know the grid, so the schema checks integer,
 // non-negative coordinates only; staying inside the grid is a spec invariant

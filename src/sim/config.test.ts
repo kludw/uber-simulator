@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { parseServiceConfig, parseShardIndex } from "./config.ts";
+import {
+	parseServiceConfig,
+	parseShardIndex,
+	parseUiConfig,
+} from "./config.ts";
 
 describe("parseServiceConfig", () => {
 	test("unset variables default to the spec scale at real time", () => {
@@ -78,4 +82,41 @@ describe("parseShardIndex", () => {
 			});
 		},
 	);
+});
+
+describe("parseUiConfig", () => {
+	test("unset port defaults to 3000", () => {
+		expect(parseUiConfig({ NATS_WS_URL: "ws://localhost:8080" })).toEqual({
+			ok: true,
+			value: { natsWsUrl: "ws://localhost:8080", port: 3000 },
+		});
+	});
+
+	test("set port overrides the default", () => {
+		expect(
+			parseUiConfig({ NATS_WS_URL: "wss://nats.example", UI_PORT: "8000" }),
+		).toEqual({
+			ok: true,
+			value: { natsWsUrl: "wss://nats.example", port: 8000 },
+		});
+	});
+
+	test("names every invalid or missing variable", () => {
+		expect(parseUiConfig({ UI_PORT: "70000" })).toMatchObject({
+			ok: false,
+			error: {
+				type: "invalid_config",
+				issues: [{ variable: "NATS_WS_URL" }, { variable: "UI_PORT" }],
+			},
+		});
+	});
+
+	test("rejects a non-websocket NATS_WS_URL", () => {
+		expect(
+			parseUiConfig({ NATS_WS_URL: "nats://localhost:4222" }),
+		).toMatchObject({
+			ok: false,
+			error: { type: "invalid_config", issues: [{ variable: "NATS_WS_URL" }] },
+		});
+	});
 });
