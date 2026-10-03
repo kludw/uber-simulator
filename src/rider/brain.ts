@@ -14,6 +14,7 @@ import type {
 	TripPickedUp,
 } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
+import { assertValidDemand, type Demand, pickupsForTick } from "./demand.ts";
 
 type Rider =
 	| {
@@ -32,6 +33,7 @@ type Rider =
 export type RidersState = {
 	grid: Grid;
 	requestsPerMinute: number;
+	demand: Demand;
 	spawned: number;
 	riders: Rider[];
 };
@@ -57,13 +59,18 @@ type Rejected = InputRejected<
 
 type Decision = { state: RidersState; outputs: RidersOutput[] };
 
+// Missing demand = uniform.
 export function startRiders(config: {
 	grid: Grid;
 	requestsPerMinute: number;
+	demand?: Demand;
 }): RidersState {
+	const demand = config.demand ?? { type: "uniform" };
+	assertValidDemand(demand, config.grid);
 	return {
 		grid: config.grid,
 		requestsPerMinute: config.requestsPerMinute,
+		demand,
 		spawned: 0,
 		riders: [],
 	};
@@ -200,6 +207,10 @@ function onTick(
 	const demand = random.child(`demand:${input.tick}`);
 	const patience = random.child(`patience:${input.tick}`);
 	const spawnCount = poisson(state.requestsPerMinute / 60, demand);
+	const nextPickup = pickupsForTick(state.demand, state.grid, input.tick, {
+		root: random,
+		demand,
+	});
 	let spawned = state.spawned;
 	const riders: Rider[] = [];
 	const outputs: RidersOutput[] = [];
@@ -216,7 +227,7 @@ function onTick(
 	}
 	for (let i = 0; i < spawnCount; i++) {
 		spawned++;
-		const pickup = randomCell(state.grid, demand);
+		const pickup = nextPickup();
 		let dropoff = randomCell(state.grid, demand);
 		while (distance(pickup, dropoff) === 0) {
 			dropoff = randomCell(state.grid, demand);

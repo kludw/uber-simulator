@@ -39,6 +39,8 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Shard**: fixed set of drivers owned by one driver service instance.
 - **Dispatch**: service owning all trips; matches trips to drivers (0018).
 - **Demand generator**: part of the rider service; spawns riders (Poisson).
+- **Demand model**: where spawned riders' pickups come from (0031). `uniform` (default): any grid cell. `hotspots`: from a hotspot with probability `hotspotShare`, else uniform. Dropoffs always uniform. Preset `city` (`cityDemand`): downtown + airport.
+- **Hotspot**: area of concentrated demand: `center` cell, Manhattan `radius`, `weight` (chosen in proportion to it). Its pickups are uniform over cells within `radius` of `center`, clipped to the grid.
 
 ## Actors
 
