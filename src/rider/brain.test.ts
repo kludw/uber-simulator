@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
-import { DriverId, RiderId, Tick, TripId } from "../shared/messages.ts";
+import { Cell, cellIn, distance, type Grid, specGrid } from "../shared/grid.ts";
+import {
+	DriverId,
+	type RequestTrip,
+	RiderId,
+	Tick,
+	TripId,
+} from "../shared/messages.ts";
 import { createRandom, type Random } from "../shared/random.ts";
 import {
 	decideRiders,
@@ -8,6 +14,7 @@ import {
 	type RidersState,
 	startRiders,
 } from "./brain.ts";
+import { cityDemand } from "./demand.ts";
 
 const grid: Grid = { width: 10, height: 10 };
 
@@ -142,6 +149,219 @@ describe("decideRiders on tick", () => {
 	});
 });
 
+describe("decideRiders on tick with hotspot demand", () => {
+	const demand = {
+		type: "hotspots",
+		hotspotShare: 0.5,
+		hotspots: [{ center: cell(3, 3), radius: 2, weight: 1 }],
+	} as const;
+
+	// Hotspot stream: coin 0.1 < share 0.5 -> hotspot; choice 0; cell (3, 4).
+	test("pickup drawn in a hotspot comes from the hotspot stream, dropoff from the demand stream", () => {
+		const state = startRiders({ grid, requestsPerMinute: 10, demand });
+		const { outputs } = decideRiders(
+			state,
+			{ type: "clock.ticked", tick: tick(1) },
+			scriptedRandom({
+				"demand:1": { floats: [0.9, 0.5], ints: [7, 8] },
+				"hotspot:1": { floats: [0.1, 0], ints: [3, 4] },
+				"patience:1": { ints: [150] },
+			}),
+		);
+		expect(outputs).toEqual([
+			{
+				type: "request_trip",
+				tick: tick(1),
+				tripId: TripId.parse("t-1"),
+				riderId: RiderId.parse("r-1"),
+				pickup: cell(3, 4),
+				dropoff: cell(7, 8),
+			},
+		]);
+	});
+
+	// Hotspot stream: coin 0.7 >= share 0.5 -> uniform pickup (2, 9) from the demand stream.
+	test("pickup not drawn in a hotspot comes uniformly from the demand stream", () => {
+		const state = startRiders({ grid, requestsPerMinute: 10, demand });
+		const { outputs } = decideRiders(
+			state,
+			{ type: "clock.ticked", tick: tick(1) },
+			scriptedRandom({
+				"demand:1": { floats: [0.9, 0.5], ints: [2, 9, 7, 8] },
+				"hotspot:1": { floats: [0.7] },
+				"patience:1": { ints: [150] },
+			}),
+		);
+		expect(outputs).toEqual([
+			{
+				type: "request_trip",
+				tick: tick(1),
+				tripId: TripId.parse("t-1"),
+				riderId: RiderId.parse("r-1"),
+				pickup: cell(2, 9),
+				dropoff: cell(7, 8),
+			},
+		]);
+	});
+});
+
+describe("startRiders with invalid hotspot demand", () => {
+	const valid = { center: cell(3, 3), radius: 2, weight: 1 };
+	test.each([
+		["share below 0", -0.1, [valid]],
+		["share above 1", 1.1, [valid]],
+		["zero weight", 0.5, [{ ...valid, weight: 0 }]],
+		["negative radius", 0.5, [{ ...valid, radius: -1 }]],
+		["non-integer radius", 0.5, [{ ...valid, radius: 1.5 }]],
+		[
+			"center outside the grid",
+			0.5,
+			[{ ...valid, center: Cell.parse({ x: 10, y: 3 }) }],
+		],
+		["no hotspots", 0.5, []],
+	])("%s is a bug", (_, hotspotShare, hotspots) => {
+		expect(() =>
+			startRiders({
+				grid,
+				requestsPerMinute: 10,
+				demand: { type: "hotspots", hotspotShare, hotspots },
+			}),
+		).toThrow();
+	});
+});
+
+function requestsOverTicks(
+	config: Parameters<typeof startRiders>[0],
+	ticks: number,
+	seed: number,
+): RequestTrip[] {
+	const random = createRandom(seed);
+	let state = startRiders(config);
+	const requests: RequestTrip[] = [];
+	for (let n = 1; n <= ticks; n++) {
+		const decision = decideRiders(
+			state,
+			{ type: "clock.ticked", tick: tick(n) },
+			random,
+		);
+		state = decision.state;
+		for (const output of decision.outputs) {
+			if (output.type === "request_trip") requests.push(output);
+		}
+	}
+	return requests;
+}
+
+describe("decideRiders over many ticks with hotspot demand", () => {
+	// Hotspot at a corner: its diamond is clipped by the grid edges.
+	const cornerOnly = {
+		type: "hotspots",
+		hotspotShare: 1,
+		hotspots: [{ center: cell(1, 1), radius: 3, weight: 1 }],
+	} as const;
+
+	test("every hotspot pickup lies within the hotspot's radius and inside the grid", () => {
+		const requests = requestsOverTicks(
+			{ grid, requestsPerMinute: 600, demand: cornerOnly },
+			200,
+			42,
+		);
+		const outside = requests.filter(
+			({ pickup }) =>
+				distance(pickup, cell(1, 1)) > 3 ||
+				!cellIn(grid, pickup.x, pickup.y).ok,
+		);
+		expect(outside).toEqual([]);
+	});
+
+	test("every dropoff differs from its pickup", () => {
+		const requests = requestsOverTicks(
+			{ grid, requestsPerMinute: 600, demand: cornerOnly },
+			200,
+			42,
+		);
+		const same = requests.filter(
+			({ pickup, dropoff }) => distance(pickup, dropoff) === 0,
+		);
+		expect(same).toEqual([]);
+	});
+
+	test("same seed gives identical outputs", () => {
+		const config = { grid, requestsPerMinute: 600, demand: cornerOnly };
+		expect(requestsOverTicks(config, 100, 7)).toEqual(
+			requestsOverTicks(config, 100, 7),
+		);
+	});
+
+	// The clipped hotspot holds 17 of 100 cells, so uniform dropoffs land outside ~83%.
+	test("dropoffs spread over the whole grid", () => {
+		const requests = requestsOverTicks(
+			{ grid, requestsPerMinute: 600, demand: cornerOnly },
+			200,
+			42,
+		);
+		const outside = requests.filter(
+			({ dropoff }) => distance(dropoff, cell(1, 1)) > 3,
+		);
+		expect(outside.length / requests.length).toBeGreaterThan(0.75);
+	});
+
+	// 100 x 100 grid; two radius-5 diamonds of 61 cells each, weights 3 : 1.
+	// ~10 spawns per tick over 1,000 ticks -> ~10,000 pickups.
+	const city: Grid = { width: 100, height: 100 };
+	const downtown = {
+		center: Cell.parse({ x: 20, y: 20 }),
+		radius: 5,
+		weight: 3,
+	};
+	const airport = {
+		center: Cell.parse({ x: 80, y: 80 }),
+		radius: 5,
+		weight: 1,
+	};
+	const twoHotspots = {
+		type: "hotspots",
+		hotspotShare: 0.5,
+		hotspots: [downtown, airport],
+	} as const;
+	const inside = (pickup: Cell, hotspot: typeof downtown) =>
+		distance(pickup, hotspot.center) <= hotspot.radius;
+
+	// Expected: 0.5 + 0.5 * 122 / 10,000 (uniform background landing in one) = 0.506.
+	// Binomial sd at n ~10,000 is ~0.005; tolerance 0.02 is ~4 sd.
+	test("share of pickups inside a hotspot matches the hotspot share", () => {
+		const requests = requestsOverTicks(
+			{ grid: city, requestsPerMinute: 600, demand: twoHotspots },
+			1000,
+			42,
+		);
+		const inAny = requests.filter(
+			({ pickup }) => inside(pickup, downtown) || inside(pickup, airport),
+		);
+		expect(Math.abs(inAny.length / requests.length - 0.506)).toBeLessThan(0.02);
+	});
+
+	// Expected downtown share of in-hotspot pickups:
+	// (0.5 * 3/4 + 0.5 * 61/10,000) / 0.506 = 0.747. sd at n ~5,000 is ~0.006;
+	// tolerance 0.03 is ~5 sd.
+	test("hotspots are chosen in proportion to their weights", () => {
+		const requests = requestsOverTicks(
+			{ grid: city, requestsPerMinute: 600, demand: twoHotspots },
+			1000,
+			42,
+		);
+		const inDowntown = requests.filter(({ pickup }) =>
+			inside(pickup, downtown),
+		).length;
+		const inAirport = requests.filter(({ pickup }) =>
+			inside(pickup, airport),
+		).length;
+		expect(
+			Math.abs(inDowntown / (inDowntown + inAirport) - 0.747),
+		).toBeLessThan(0.03);
+	});
+});
+
 type Decision = ReturnType<typeof decideRiders>;
 
 function runTicks(ticks: number, seed: number): Decision {
@@ -180,6 +400,36 @@ describe("decideRiders over many ticks", () => {
 
 	test("same seed gives identical outputs", () => {
 		expect(runTicks(600, 7).outputs).toEqual(runTicks(600, 7).outputs);
+	});
+
+	// Pinned before hotspot demand (ADR 0031): uniform runs must not change.
+	test("uniform demand gives the pinned outputs for seed 7", () => {
+		expect(runTicks(60, 7).outputs.slice(0, 3)).toEqual([
+			{
+				type: "request_trip",
+				tick: tick(1),
+				tripId: TripId.parse("t-1"),
+				riderId: RiderId.parse("r-1"),
+				pickup: cell(1, 9),
+				dropoff: cell(8, 4),
+			},
+			{
+				type: "request_trip",
+				tick: tick(3),
+				tripId: TripId.parse("t-2"),
+				riderId: RiderId.parse("r-2"),
+				pickup: cell(0, 5),
+				dropoff: cell(1, 4),
+			},
+			{
+				type: "request_trip",
+				tick: tick(8),
+				tripId: TripId.parse("t-3"),
+				riderId: RiderId.parse("r-3"),
+				pickup: cell(2, 0),
+				dropoff: cell(8, 8),
+			},
+		]);
 	});
 });
 
@@ -548,5 +798,17 @@ describe("decideRiders invalid inputs", () => {
 				},
 			],
 		});
+	});
+});
+
+describe("city demand preset", () => {
+	test("is valid hotspot demand on the spec grid", () => {
+		expect(() =>
+			startRiders({
+				grid: specGrid,
+				requestsPerMinute: 10,
+				demand: cityDemand,
+			}),
+		).not.toThrow();
 	});
 });
