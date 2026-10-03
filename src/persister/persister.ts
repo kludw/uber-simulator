@@ -19,7 +19,7 @@ import {
 	migrate,
 } from "../persistence/clickhouse.ts";
 import {
-	type Message,
+	isSimEvent,
 	parseMessage,
 	RunId,
 	type SimEvent,
@@ -49,10 +49,13 @@ export const simEvents: EventSource = {
 // Fetch up to this many messages or for this long, whichever comes first.
 const batchSize = 1000;
 const batchWaitMs = 1000;
-// Insert attempts per batch and the waits between them (15 s in all, below
-// the ack wait). A batch still failing stays unacked: JetStream redelivers it
-// after the ack wait, so the retry continues there.
-const retryDelaysMs = [1000, 2000, 4000, 8000];
+// Waits between insert attempts for one batch: 5 attempts, 15 s of waiting.
+// Each attempt can itself take up to the client's 30 s request timeout, so a
+// batch can outlive the ack wait and be redelivered while still retrying;
+// harmless, the copies share stream_seq and collapse under FINAL. A batch
+// still failing stays unacked: JetStream redelivers it after the ack wait, so
+// the retry continues there.
+const defaultRetryDelaysMs = [1000, 2000, 4000, 8000];
 
 const unknownRunId = RunId.parse("unknown");
 
@@ -94,6 +97,8 @@ export async function startPersister(options: {
 	clickhouse: Pick<ClickHouse, "insertEvents" | "command">;
 	source: EventSource;
 	log: (entry: PersisterLogEntry) => void;
+	// Tests shorten the waits.
+	retryDelaysMs?: number[];
 }): Promise<Result<Persister, PersisterError>> {
 	const migrated = await migrate(options.clickhouse);
 	if (!migrated.ok) return migrated;
@@ -117,7 +122,14 @@ export async function startPersister(options: {
 			} catch (cause) {
 				return { ok: false, error: { type: "fetch_failed", cause } };
 			}
-			await persist(batch, options, stop.signal);
+			await persist(
+				batch,
+				{
+					...options,
+					retryDelaysMs: options.retryDelaysMs ?? defaultRetryDelaysMs,
+				},
+				stop.signal,
+			);
 		}
 		return { ok: true, value: undefined };
 	})();
@@ -159,6 +171,7 @@ async function persist(
 	options: {
 		clickhouse: Pick<ClickHouse, "insertEvents">;
 		log: (entry: PersisterLogEntry) => void;
+		retryDelaysMs: number[];
 	},
 	stopping: AbortSignal,
 ): Promise<void> {
@@ -197,7 +210,7 @@ async function persist(
 			rows: rows.length,
 			error: inserted.error,
 		});
-		const delay = retryDelaysMs[attempt - 1];
+		const delay = options.retryDelaysMs[attempt - 1];
 		if (delay === undefined || stopping.aborted) break;
 		await Bun.sleep(delay);
 	}
@@ -231,11 +244,6 @@ function decode(
 		};
 	}
 	return { ok: true, value: parsed.value };
-}
-
-// The stream holds sim.events.> only (ADR 0028), but payloads are untrusted.
-function isSimEvent(message: Message): message is SimEvent {
-	return /^(clock|driver|trip)\./.test(message.type);
 }
 
 // Header missing or not a valid run id: stored as 'unknown' (ADR 0029).

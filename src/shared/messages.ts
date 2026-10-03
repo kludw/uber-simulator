@@ -246,6 +246,11 @@ export type SimEvent = Extract<
 	{ type: `${"clock" | "driver" | "trip"}.${string}` }
 >;
 
+// sim.events.> carries only events, but a payload is untrusted.
+export function isSimEvent(message: Message): message is SimEvent {
+	return /^(clock|driver|trip)\./.test(message.type);
+}
+
 // Issues are Zod's plain data (code, path, message), fine to log; ZodError
 // itself never leaves this function.
 export function parseMessage(

@@ -10,6 +10,7 @@ import { type Cell, cellIn } from "./grid.ts";
 import {
 	type ClockTicked,
 	DriverId,
+	isSimEvent,
 	type Message,
 	parseMessage,
 	RiderId,
@@ -132,4 +133,18 @@ test.each(invalidInputs)("rejects %s as invalid_message", (_case, input) => {
 		ok: false,
 		error: { type: "invalid_message", issues: expect.any(Array) },
 	});
+});
+
+test("isSimEvent tells events from offers, replies, and commands", () => {
+	const tripId = TripId.parse("t-1");
+	const driverId = DriverId.parse("d-1");
+	const messages: Message[] = [
+		{ type: "clock.ticked", tick: Tick.parse(1) },
+		{ type: "trip.matched", tick: Tick.parse(1), tripId, driverId },
+		{ type: "offer_accepted", tripId, driverId },
+		{ type: "cancel_trip", tripId },
+		{ type: "cancel_trip_accepted", tripId },
+	];
+
+	expect(messages.map(isSimEvent)).toEqual([true, true, false, false, false]);
 });

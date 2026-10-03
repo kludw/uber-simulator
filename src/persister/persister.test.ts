@@ -289,6 +289,50 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 			logged: ["insert_failed"],
 		});
 	}, 20_000);
+
+	test("a batch failing every retry is logged and left unacked", async () => {
+		const source = testSource();
+		const nc = await natsConnection();
+		const alwaysFailing: Pick<ClickHouse, "insertEvents" | "command"> = {
+			command: clickhouse.command,
+			insertEvents: () =>
+				Promise.resolve({
+					ok: false,
+					error: { type: "clickhouse_request_failed", cause: "down" },
+				}),
+		};
+		const logged: string[] = [];
+		const { promise: gaveUp, resolve: giveUp } = Promise.withResolvers<void>();
+		const persister = await succeeded(
+			startPersister({
+				nats: nc,
+				clickhouse: alwaysFailing,
+				source,
+				log: (entry) => {
+					logged.push(entry.type);
+					if (entry.type === "batch_not_persisted") giveUp();
+				},
+				retryDelaysMs: [0, 0],
+			}),
+		);
+
+		publish(nc, source, { type: "clock.ticked", tick: 1 }, "run-d");
+		await gaveUp;
+		persister.stop();
+		await persister.stopped;
+		const jsm = await jetstreamManager(nc);
+		const consumer = await jsm.consumers.info(source.stream, source.consumer);
+
+		expect({ logged, unacked: consumer.num_ack_pending }).toEqual({
+			logged: [
+				"insert_failed",
+				"insert_failed",
+				"insert_failed",
+				"batch_not_persisted",
+			],
+			unacked: 1,
+		});
+	}, 20_000);
 });
 
 async function succeeded<T>(
