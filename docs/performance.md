@@ -1,6 +1,6 @@
 # Performance
 
-Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes).
+Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), and 1-hour runs in [Long runs](#long-runs).
 
 ## Method
 
@@ -123,3 +123,45 @@ Measured 2026-10-03 at `424942c` ([#115](https://github.com/kludw/uber-simulator
 ### Follow-up
 
 - Run length: per-tick cost and heap still grow over a run (above). If 1-hour runs at 10k matter, measure 3,600 ticks with a profile, then decide on the dispatch `trips` copy (owned state, ADR 0033) and pruning finished trips from dispatch state (needs a look at what still reads them).
+
+## Long runs
+
+Measured 2026-10-03 ([#121](https://github.com/kludw/uber-simulator/issues/121)): 10k drivers, 3,600 ticks (1 simulated hour), same scenario and runner as above.
+
+### Before: master at `bac7159`
+
+[37157254136](https://github.com/kludw/uber-simulator/actions/runs/37157254136), CPU-profiled: greedy mean 65.04 ms/tick (p95 99.91), batched 74.42 (p95 218.52), 3.0× and 2.7× the profiled 600-tick means above (21.80, 27.74). Peak RSS 728 MiB greedy, 5,344 MiB batched (profiled).
+
+| Case | Function | Share (self) |
+| --- | --- | ---: |
+| 10k greedy | `Map` constructor: `new Map(state.trips)` in dispatch `onArrival`, `onRequestTrip`, `onOfferReply` | 48.7% |
+| 10k greedy | `onDriverReported` (`src/dispatch/brain.ts:353-354`, one `Map.set`; likely GC from the copies above, 1.9% after the fix) | 11.6% |
+| 10k greedy | `map` (driver-shard brain arrays) | 7.5% |
+| 10k greedy | `offerPairs` walking every trip ever requested | 3.9% |
+| 10k batched | `Map` constructor, same dispatch callers | 62.2% |
+
+Dispatch copied a map of every trip ever requested on each trip event and walked it every tick, so both grew with run length.
+
+### Fix
+
+Dispatch updates `trips` in place (owned state, ADR 0033) and moves completed and cancelled trips to `endedTrips`, kept to answer late and duplicate inputs for them (duplicate trip IDs, late offer replies, arrivals, cancels) exactly as before but out of the per-tick scan. Event logs of every README `bun run sim` command (greedy and batched) hash identically before and after.
+
+### After
+
+Two runs per case, 10k drivers, at `50d8d45`:
+
+- CPU-profiled: 3,600 ticks [37157658520](https://github.com/kludw/uber-simulator/actions/runs/37157658520), [37157841889](https://github.com/kludw/uber-simulator/actions/runs/37157841889); 600 ticks [37157660094](https://github.com/kludw/uber-simulator/actions/runs/37157660094), [37157843461](https://github.com/kludw/uber-simulator/actions/runs/37157843461).
+- Unprofiled (`-f cpu_profile=false`): 3,600 ticks [37157661438](https://github.com/kludw/uber-simulator/actions/runs/37157661438), [37157845226](https://github.com/kludw/uber-simulator/actions/runs/37157845226); 600 ticks [37157662709](https://github.com/kludw/uber-simulator/actions/runs/37157662709), [37157846979](https://github.com/kludw/uber-simulator/actions/runs/37157846979).
+
+| Matching | Profiled | Mean ms/tick, 600 ticks | Mean ms/tick, 3,600 ticks | 3,600 / 600 | p95 ms/tick, 3,600 ticks | Peak RSS, 3,600 ticks |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| greedy | no | 17.68, 16.38 | 19.41, 14.98 | 1.01× | 24.17, 18.98 | 163 MiB, 159 MiB |
+| batched | no | 20.64, 15.74 | 13.34, 21.91 | 0.97× | 28.00, 47.95 | 175 MiB, 179 MiB |
+| greedy | yes | 13.25, 13.64 | 20.37, 16.05 | 1.35× | 25.64, 20.10 | 321 MiB, 292 MiB |
+| batched | yes | 20.78, 20.58 | 18.53, 17.94 | 0.88× | 39.33, 37.90 | 447 MiB, 436 MiB |
+
+- Ratios are of the two-run averages. Message counts at 3,600 ticks match the before run exactly (36,660,795 greedy, 36,660,653 batched).
+- Against before (profiled, 3,600 ticks): greedy mean 65.04 → 18.2 ms (3.6×), batched 74.42 → 18.2 ms (4.1×); p95 99.91 → 20-26 ms and 218.52 → 38-39 ms.
+- Unprofiled, per-tick cost at 3,600 ticks is flat against 600 (1.01×, 0.97×); same-case runs differ by up to 64%, more than any growth left. Profiled greedy is 1.35×; its 3,600-tick profile has no hot spot sized by trips (no `Map` copy; `offerPairs` now walks only trips not yet ended), and profiled runs differ from unprofiled ones in both directions (600-tick greedy is faster profiled), so that gap isn't attributed further.
+- Top hot spots at 3,600 ticks are now the driver-shard and rider brains' copy-on-update arrays (`map` 21.8% from `replaceDriver` / `onPickedUp` / `onOffer`, `filter` 9.0% from rider `removeRider`, `find` 5.6% at greedy; `map` 12.0% self at batched), sized by drivers or riders per shard, not by run length; then dispatch's per-tick matching (`greedyPairs`, `offerPairs`, `cellOf`). Owned state (ADR 0033) would apply to those arrays if a profile ever makes them the bottleneck.
+- Heap at the end (unprofiled, 3,600 ticks) is 33-44 MiB, still growing with trips: dispatch keeps each ended trip.
