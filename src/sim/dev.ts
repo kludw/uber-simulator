@@ -1,13 +1,16 @@
 // `bun run dev`: every service as its own process (ADR 0019), output
 // prefixed by service. SIGINT/SIGTERM stops them all; so does any one
-// exiting on its own (exit code 1 then).
+// exiting on its own (exit code 1 then). One run id per start, given to
+// every service (ADR 0029); it replaces any RUN_ID in the environment.
 import { parseServiceConfig } from "./config.ts";
 
-const config = parseServiceConfig(Bun.env);
+const runEnv = { ...Bun.env, RUN_ID: crypto.randomUUID() };
+const config = parseServiceConfig(runEnv);
 if (!config.ok) {
 	console.error(JSON.stringify(config.error));
 	process.exit(2);
 }
+console.log(`[dev] run id: ${config.value.runId}`);
 
 const services = [
 	{ name: "dispatch", entrypoint: "src/dispatch/main.ts", env: {} },
@@ -25,7 +28,7 @@ const nameWidth = Math.max(...services.map((service) => service.name.length));
 
 const children = services.map((service) => {
 	const child = Bun.spawn(["bun", service.entrypoint], {
-		env: { ...Bun.env, ...service.env },
+		env: { ...runEnv, ...service.env },
 		stdout: "pipe",
 		stderr: "pipe",
 	});

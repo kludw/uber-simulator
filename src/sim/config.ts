@@ -1,6 +1,7 @@
 import * as z from "zod";
 import type { ClickHouseConfig } from "../persistence/clickhouse.ts";
 import { specGrid } from "../shared/grid.ts";
+import { RunId } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
 import type { SimConfig } from "./services.ts";
 
@@ -8,6 +9,8 @@ import type { SimConfig } from "./services.ts";
 // simulation (seed, shard sizes, ...).
 export type ServiceConfig = SimConfig & {
 	natsUrl: string;
+	// Stamped on every publish as the Run-Id header (ADR 0029).
+	runId: RunId;
 	// Sim seconds per wall second; only the clock paces by it.
 	speed: number;
 	// Wall time the clock waits before tick 1, for the other services to
@@ -27,6 +30,7 @@ const integer = z
 
 const Env = z.object({
 	NATS_URL: z.url(),
+	RUN_ID: RunId,
 	// createRandom folds the seed to 32 bits; larger seeds would alias.
 	SEED: integer
 		.pipe(
@@ -59,6 +63,7 @@ export function parseServiceConfig(
 		ok: true,
 		value: {
 			natsUrl: vars.NATS_URL,
+			runId: vars.RUN_ID,
 			seed: vars.SEED,
 			speed: vars.SPEED,
 			clockStartDelayMs: vars.CLOCK_START_DELAY_MS,

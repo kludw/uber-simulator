@@ -1,11 +1,12 @@
 import {
 	ClosedConnectionError,
 	connect,
+	headers,
 	type Msg,
 	type NatsConnection,
 	RequestError,
 } from "@nats-io/transport-node";
-import { type Message, parseMessage } from "../shared/messages.ts";
+import { type Message, parseMessage, type RunId } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
 import type { Bus } from "./bus.ts";
 
@@ -37,8 +38,11 @@ export type NatsConnectError = {
 // One connection, one sim.> subscription (ADR 0028): a single subscription
 // keeps each publisher's order. Handlers are synchronous and run from one
 // loop, so they run one at a time in arrival order.
+// Every publish carries `Run-Id: <runId>` (ADR 0029), so consumers tell runs
+// apart without the run id in any message.
 export async function connectNatsBus(options: {
 	url: string;
+	runId: RunId;
 	log: (dropped: DroppedMessage) => void;
 	logStatus: (status: ConnectionStatus) => void;
 }): Promise<Result<NatsBus, NatsConnectError>> {
@@ -46,6 +50,10 @@ export async function connectNatsBus(options: {
 		ok: false,
 		error: { type: "nats_connect_failed", url: options.url, cause },
 	});
+	// Before connecting: RunId's charset makes set() safe, but a throw here
+	// would leak no connection anyway.
+	const runHeaders = headers();
+	runHeaders.set("Run-Id", options.runId);
 	let connection: NatsConnection;
 	try {
 		connection = await connect({ servers: options.url });
@@ -103,7 +111,9 @@ export async function connectNatsBus(options: {
 		ok: true,
 		value: {
 			publish(message) {
-				connection.publish(subjectFor(message), JSON.stringify(message));
+				connection.publish(subjectFor(message), JSON.stringify(message), {
+					headers: runHeaders,
+				});
 			},
 			subscribe(accepts, handle) {
 				subscribers.push((message) => {

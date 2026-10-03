@@ -59,7 +59,7 @@ bun run sim -- --seed 42 --ticks 3600
 
 Prints seed, ticks, drivers, trips requested / completed / cancelled, mean ticks from request to pickup, rejected inputs, and invariant violations (one JSON line each). Exit code 0 ok, 1 invariant violated, 2 invalid args or `NATS_URL`, 3 NATS unreachable.
 
-Same run over NATS, each service on its own connection, ticks as fast as the services settle (needs the local NATS server and `NATS_URL`, see Local infra; don't run `bun run dev` on the same server at the same time). Only each publisher's order is guaranteed, so the counts can differ from the in-process run and between runs:
+Same run over NATS, each service on its own connection, ticks as fast as the services settle (needs the local NATS server and `NATS_URL`, see Local infra; don't run `bun run dev` on the same server at the same time). Only each publisher's order is guaranteed, so the counts can differ from the in-process run and between runs. The summary starts with `run id: <id>`, a fresh UUID per run carried as the `Run-Id` header on every message ([ADR 0029](docs/adr/0029-event-persistence.md)):
 
 ```bash
 bun run sim -- --seed 42 --ticks 600 --bus nats
@@ -67,7 +67,9 @@ bun run sim -- --seed 42 --ticks 600 --bus nats
 
 ### As separate processes over NATS
 
-Needs the local NATS server (`docker compose up -d --wait`). Starts dispatch, riders, one process per driver shard, and the clock; their output is prefixed by service, one JSON log line per entry (started with seed, NATS disconnect/reconnect/close, rejected inputs, dropped messages, stopped). Ctrl+C stops them all; so does any one of them exiting (exit code 1).
+Needs the local NATS server (`docker compose up -d --wait`). Starts dispatch, riders, one process per driver shard, and the clock; their output is prefixed by service, one JSON log line per entry (started with run id and seed, NATS disconnect/reconnect/close, rejected inputs, dropped messages, stopped). Ctrl+C stops them all; so does any one of them exiting (exit code 1).
+
+Each start gets a new run id (a UUID), printed first as `[dev] run id: <id>` and in every `service_started` line. Every message the services publish carries it as a `Run-Id` NATS header ([ADR 0029](docs/adr/0029-event-persistence.md)); it is how persisted events are told apart by run.
 
 ```bash
 bun run dev
@@ -78,6 +80,7 @@ Config from env (Bun loads `.env`; defaults are spec scale, real time):
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `NATS_URL` | (required) | NATS server |
+| `RUN_ID` | (set by `bun run dev`) | run id stamped on every publish; letters, digits, `-`, `_`. Required when starting a service entrypoint directly |
 | `SEED` | `1` | seed for every service's random stream |
 | `SPEED` | `1` | sim seconds per wall second: one tick every 1 s / `SPEED` |
 | `CLOCK_START_DELAY_MS` | `2000` | wall time the clock waits before tick 1, so the other services are subscribed |

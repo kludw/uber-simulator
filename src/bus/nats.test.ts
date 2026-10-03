@@ -7,6 +7,7 @@ import {
 	DriverId,
 	type Message,
 	RiderId,
+	RunId,
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
@@ -23,6 +24,7 @@ const tripId = TripId.parse("t-1");
 const driverId = DriverId.parse("d-7");
 const riderId = RiderId.parse("r-1");
 const cell = Cell.parse({ x: 0, y: 0 });
+const testRunId = RunId.parse("test-run-1");
 
 describe("subjectFor", () => {
 	// Every Message type with its subject per ADR 0028.
@@ -140,6 +142,7 @@ describe("connectNatsBus", () => {
 		// Port 1 is privileged and unused, so the connection is refused.
 		const result = await connectNatsBus({
 			url: "nats://127.0.0.1:1",
+			runId: testRunId,
 			log: () => {},
 			logStatus: () => {},
 		});
@@ -167,6 +170,7 @@ describe("connectNatsBus", () => {
 
 		const result = await connectNatsBus({
 			url: server.url,
+			runId: testRunId,
 			log: () => {},
 			logStatus: () => {},
 		});
@@ -268,7 +272,7 @@ function fakeNatsServer(
 				openSockets++;
 				socket.data = { connection: connections };
 				socket.write(
-					'INFO {"server_id":"fake","version":"2.15.0","max_payload":1048576}\r\n',
+					'INFO {"server_id":"fake","version":"2.15.0","max_payload":1048576,"headers":true}\r\n',
 				);
 			},
 			data(socket, chunk) {
@@ -295,7 +299,12 @@ async function connectFake(
 	url: string,
 	logStatus: (status: ConnectionStatus) => void,
 ): Promise<NatsBus> {
-	const result = await connectNatsBus({ url, log: () => {}, logStatus });
+	const result = await connectNatsBus({
+		url,
+		runId: testRunId,
+		log: () => {},
+		logStatus,
+	});
 	if (!result.ok) throw new Error("fake server unreachable", { cause: result });
 	return result.value;
 }
@@ -310,7 +319,7 @@ if (!natsUrl) {
 describe.skipIf(!natsUrl)("NATS bus", () => {
 	// Other runs may share the server: each test uses its own trip IDs and
 	// accepts only those.
-	const runId = crypto.randomUUID();
+	const tripIdSalt = crypto.randomUUID();
 	const open: NatsBus[] = [];
 
 	afterEach(async () => {
@@ -320,6 +329,7 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 	async function connectBus(log: (dropped: DroppedMessage) => void = () => {}) {
 		const result = await connectNatsBus({
 			url: natsUrl ?? "",
+			runId: testRunId,
 			log,
 			logStatus: () => {},
 		});
@@ -329,11 +339,13 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 	}
 
 	function cancelTrip(n: number): CancelTrip {
-		return { type: "cancel_trip", tripId: TripId.parse(`${runId}-${n}`) };
+		return { type: "cancel_trip", tripId: TripId.parse(`${tripIdSalt}-${n}`) };
 	}
 
 	function isOwnCancelTrip(message: Message): message is CancelTrip {
-		return message.type === "cancel_trip" && message.tripId.startsWith(runId);
+		return (
+			message.type === "cancel_trip" && message.tripId.startsWith(tripIdSalt)
+		);
 	}
 
 	async function waitFor(condition: () => boolean): Promise<void> {
@@ -382,6 +394,29 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		]);
 	});
 
+	test("every published message carries the bus's run id as a Run-Id header", async () => {
+		const bus = await connectBus();
+		// A raw connection sees headers, which the bus port hides.
+		const raw = await connect({ servers: natsUrl });
+		const subscription = raw.subscribe("sim.commands.cancel_trip");
+		await raw.flush();
+		const received: (string | undefined)[] = [];
+		const reading = (async () => {
+			for await (const message of subscription) {
+				if (!message.string().includes(tripIdSalt)) continue;
+				received.push(message.headers?.get("Run-Id"));
+				if (received.length === 2) break;
+			}
+		})();
+
+		bus.publish(cancelTrip(1));
+		bus.publish(cancelTrip(2));
+		await reading;
+		await raw.close();
+
+		expect(received).toEqual([testRunId, testRunId]);
+	});
+
 	test("closing an already closed bus resolves", async () => {
 		const bus = await connectBus();
 
@@ -419,7 +454,7 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		// A raw connection can publish what the bus never would; one publisher
 		// keeps the valid message last.
 		const raw = await connect({ servers: natsUrl });
-		const subject = `sim.test.${runId}`;
+		const subject = `sim.test.${tripIdSalt}`;
 
 		raw.publish(subject, "{not json");
 		raw.publish(subject, JSON.stringify({ type: "no_such_message" }));

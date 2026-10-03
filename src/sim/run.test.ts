@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { connect } from "@nats-io/transport-node";
 import * as z from "zod";
 import { checkInvariants } from "./invariants.ts";
 import {
@@ -175,6 +176,26 @@ describe.skipIf(!natsUrl)("runOverNats", () => {
 			completed: eventLog.some((message) => message.type === "trip.completed"),
 		}).toEqual({ violations: [], completed: true });
 	}, 60_000);
+
+	test("every message of a run carries the run id it returns", async () => {
+		// A raw connection sees headers, which the bus port hides.
+		const raw = await connect({ servers: natsUrl });
+		const runIds = new Set<string | undefined>();
+		const subscription = raw.subscribe("sim.>", {
+			callback: (_, message) => {
+				runIds.add(message.headers?.get("Run-Id"));
+			},
+		});
+		await raw.flush();
+
+		const result = await runOverNats({ ...quietConfig, url: natsUrl ?? "" });
+		await raw.flush();
+		subscription.unsubscribe();
+		await raw.close();
+
+		if (!result.ok) throw new Error("NATS unavailable", { cause: result });
+		expect(runIds).toEqual(new Set([result.value.runId]));
+	});
 
 	test("a scarce-supply run breaks no invariant and cancels trips", async () => {
 		const { eventLog } = await runOnServer(scarceConfig);

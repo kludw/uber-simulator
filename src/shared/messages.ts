@@ -17,6 +17,11 @@ export type TripId = z.infer<typeof TripId>;
 export const RiderId = idToken.brand<"RiderId">();
 export type RiderId = z.infer<typeof RiderId>;
 
+// Not in any message: the Run-Id NATS header (ADR 0029). Same charset keeps
+// it a safe header value, ClickHouse value, and CLI argument.
+export const RunId = idToken.brand<"RunId">();
+export type RunId = z.infer<typeof RunId>;
+
 export const ClockTicked = z.object({
 	type: z.literal("clock.ticked"),
 	tick: Tick,
