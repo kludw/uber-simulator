@@ -10,6 +10,7 @@ import {
 import {
 	compareSummaries,
 	createSummary,
+	createTripSummary,
 	type Summary,
 	summarize,
 } from "./summary.ts";
@@ -167,6 +168,18 @@ describe("createSummary", () => {
 			meanTicksToPickup: 1,
 			rejectedInputs: 2,
 			violations: [],
+		});
+	});
+});
+
+describe("createTripSummary", () => {
+	test("counts trips and mean ticks to pickup without a run config", () => {
+		const summary = createTripSummary();
+		for (const message of eventLog) summary.observe(message);
+
+		expect(summary.result()).toEqual({
+			trips: { requested: 3, completed: 1, cancelled: 1 },
+			meanTicksToPickup: 1,
 		});
 	});
 });

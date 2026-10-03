@@ -31,44 +31,62 @@ export type RunSummary = {
 // Summarizes a run as it happens (ADR 0033): memory grows with trips, not
 // with messages.
 export function createSummary(config: RunConfig): RunSummary {
-	const trips = { requested: 0, completed: 0, cancelled: 0 };
-	const requestedAt = new Map<TripId, Tick>();
-	let pickups = 0;
-	let ticksToPickup = 0;
+	const tripSummary = createTripSummary();
 	const checker = createInvariantChecker(config.grid);
-	const observe = (message: Message) => {
-		checker.observe(message);
-		switch (message.type) {
-			case "trip.requested":
-				trips.requested++;
-				requestedAt.set(message.tripId, message.tick);
-				break;
-			case "trip.picked_up": {
-				const at = requestedAt.get(message.tripId);
-				if (at === undefined) break;
-				pickups++;
-				ticksToPickup += message.tick - at;
-				break;
-			}
-			case "trip.completed":
-				trips.completed++;
-				break;
-			case "trip.cancelled":
-				trips.cancelled++;
-				break;
-		}
-	};
 	const { count, driversPerShard } = config.driverShards;
 	return {
-		observe,
+		observe: (message) => {
+			checker.observe(message);
+			tripSummary.observe(message);
+		},
 		result: (rejectedInputs) => ({
 			seed: config.seed,
 			ticks: config.ticks,
 			drivers: count * driversPerShard,
-			trips: { ...trips },
-			meanTicksToPickup: pickups === 0 ? null : ticksToPickup / pickups,
+			...tripSummary.result(),
 			rejectedInputs,
 			violations: checker.violations(),
+		}),
+	};
+}
+
+export type TripSummary = Pick<Summary, "trips" | "meanTicksToPickup">;
+
+// The summary's trip numbers alone, for event logs without a RunConfig
+// (stored runs, ADR 0034). Memory grows with trips, not with messages.
+export function createTripSummary(): {
+	observe(message: Message): void;
+	result(): TripSummary;
+} {
+	const trips = { requested: 0, completed: 0, cancelled: 0 };
+	const requestedAt = new Map<TripId, Tick>();
+	let pickups = 0;
+	let ticksToPickup = 0;
+	return {
+		observe: (message) => {
+			switch (message.type) {
+				case "trip.requested":
+					trips.requested++;
+					requestedAt.set(message.tripId, message.tick);
+					break;
+				case "trip.picked_up": {
+					const at = requestedAt.get(message.tripId);
+					if (at === undefined) break;
+					pickups++;
+					ticksToPickup += message.tick - at;
+					break;
+				}
+				case "trip.completed":
+					trips.completed++;
+					break;
+				case "trip.cancelled":
+					trips.cancelled++;
+					break;
+			}
+		},
+		result: () => ({
+			trips: { ...trips },
+			meanTicksToPickup: pickups === 0 ? null : ticksToPickup / pickups,
 		}),
 	};
 }
