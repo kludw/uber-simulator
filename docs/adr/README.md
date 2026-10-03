@@ -37,3 +37,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0031 | [Hotspot demand](0031-hotspot-demand.md)                                | Accepted |
 | 0032 | [Driver shifts](0032-driver-shifts.md)                                  | Accepted |
 | 0033 | [Scale fixes](0033-scale-fixes.md)                                      | Accepted |
+| 0034 | [Replay](0034-replay.md)                                                | Accepted |
