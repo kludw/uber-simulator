@@ -21,7 +21,7 @@ Independent processes, each owning its state, talking over NATS. Each service's 
 | --- | --- | --- |
 | clock | tick counter | publishes `clock.ticked` every 1 s / speed |
 | driver (×2, 50 drivers each, fixed shard) | driver position, state | moves drivers each tick, answers offers, reports arrivals |
-| rider | riders, demand generator | spawns riders (Poisson, random cells), requests trips, cancels on lost patience |
+| rider | riders, demand generator | spawns riders (Poisson; pickups uniform or around hotspots, 0031), requests trips, cancels on lost patience |
 | dispatch (single) | trips | queues requests, matches, owns every trip transition |
 | persister | stream position (JetStream consumer) | writes all events to ClickHouse, at-least-once |
 | UI (browser) | — | renders a view built from events |
@@ -64,7 +64,7 @@ Watch-only, live-only. Browser canvas: drivers as dots colored by state, waiting
 4. **UI**: live canvas view, served by `bun run ui`, subscribed to NATS events over WebSocket. Done.
 5. **Persistence**: persister -> ClickHouse, first analytics queries (`bun run report`). Done.
 6. **Batched matching** (0030): dispatch strategy switch (greedy | batched every N ticks, min total pickup distance), `bun run sim -- --compare` prints both on one seed. Done.
-7. **Hotspot demand** (0031): rider demand model (uniform | hotspots, `city` preset), configurable demand rate and fleet size in `bun run sim` / `--compare`.
+7. **Hotspot demand** (0031): rider demand model (uniform | hotspots, `city` preset), configurable demand rate and fleet size in `bun run sim` / `--compare`. Done.
 
 ## Later (not v1)
 

@@ -3,10 +3,9 @@
 // side by side (ADR 0030).
 // Exit codes: 0 ok, 1 invariant violated, 2 invalid args or NATS_URL,
 // 3 NATS unreachable.
-import { parseArgs } from "node:util";
 import * as z from "zod";
 import type { Matching } from "../dispatch/brain.ts";
-import { specGrid } from "../shared/grid.ts";
+import { parseSimArgs } from "./args.ts";
 import {
 	type RunConfig,
 	type RunResult,
@@ -15,71 +14,13 @@ import {
 } from "./run.ts";
 import { compareSummaries, type Summary, summarize } from "./summary.ts";
 
-const integerArg = z
-	.string()
-	.regex(z.regexes.integer, { error: "expected an integer" })
-	.transform(Number);
-
-const Args = z
-	.strictObject({
-		// createRandom folds the seed to 32 bits; larger seeds would alias.
-		seed: integerArg.pipe(
-			z
-				.int()
-				.min(0)
-				.max(2 ** 32 - 1),
-		),
-		ticks: integerArg.pipe(z.int().positive()),
-		bus: z.enum(["in-memory", "nats"]),
-		matching: z.enum(["greedy", "batched"]),
-		"batch-window": integerArg.pipe(z.int().positive()),
-		compare: z.boolean(),
-	})
-	.refine((args) => !(args.compare && args.bus === "nats"), {
-		error: "--compare runs in process only",
-		path: ["compare"],
-	});
-
-function readArgs(): ReturnType<typeof parseArgs>["values"] {
-	try {
-		return parseArgs({
-			args: Bun.argv.slice(2),
-			options: {
-				seed: { type: "string", default: "1" },
-				// 1 simulated hour.
-				ticks: { type: "string", default: "3600" },
-				bus: { type: "string", default: "in-memory" },
-				matching: { type: "string", default: "greedy" },
-				// Batched only.
-				"batch-window": { type: "string", default: "5" },
-				compare: { type: "boolean", default: false },
-			},
-			strict: true,
-		}).values;
-	} catch (error) {
-		// parseArgs throws TypeError only for malformed argv.
-		if (!(error instanceof TypeError)) throw error;
-		console.error(error.message);
-		process.exit(2);
-	}
-}
-
-const args = Args.safeParse(readArgs());
-if (!args.success) {
-	console.error(z.prettifyError(args.error));
+const args = parseSimArgs(Bun.argv.slice(2));
+if (!args.ok) {
+	console.error(args.error.message);
 	process.exit(2);
 }
 
-// Spec defaults (docs/spec.md): spec grid, 2 shards x 50 drivers,
-// 10 trip requests/min.
-const { bus, compare, "batch-window": windowTicks, ...runArgs } = args.data;
-const config = {
-	seed: runArgs.seed,
-	ticks: runArgs.ticks,
-	grid: specGrid,
-	driverShards: { count: 2, driversPerShard: 50 },
-	requestsPerMinute: 10,
-};
+const { bus, compare, windowTicks, config } = args.value;
 const batched: Matching = { type: "batched", windowTicks };
 
 if (compare) {
@@ -99,7 +40,7 @@ if (compare) {
 	printAndFailOnViolations("batched", batchedSummary);
 } else {
 	const matching: Matching =
-		runArgs.matching === "batched" ? batched : { type: "greedy" };
+		args.value.matching === "batched" ? batched : { type: "greedy" };
 	const summary = summarize(config, await run({ ...config, matching }));
 
 	console.log(`seed: ${summary.seed}`);
