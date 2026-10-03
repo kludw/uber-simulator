@@ -6,13 +6,13 @@
 import * as z from "zod";
 import type { Matching } from "../dispatch/brain.ts";
 import { parseSimArgs } from "./args.ts";
+import { type RunConfig, runInProcess, runOverNats } from "./run.ts";
 import {
-	type RunConfig,
-	type RunResult,
-	runInProcess,
-	runOverNats,
-} from "./run.ts";
-import { compareSummaries, type Summary, summarize } from "./summary.ts";
+	compareSummaries,
+	createSummary,
+	type Summary,
+	summarize,
+} from "./summary.ts";
 
 const args = parseSimArgs(Bun.argv.slice(2));
 if (!args.ok) {
@@ -32,14 +32,11 @@ const loadLines = [
 const batched: Matching = { type: "batched", windowTicks };
 
 if (compare) {
-	const greedySummary = summarize(
-		config,
-		runInProcess({ ...config, matching: { type: "greedy" } }),
-	);
-	const batchedSummary = summarize(
-		config,
-		runInProcess({ ...config, matching: batched }),
-	);
+	const greedySummary = summarizeInProcess({
+		...config,
+		matching: { type: "greedy" },
+	});
+	const batchedSummary = summarizeInProcess({ ...config, matching: batched });
 	console.log(`seed: ${config.seed}`);
 	console.log(`ticks: ${config.ticks}`);
 	console.log(`batch window: ${windowTicks} ticks`);
@@ -50,7 +47,7 @@ if (compare) {
 } else {
 	const matching: Matching =
 		args.value.matching === "batched" ? batched : { type: "greedy" };
-	const summary = summarize(config, await run({ ...config, matching }));
+	const summary = await run({ ...config, matching });
 
 	console.log(`seed: ${summary.seed}`);
 	console.log(`ticks: ${summary.ticks}`);
@@ -97,8 +94,15 @@ function printAndFailOnViolations(
 	if (summary.violations.length > 0) process.exitCode = 1;
 }
 
-async function run(config: RunConfig): Promise<RunResult> {
-	if (bus === "in-memory") return runInProcess(config);
+// Summarized as the run happens, so no event log is kept (ADR 0033).
+function summarizeInProcess(config: RunConfig): Summary {
+	const summary = createSummary(config);
+	const { rejected } = runInProcess(config, { onMessage: summary.observe });
+	return summary.result(rejected.length);
+}
+
+async function run(config: RunConfig): Promise<Summary> {
+	if (bus === "in-memory") return summarizeInProcess(config);
 	const url = z.url().safeParse(Bun.env.NATS_URL);
 	if (!url.success) {
 		console.error(`NATS_URL: ${z.prettifyError(url.error)}`);
@@ -113,5 +117,5 @@ async function run(config: RunConfig): Promise<RunResult> {
 	}
 	// Key for this run's persisted events (ADR 0029).
 	console.log(`run id: ${result.value.runId}`);
-	return result.value;
+	return summarize(config, result.value);
 }

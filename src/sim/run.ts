@@ -18,23 +18,44 @@ import {
 export type RunConfig = SimConfig & { ticks: number };
 
 export type RunResult = {
-	eventLog: Message[];
+	messageCount: number;
 	rejected: { service: string; rejected: Rejected }[];
 };
 
+export type RunObservers = {
+	// Each message as it is delivered, in publish order.
+	onMessage?: (message: Message) => void;
+	// Once each tick's messages are all delivered, with the result so far
+	// (`bun run bench` times ticks and reports partial runs with it).
+	onTickDone?: (tick: Tick, soFar: RunResult) => void;
+};
+
 // Runs every service over one in-memory bus, the runner acting as clock
-// (ADR 0027). Same config gives the same eventLog. onTickDone runs once each
-// tick's messages are all delivered, with the result so far (`bun run bench`
-// times ticks and reports partial runs with it).
+// (ADR 0027). Same config gives the same messages. The event log is kept
+// only with keepEventLog (ADR 0033: memory would grow with every message);
+// other callers observe messages as they come.
 export function runInProcess(
-	config: RunConfig,
-	onTickDone: (tick: Tick, soFar: RunResult) => void = () => {},
-): RunResult {
+	config: RunConfig & { keepEventLog: true },
+	observers?: RunObservers,
+): RunResult & { eventLog: Message[] };
+export function runInProcess(
+	config: RunConfig & { keepEventLog?: false },
+	observers?: RunObservers,
+): RunResult;
+export function runInProcess(
+	config: RunConfig & { keepEventLog?: boolean },
+	{ onMessage = () => {}, onTickDone = () => {} }: RunObservers = {},
+): RunResult & { eventLog?: Message[] } {
 	const bus = createInMemoryBus();
-	const result: RunResult = { eventLog: [], rejected: [] };
+	const result: RunResult = { messageCount: 0, rejected: [] };
+	const eventLog: Message[] = [];
 	bus.subscribe(
 		(message): message is Message => true,
-		(message) => result.eventLog.push(message),
+		(message) => {
+			result.messageCount++;
+			if (config.keepEventLog) eventLog.push(message);
+			onMessage(message);
+		},
 	);
 	for (const service of allServices(config)) {
 		service.start(bus, (rejected) =>
@@ -49,7 +70,7 @@ export function runInProcess(
 		bus.drain();
 		onTickDone(clockTick, result);
 	}
-	return result;
+	return config.keepEventLog ? { ...result, eventLog } : result;
 }
 
 // Same services, each on its own NATS connection (the real network path),
@@ -59,7 +80,9 @@ export function runInProcess(
 // stamps one fresh run id (ADR 0029), returned with the result.
 export async function runOverNats(
 	config: RunConfig & { url: string },
-): Promise<Result<RunResult & { runId: RunId }, NatsConnectError>> {
+): Promise<
+	Result<RunResult & { eventLog: Message[]; runId: RunId }, NatsConnectError>
+> {
 	const runId = RunId.parse(crypto.randomUUID());
 	const services = allServices(config);
 	const buses: NatsBus[] = [];
@@ -91,11 +114,18 @@ export async function runOverNats(
 	const [runnerBus, ...serviceBuses] = buses;
 	if (!runnerBus) throw new Error("runner bus missing");
 
-	const result: RunResult = { eventLog: [], rejected: [] };
-	const received = () => result.eventLog.length;
+	const result: RunResult & { eventLog: Message[] } = {
+		messageCount: 0,
+		rejected: [],
+		eventLog: [],
+	};
+	const received = () => result.messageCount;
 	runnerBus.subscribe(
 		(message): message is Message => true,
-		(message) => result.eventLog.push(message),
+		(message) => {
+			result.messageCount++;
+			result.eventLog.push(message);
+		},
 	);
 	// Every service is subscribed (connect flushes) before any starts, so
 	// dispatch sees every driver.went_online.

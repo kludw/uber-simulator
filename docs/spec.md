@@ -52,7 +52,7 @@ Idle drivers wander: pick a random target cell, drive there, repeat. By default 
 - An offline driver (from `driver.went_offline` until `driver.went_online`) never moves and is never matched (`trip.matched`). Offers to it are allowed (stale view; it declines), and events freeing it (cancel, expiry, decline) don't bring it online.
 - A driver goes offline only with no active trip.
 
-Checked from the event log alone by `checkInvariants` (`src/sim/invariants.ts`), independent of brain code.
+Checked from the event log alone, one message at a time, by `createInvariantChecker` (`checkInvariants` over a whole log; `src/sim/invariants.ts`), independent of brain code.
 
 ## UI (0020)
 
