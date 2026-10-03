@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { RunId } from "../shared/messages.ts";
 import {
 	parseClickHouseConfig,
 	parseServiceConfig,
@@ -17,7 +18,7 @@ describe("parseServiceConfig", () => {
 			ok: true,
 			value: {
 				natsUrl: "nats://localhost:4222",
-				runId: "run-1",
+				runId: RunId.parse("run-1"),
 				seed: 1,
 				speed: 1,
 				clockStartDelayMs: 2000,

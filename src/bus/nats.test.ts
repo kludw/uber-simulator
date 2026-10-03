@@ -7,6 +7,7 @@ import {
 	DriverId,
 	type Message,
 	RiderId,
+	RunId,
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
@@ -23,6 +24,7 @@ const tripId = TripId.parse("t-1");
 const driverId = DriverId.parse("d-7");
 const riderId = RiderId.parse("r-1");
 const cell = Cell.parse({ x: 0, y: 0 });
+const testRunId = RunId.parse("test-run-1");
 
 describe("subjectFor", () => {
 	// Every Message type with its subject per ADR 0028.
@@ -140,7 +142,7 @@ describe("connectNatsBus", () => {
 		// Port 1 is privileged and unused, so the connection is refused.
 		const result = await connectNatsBus({
 			url: "nats://127.0.0.1:1",
-			runId: "test-run-1",
+			runId: testRunId,
 			log: () => {},
 			logStatus: () => {},
 		});
@@ -168,7 +170,7 @@ describe("connectNatsBus", () => {
 
 		const result = await connectNatsBus({
 			url: server.url,
-			runId: "test-run-1",
+			runId: testRunId,
 			log: () => {},
 			logStatus: () => {},
 		});
@@ -299,7 +301,7 @@ async function connectFake(
 ): Promise<NatsBus> {
 	const result = await connectNatsBus({
 		url,
-		runId: "test-run-1",
+		runId: testRunId,
 		log: () => {},
 		logStatus,
 	});
@@ -317,8 +319,7 @@ if (!natsUrl) {
 describe.skipIf(!natsUrl)("NATS bus", () => {
 	// Other runs may share the server: each test uses its own trip IDs and
 	// accepts only those.
-	const runId = crypto.randomUUID();
-	const busRunId = "test-run-1";
+	const tripIdSalt = crypto.randomUUID();
 	const open: NatsBus[] = [];
 
 	afterEach(async () => {
@@ -328,7 +329,7 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 	async function connectBus(log: (dropped: DroppedMessage) => void = () => {}) {
 		const result = await connectNatsBus({
 			url: natsUrl ?? "",
-			runId: busRunId,
+			runId: testRunId,
 			log,
 			logStatus: () => {},
 		});
@@ -338,11 +339,13 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 	}
 
 	function cancelTrip(n: number): CancelTrip {
-		return { type: "cancel_trip", tripId: TripId.parse(`${runId}-${n}`) };
+		return { type: "cancel_trip", tripId: TripId.parse(`${tripIdSalt}-${n}`) };
 	}
 
 	function isOwnCancelTrip(message: Message): message is CancelTrip {
-		return message.type === "cancel_trip" && message.tripId.startsWith(runId);
+		return (
+			message.type === "cancel_trip" && message.tripId.startsWith(tripIdSalt)
+		);
 	}
 
 	async function waitFor(condition: () => boolean): Promise<void> {
@@ -400,7 +403,7 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		const received: (string | undefined)[] = [];
 		const reading = (async () => {
 			for await (const message of subscription) {
-				if (!message.string().includes(runId)) continue;
+				if (!message.string().includes(tripIdSalt)) continue;
 				received.push(message.headers?.get("Run-Id"));
 				if (received.length === 2) break;
 			}
@@ -411,7 +414,7 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		await reading;
 		await raw.close();
 
-		expect(received).toEqual([busRunId, busRunId]);
+		expect(received).toEqual([testRunId, testRunId]);
 	});
 
 	test("closing an already closed bus resolves", async () => {
@@ -451,7 +454,7 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		// A raw connection can publish what the bus never would; one publisher
 		// keeps the valid message last.
 		const raw = await connect({ servers: natsUrl });
-		const subject = `sim.test.${runId}`;
+		const subject = `sim.test.${tripIdSalt}`;
 
 		raw.publish(subject, "{not json");
 		raw.publish(subject, JSON.stringify({ type: "no_such_message" }));

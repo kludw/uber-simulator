@@ -4,7 +4,7 @@ import {
 	type NatsBus,
 	type NatsConnectError,
 } from "../bus/nats.ts";
-import { type Message, Tick } from "../shared/messages.ts";
+import { type Message, RunId, Tick } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
 import {
 	dispatchService,
@@ -52,8 +52,8 @@ export function runInProcess(config: RunConfig): RunResult {
 // stamps one fresh run id (ADR 0029), returned with the result.
 export async function runOverNats(
 	config: RunConfig & { url: string },
-): Promise<Result<RunResult & { runId: string }, NatsConnectError>> {
-	const runId = crypto.randomUUID();
+): Promise<Result<RunResult & { runId: RunId }, NatsConnectError>> {
+	const runId = RunId.parse(crypto.randomUUID());
 	const services = allServices(config);
 	const buses: NatsBus[] = [];
 	// Runner first, so it is subscribed before any service publishes.

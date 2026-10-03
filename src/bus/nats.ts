@@ -6,7 +6,7 @@ import {
 	type NatsConnection,
 	RequestError,
 } from "@nats-io/transport-node";
-import { type Message, parseMessage } from "../shared/messages.ts";
+import { type Message, parseMessage, type RunId } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
 import type { Bus } from "./bus.ts";
 
@@ -42,7 +42,7 @@ export type NatsConnectError = {
 // apart without the run id in any message.
 export async function connectNatsBus(options: {
 	url: string;
-	runId: string;
+	runId: RunId;
 	log: (dropped: DroppedMessage) => void;
 	logStatus: (status: ConnectionStatus) => void;
 }): Promise<Result<NatsBus, NatsConnectError>> {
@@ -50,8 +50,8 @@ export async function connectNatsBus(options: {
 		ok: false,
 		error: { type: "nats_connect_failed", url: options.url, cause },
 	});
-	// Throws on a value no header can carry (CR/LF): config parsing rules
-	// those out, so it's a bug. Before connecting, so it leaks no connection.
+	// Before connecting: RunId's charset makes set() safe, but a throw here
+	// would leak no connection anyway.
 	const runHeaders = headers();
 	runHeaders.set("Run-Id", options.runId);
 	let connection: NatsConnection;
