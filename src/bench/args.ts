@@ -27,13 +27,25 @@ const Args = z
 		matching: z.enum(["greedy", "batched"]),
 		"batch-window": integerArg.pipe(z.int().positive()),
 		shards: integerArg.pipe(z.int().positive()),
+		"max-minutes": z
+			.string()
+			.regex(z.regexes.number, { error: "expected a number" })
+			.transform(Number)
+			.pipe(z.number().positive())
+			.optional(),
 	})
 	.refine((args) => args.drivers % args.shards === 0, {
 		error: "--drivers must split evenly over --shards",
 		path: ["drivers"],
 	});
 
-export function parseBenchArgs(argv: string[]): Result<RunConfig, InvalidArgs> {
+export type BenchArgs = {
+	config: RunConfig;
+	// Wall-time budget for the run; unlimited when undefined.
+	maxMinutes: number | undefined;
+};
+
+export function parseBenchArgs(argv: string[]): Result<BenchArgs, InvalidArgs> {
 	let values: ReturnType<typeof parseArgs>["values"];
 	try {
 		values = parseArgs({
@@ -46,6 +58,8 @@ export function parseBenchArgs(argv: string[]): Result<RunConfig, InvalidArgs> {
 				"batch-window": { type: "string", default: "5" },
 				// Spec shard count (docs/spec.md).
 				shards: { type: "string", default: "2" },
+				// No limit when unset.
+				"max-minutes": { type: "string" },
 			},
 			strict: true,
 		}).values;
@@ -68,21 +82,24 @@ export function parseBenchArgs(argv: string[]): Result<RunConfig, InvalidArgs> {
 	return {
 		ok: true,
 		value: {
-			seed: args.seed,
-			ticks: args.ticks,
-			grid: specGrid,
-			driverShards: {
-				count: args.shards,
-				driversPerShard: args.drivers / args.shards,
+			config: {
+				seed: args.seed,
+				ticks: args.ticks,
+				grid: specGrid,
+				driverShards: {
+					count: args.shards,
+					driversPerShard: args.drivers / args.shards,
+				},
+				// Spec ratio (docs/spec.md): 10 requests/min per 100 drivers.
+				requestsPerMinute: args.drivers / 10,
+				matching:
+					args.matching === "batched"
+						? { type: "batched", windowTicks: args["batch-window"] }
+						: { type: "greedy" },
+				demand: { type: "uniform" },
+				shifts: { type: "always_online" },
 			},
-			// Spec ratio (docs/spec.md): 10 requests/min per 100 drivers.
-			requestsPerMinute: args.drivers / 10,
-			matching:
-				args.matching === "batched"
-					? { type: "batched", windowTicks: args["batch-window"] }
-					: { type: "greedy" },
-			demand: { type: "uniform" },
-			shifts: { type: "always_online" },
+			maxMinutes: args["max-minutes"],
 		},
 	};
 }

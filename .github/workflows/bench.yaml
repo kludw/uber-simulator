@@ -20,7 +20,7 @@ on:
         type: number
         default: 600
       timeout_minutes:
-        description: Minutes before a run is recorded as did not finish (under 100)
+        description: Minutes before a run stops and is recorded as did not finish (under 100, fractions ok)
         type: number
         default: 30
       heap_profile:
@@ -77,22 +77,29 @@ jobs:
           if [ "$HEAP_PROFILE" = "true" ]; then
             profile_flags="$profile_flags --heap-prof-md --heap-prof-dir out/profiles"
           fi
+          # The bench stops itself between ticks at --max-minutes (exit 3, partial
+          # report and profile written); timeout is the backstop for a tick that
+          # never ends, and kills without a profile.
+          backstop=$(awk "BEGIN { print $TIMEOUT_MINUTES + 5 }")
           set +e
-          # bun run bench, called directly so the profile flags and timeout's
-          # signal reach the benchmark process itself.
-          timeout "${TIMEOUT_MINUTES}m" \
+          # bun run bench, called directly so the profile flags reach the
+          # benchmark process itself.
+          timeout "${backstop}m" \
             bun $profile_flags src/bench/main.ts --drivers "$DRIVERS" --ticks "$TICKS" --matching "$MATCHING" \
+              --max-minutes "$TIMEOUT_MINUTES" \
             > out/report.txt 2> out/stderr.txt
           code=$?
           set -e
-          # timeout exits 124 on expiry; the kernel OOM killer sends SIGKILL (137).
+          # 0 and 3: the bench printed its own status line (finished / did not
+          # finish). timeout exits 124 on expiry; the kernel OOM killer sends
+          # SIGKILL (137).
           case $code in
-            0) status="finished" ;;
-            124) status="did not finish in ${TIMEOUT_MINUTES} min" ;;
+            0|3) status="" ;;
+            124|143) status="did not finish in ${backstop} min (killed, no profile)" ;;
             137) status="out of memory (killed)" ;;
             *) status="failed (exit $code)" ;;
           esac
-          echo "status: $status" >> out/report.txt
+          if [ -n "$status" ]; then echo "status: $status" >> out/report.txt; fi
           cat out/machine.txt out/report.txt
           tail -n 20 out/stderr.txt
       - uses: actions/upload-artifact@v7

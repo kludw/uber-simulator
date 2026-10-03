@@ -8,6 +8,7 @@ export type BenchMeasurement = {
 	peakRssBytes: number;
 	heapBytes: number;
 	heapObjects: number;
+	status: { type: "finished" } | { type: "did_not_finish"; maxMinutes: number };
 };
 
 export function benchReport(
@@ -16,9 +17,11 @@ export function benchReport(
 ): string {
 	const { count, driversPerShard } = config.driverShards;
 	const matching = config.matching;
+	const { status } = measurement;
+	const finished = status.type === "finished";
 	return [
 		`seed: ${config.seed}`,
-		`ticks: ${config.ticks}`,
+		`ticks: ${finished ? config.ticks : `${measurement.tickMs.length} of ${config.ticks}`}`,
 		`drivers: ${count * driversPerShard} (${count} shards x ${driversPerShard})`,
 		`requests per minute: ${config.requestsPerMinute}`,
 		`matching: ${matching?.type === "batched" ? `batched (window ${matching.windowTicks} ticks)` : "greedy"}`,
@@ -26,6 +29,7 @@ export function benchReport(
 		`total messages: ${measurement.messages}`,
 		`peak rss: ${mebibytes(measurement.peakRssBytes)} MiB`,
 		`heap at end: ${mebibytes(measurement.heapBytes)} MiB, ${measurement.heapObjects} objects`,
+		`status: ${finished ? "finished" : `did not finish in ${status.maxMinutes} min`}`,
 	].join("\n");
 }
 
