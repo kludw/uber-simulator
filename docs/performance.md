@@ -243,3 +243,36 @@ Shares are grouped by owning `src/` function (see Method), at 50k greedy / 50k b
 5. **Bus** (1.9% / 1.5%): not worth changing.
 
 Upper bounds only: each share is what removing that work entirely would save in a profiled run; the actual saving, and the shares in unprofiled runs, are not measured. Batched p95 is the case closest to the target (972.13 ms unprofiled); there, fixes 1-3 cover 89.9% of profiled CPU.
+
+### Grid index tuning
+
+Dispatch's idle driver index ([#147](https://github.com/kludw/uber-simulator/issues/147), `src/dispatch/idle-drivers.ts`) has two tuning knobs: cells per bucket side and the number of drivers left below which a linear scan replaces the ring search (ADR 0036). Measured 2026-10-04 on a local dev machine (load average ~4), a microbenchmark outside the simulation: index one tick's idle drivers, uniform on the 500 × 500 grid, then take the nearest for uniform pickups; mean of 20 seeds.
+
+| Cells per bucket side | 50k drivers, 100 trips: ms per tick | 1k drivers, 100 trips: ms per tick |
+| ---: | ---: | ---: |
+| 2 | 5.54 | |
+| 4 | 1.69 | 0.277 |
+| 8 | 1.33 | 0.107 |
+| 16 | 1.19 | 0.072 |
+| 32 | 1.30 | 0.070 |
+| 64 | 2.18 | |
+
+| n drivers, n trips (all taken), 16 cells per bucket side | linear scan, ms | ring search, ms |
+| ---: | ---: | ---: |
+| 32 | 0.028 | 0.068 |
+| 64 | 0.080 | 0.088 |
+| 128 | 0.164 | 0.132 |
+| 256 | 0.460 | 0.191 |
+
+Chosen: 16 cells per bucket side (fastest at 50k, close to best at 1k), linear scan below 64 drivers left (the crossover lies between 64 and 128). Either way the result is the same driver; only time changes.
+
+Effect at 50k, local and relative only (`bun run bench -- --drivers 50000 --ticks 300`, master `3e1c221` and the branch alternated, two rounds, load average 3.7-4.5):
+
+| | master mean / p95 (ms) | branch mean / p95 (ms) |
+| --- | ---: | ---: |
+| greedy, round 1 | 78.46 / 111.79 | 17.39 / 20.50 |
+| greedy, round 2 | 75.64 / 92.49 | 18.83 / 24.00 |
+| batched, round 1 | 121.43 / 573.70 | 74.84 / 333.77 |
+| batched, round 2 | 126.23 / 598.24 | 75.85 / 332.80 |
+
+Peak RSS, batched: master 1,549 / 1,581 MiB, branch 2,223 / 1,946 MiB (greedy unchanged, 385-415 MiB). Not attributed; the branch allocates no more per batch tick than master (same cost matrix, no flattened copy), so GC timing is a candidate, unmeasured. CI runs judge the milestone (ADR 0036).

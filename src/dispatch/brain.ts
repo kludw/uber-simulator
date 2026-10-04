@@ -29,6 +29,11 @@ import type {
 	TripRequested,
 } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
+import {
+	type IdleDriver,
+	indexIdleDrivers,
+	takeNearest,
+} from "./idle-drivers.ts";
 import { minCostMatching } from "./matching.ts";
 import {
 	type ArrivalRejected,
@@ -208,15 +213,13 @@ function offerPairs(state: DispatchState, tick: Tick): OfferPair[] {
 		if (trip.offer === null) queued.push(trip);
 		else busy.add(trip.offer.driverId);
 	}
-	const idle = [...state.driverCells.keys()]
-		.toSorted()
-		.filter((id) => !busy.has(id));
+	if (queued.length === 0) return [];
 	switch (state.matching.type) {
 		case "greedy":
-			return greedyPairs(state, queued, idle);
+			return greedyPairs(state, queued, idleDrivers(state, busy));
 		case "batched":
 			if (tick % state.matching.windowTicks !== 0) return [];
-			return batchedPairs(state, queued, idle);
+			return batchedPairs(queued, idleDrivers(state, busy));
 		default: {
 			const unhandled: never = state.matching;
 			throw new Error(`unhandled matching: ${unhandled}`);
@@ -224,57 +227,53 @@ function offerPairs(state: DispatchState, tick: Tick): OfferPair[] {
 	}
 }
 
-// Each trip in turn takes the nearest remaining driver; ties to the lowest ID
-// because idle is ordered by ID and the strict < keeps the first.
+// This tick's snapshot of idle drivers and their cells, ordered by ID
+// (ADR 0036).
+function idleDrivers(
+	state: DispatchState,
+	busy: ReadonlySet<DriverId>,
+): IdleDriver[] {
+	const idle: IdleDriver[] = [];
+	for (const [driverId, cell] of state.driverCells) {
+		if (!busy.has(driverId)) idle.push({ driverId, cell });
+	}
+	return idle.sort((a, b) => (a.driverId < b.driverId ? -1 : 1));
+}
+
+// Each trip in turn takes the nearest remaining driver, ties to the lowest ID.
 function greedyPairs(
 	state: DispatchState,
 	queued: readonly QueuedTrip[],
-	idle: readonly DriverId[],
+	idle: readonly IdleDriver[],
 ): OfferPair[] {
+	const index = indexIdleDrivers(state.grid, idle);
 	const pairs: OfferPair[] = [];
-	const taken = new Set<DriverId>();
 	for (const trip of queued) {
-		let nearest: { driverId: DriverId; distance: number } | undefined;
-		for (const driverId of idle) {
-			if (taken.has(driverId) || trip.excludedDrivers.has(driverId)) continue;
-			const toPickup = distance(cellOf(state, driverId), trip.pickup);
-			if (nearest !== undefined && toPickup >= nearest.distance) continue;
-			nearest = { driverId, distance: toPickup };
-		}
-		if (nearest === undefined) continue;
-		taken.add(nearest.driverId);
-		pairs.push({ trip, driverId: nearest.driverId });
+		const driverId = takeNearest(index, trip.pickup, trip.excludedDrivers);
+		if (driverId === undefined) continue;
+		pairs.push({ trip, driverId });
 	}
 	return pairs;
 }
 
 // ADR 0030: as many pairs as possible, least total pickup distance among those.
 function batchedPairs(
-	state: DispatchState,
 	queued: readonly QueuedTrip[],
-	idle: readonly DriverId[],
+	idle: readonly IdleDriver[],
 ): OfferPair[] {
 	const costs = queued.map((trip) =>
-		idle.map((driverId) =>
-			trip.excludedDrivers.has(driverId)
-				? null
-				: distance(cellOf(state, driverId), trip.pickup),
+		idle.map(({ driverId, cell }) =>
+			trip.excludedDrivers.has(driverId) ? null : distance(cell, trip.pickup),
 		),
 	);
 	return minCostMatching(costs).map(({ row, column }) => {
 		const trip = queued[row];
-		const driverId = idle[column];
-		if (trip === undefined || driverId === undefined) {
+		const driver = idle[column];
+		if (trip === undefined || driver === undefined) {
 			throw new Error(`matching pair (${row}, ${column}) out of range`);
 		}
-		return { trip, driverId };
+		return { trip, driverId: driver.driverId };
 	});
-}
-
-function cellOf(state: DispatchState, driverId: DriverId): Cell {
-	const cell = state.driverCells.get(driverId);
-	if (cell === undefined) throw new Error(`no cell for ${driverId}`);
-	return cell;
 }
 
 function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
