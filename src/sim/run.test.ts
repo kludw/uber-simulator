@@ -5,7 +5,7 @@ import type { Matching } from "../dispatch/brain.ts";
 import { cityDemand } from "../rider/demand.ts";
 import { Cell, distance } from "../shared/grid.ts";
 import type { Message } from "../shared/messages.ts";
-import { shiftsNamed } from "./config.ts";
+import { preferencesNamed, shiftsNamed } from "./config.ts";
 import { checkInvariants } from "./invariants.ts";
 import {
 	type RunConfig,
@@ -176,6 +176,53 @@ describe("runInProcess", () => {
 				wentOffline: firstOffline !== undefined,
 				backOnline,
 			}).toEqual({ violations: [], wentOffline: true, backOnline: true });
+		},
+		30_000,
+	);
+
+	// ADR 0035: drivers with accept_all decline only while on another trip,
+	// so a decline from a driver with no active trip is a preference.
+	test.each<[string, Matching]>([
+		["greedy", { type: "greedy" }],
+		["batched", { type: "batched", windowTicks: 5 }],
+	])(
+		"a 3600-tick %s run with picky drivers breaks no invariant and idle drivers decline offers",
+		(_, matching) => {
+			const grid = { width: 500, height: 500 };
+			const { eventLog } = runInProcess({
+				keepEventLog: true,
+				seed: 1,
+				ticks: 3600,
+				grid,
+				driverShards: { count: 2, driversPerShard: 50 },
+				requestsPerMinute: 10,
+				matching,
+				preferences: preferencesNamed("picky"),
+			});
+
+			const activeTripByDriver = new Map<string, string>();
+			let idleDeclines = 0;
+			for (const message of eventLog) {
+				switch (message.type) {
+					case "trip.matched":
+						activeTripByDriver.set(message.driverId, message.tripId);
+						break;
+					case "trip.completed":
+					case "trip.cancelled":
+						for (const [driverId, tripId] of activeTripByDriver) {
+							if (tripId === message.tripId)
+								activeTripByDriver.delete(driverId);
+						}
+						break;
+					case "trip.offer_declined":
+						if (!activeTripByDriver.has(message.driverId)) idleDeclines++;
+						break;
+				}
+			}
+			expect({
+				violations: checkInvariants(eventLog, grid),
+				idleDeclines: idleDeclines > 0,
+			}).toEqual({ violations: [], idleDeclines: true });
 		},
 		30_000,
 	);

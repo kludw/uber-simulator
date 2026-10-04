@@ -3,7 +3,14 @@ import { parseArgs } from "node:util";
 import * as z from "zod";
 import { specGrid } from "../shared/grid.ts";
 import type { Result } from "../shared/result.ts";
-import { DemandName, demandNamed, ShiftsName, shiftsNamed } from "./config.ts";
+import {
+	DemandName,
+	demandNamed,
+	PreferencesName,
+	preferencesNamed,
+	ShiftsName,
+	shiftsNamed,
+} from "./config.ts";
 import type { RunConfig } from "./run.ts";
 
 export type SimArgs = {
@@ -17,6 +24,8 @@ export type SimArgs = {
 	demandName: z.infer<typeof DemandName>;
 	// For the printed summary; config.shifts is the model it names.
 	shiftsName: z.infer<typeof ShiftsName>;
+	// For the printed summary; config.preferences is the model it names.
+	preferencesName: z.infer<typeof PreferencesName>;
 	config: Omit<RunConfig, "matching">;
 };
 
@@ -44,6 +53,7 @@ const Args = z
 		compare: z.boolean(),
 		demand: DemandName,
 		shifts: ShiftsName,
+		preferences: PreferencesName,
 		"requests-per-minute": integerArg.pipe(z.int().min(0)),
 		"drivers-per-shard": integerArg.pipe(z.int().positive()),
 	})
@@ -68,6 +78,7 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 				// Spec defaults (docs/spec.md).
 				demand: { type: "string", default: "uniform" },
 				shifts: { type: "string", default: "off" },
+				preferences: { type: "string", default: "off" },
 				"requests-per-minute": { type: "string", default: "10" },
 				"drivers-per-shard": { type: "string", default: "50" },
 			},
@@ -98,6 +109,7 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 			windowTicks: args["batch-window"],
 			demandName: args.demand,
 			shiftsName: args.shifts,
+			preferencesName: args.preferences,
 			config: {
 				seed: args.seed,
 				ticks: args.ticks,
@@ -107,6 +119,7 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 				requestsPerMinute: args["requests-per-minute"],
 				demand: demandNamed(args.demand),
 				shifts: shiftsNamed(args.shifts),
+				preferences: preferencesNamed(args.preferences),
 			},
 		},
 	};

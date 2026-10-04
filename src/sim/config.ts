@@ -1,5 +1,5 @@
 import * as z from "zod";
-import type { Shifts } from "../driver/brain.ts";
+import type { Preferences, Shifts } from "../driver/brain.ts";
 import type { ClickHouseConfig } from "../persistence/clickhouse.ts";
 import { cityDemand, type Demand } from "../rider/demand.ts";
 import { specGrid } from "../shared/grid.ts";
@@ -55,6 +55,28 @@ export function shiftsNamed(name: z.infer<typeof ShiftsName>): Shifts {
 	return name === "on" ? shiftPreset : { type: "always_online" };
 }
 
+// Preference models selectable by name, from env (PREFERENCES) or the CLI
+// (--preferences).
+export const PreferencesName = z.enum(["off", "picky"]);
+
+// The one picky preset (ADR 0035). At spec scale (100 drivers on 500 x 500
+// cells) a driver has about 2500 cells to itself, a Manhattan radius of
+// about 35 cells, so the nearest idle driver is typically tens of cells
+// away: max pickup 20-80 cells (200-800 m) makes distance declines common
+// but leaves most drivers willing nearby. 10% other declines stay visible
+// without dominating.
+const pickyPreset: Preferences = {
+	type: "picky",
+	maxPickupDistance: { min: 20, max: 80 },
+	declineShare: 0.1,
+};
+
+export function preferencesNamed(
+	name: z.infer<typeof PreferencesName>,
+): Preferences {
+	return name === "picky" ? pickyPreset : { type: "accept_all" };
+}
+
 const Env = z.object({
 	NATS_URL: z.url(),
 	RUN_ID: RunId,
@@ -85,6 +107,8 @@ const Env = z.object({
 	DEMAND: DemandName.default("uniform"),
 	// Driver shards only (ADR 0032).
 	SHIFTS: ShiftsName.default("off"),
+	// Driver shards only (ADR 0035).
+	PREFERENCES: PreferencesName.default("off"),
 });
 
 export function parseServiceConfig(
@@ -113,6 +137,7 @@ export function parseServiceConfig(
 					: { type: "greedy" },
 			demand: demandNamed(vars.DEMAND),
 			shifts: shiftsNamed(vars.SHIFTS),
+			preferences: preferencesNamed(vars.PREFERENCES),
 		},
 	};
 }

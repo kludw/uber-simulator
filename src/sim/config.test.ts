@@ -30,7 +30,40 @@ describe("parseServiceConfig", () => {
 				matching: { type: "greedy" },
 				demand: { type: "uniform" },
 				shifts: { type: "always_online" },
+				preferences: { type: "accept_all" },
 			},
+		});
+	});
+
+	test("PREFERENCES=picky runs drivers on the picky preset", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			PREFERENCES: "picky",
+		});
+
+		expect(parsed).toMatchObject({
+			ok: true,
+			value: {
+				preferences: {
+					type: "picky",
+					maxPickupDistance: { min: 20, max: 80 },
+					declineShare: 0.1,
+				},
+			},
+		});
+	});
+
+	test("names an unknown PREFERENCES", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			PREFERENCES: "on",
+		});
+
+		expect(parsed).toMatchObject({
+			ok: false,
+			error: { type: "invalid_config", issues: [{ variable: "PREFERENCES" }] },
 		});
 	});
 

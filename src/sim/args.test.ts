@@ -13,6 +13,7 @@ describe("parseSimArgs", () => {
 				windowTicks: 5,
 				demandName: "uniform",
 				shiftsName: "off",
+				preferencesName: "off",
 				config: {
 					seed: 1,
 					ticks: 3600,
@@ -21,6 +22,24 @@ describe("parseSimArgs", () => {
 					requestsPerMinute: 10,
 					demand: { type: "uniform" },
 					shifts: { type: "always_online" },
+					preferences: { type: "accept_all" },
+				},
+			},
+		});
+	});
+
+	// One preset (ADR 0035): max pickup 20-80 cells (200-800 m), 10% other declines.
+	test("--preferences picky runs drivers on the picky preset", () => {
+		expect(parseSimArgs(["--preferences", "picky"])).toMatchObject({
+			ok: true,
+			value: {
+				preferencesName: "picky",
+				config: {
+					preferences: {
+						type: "picky",
+						maxPickupDistance: { min: 20, max: 80 },
+						declineShare: 0.1,
+					},
 				},
 			},
 		});
@@ -70,6 +89,7 @@ describe("parseSimArgs", () => {
 	test.each([
 		[["--demand", "rush_hour"]],
 		[["--shifts", "yes"]],
+		[["--preferences", "on"]],
 		[["--requests-per-minute", "-1"]],
 		[["--requests-per-minute", "ten"]],
 		[["--drivers-per-shard", "0"]],
