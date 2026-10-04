@@ -19,6 +19,7 @@ const defaultSearch: IdleDriverSearch = {
 // One tick's idle drivers, owned by the caller for that tick: takeNearest
 // removes the driver it returns.
 export type IdleDriverIndex = {
+	grid: Grid;
 	search: IdleDriverSearch;
 	drivers: readonly IdleDriver[];
 	taken: Set<DriverId>;
@@ -41,6 +42,7 @@ export function indexIdleDrivers(
 		(): IdleDriver[] => [],
 	);
 	const index = {
+		grid,
 		search,
 		drivers,
 		taken: new Set<DriverId>(),
@@ -73,8 +75,12 @@ export function takeNearest(
 	excluded: ReadonlySet<DriverId>,
 ): DriverId | undefined {
 	const remaining = index.drivers.length - index.taken.size;
+	// The ring bound holds for in-grid pickups only (see bucketOf); a pickup
+	// off the grid is bad input, so take the scan, exact by construction.
+	const pickupOffGrid =
+		pickup.x >= index.grid.width || pickup.y >= index.grid.height;
 	const nearest =
-		remaining < index.search.linearScanBelow
+		pickupOffGrid || remaining < index.search.linearScanBelow
 			? scanAll(index, pickup, excluded)
 			: searchRings(index, pickup, excluded);
 	if (nearest === undefined) return undefined;

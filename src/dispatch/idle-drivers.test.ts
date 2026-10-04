@@ -111,26 +111,26 @@ describe("takeNearest grid search", () => {
 	});
 
 	test("takes exactly what a linear scan takes", () => {
-		expectLinearScanPicks({ seed: 147, driversOffGrid: false });
+		expectLinearScanPicks(147, { drivers: false, pickups: false });
 	});
 
 	// Cells come from other services' messages; grid bounds are an invariant
 	// checked over the event log, not by dispatch.
 	test("takes exactly what a linear scan takes with drivers off the grid", () => {
-		expectLinearScanPicks({ seed: 151, driversOffGrid: true });
+		expectLinearScanPicks(151, { drivers: true, pickups: false });
+	});
+
+	test("takes exactly what a linear scan takes with pickups and drivers off the grid", () => {
+		expectLinearScanPicks(152, { drivers: true, pickups: true });
 	});
 });
 
-function expectLinearScanPicks(options: {
-	seed: number;
-	driversOffGrid: boolean;
-}): void {
-	const random = createRandom(options.seed);
+type OffGrid = { drivers: boolean; pickups: boolean };
+
+function expectLinearScanPicks(seed: number, offGrid: OffGrid): void {
+	const random = createRandom(seed);
 	for (let run = 0; run < 3000; run++) {
-		const { scenario, expected } = randomScenario(
-			random,
-			options.driversOffGrid,
-		);
+		const { scenario, expected } = randomScenario(random, offGrid);
 		const index = indexIdleDrivers(scenario.grid, scenario.drivers, {
 			cellsPerBucket: random.int(1, 6),
 			linearScanBelow: random.int(0, 1) === 0 ? 0 : random.int(0, 20),
@@ -152,20 +152,23 @@ type Scenario = {
 
 // Small grids and few cells per driver so ties and shared cells are common;
 // IDs with mixed digit counts so string order differs from numeric order.
-// Off the grid: about a quarter of drivers up to 20 cells past its far edges.
+// Off the grid: about a quarter of drivers (pickups) up to 20 cells past its
+// far edges.
 function randomScenario(
 	random: Random,
-	driversOffGrid: boolean,
+	offGrid: OffGrid,
 ): {
 	scenario: Scenario;
 	expected: (DriverId | undefined)[];
 } {
 	const scenarioGrid = { width: random.int(1, 25), height: random.int(1, 25) };
-	const randomCell = (): Cell =>
-		({
-			x: random.int(0, scenarioGrid.width - 1),
-			y: random.int(0, scenarioGrid.height - 1),
-		}) as Cell;
+	const randomCell = (maybeOffGrid: boolean): Cell => {
+		const past = maybeOffGrid && random.int(0, 3) === 0 ? 20 : 0;
+		return {
+			x: random.int(0, scenarioGrid.width - 1 + past),
+			y: random.int(0, scenarioGrid.height - 1 + past),
+		} as Cell;
+	};
 	const ids = new Set<DriverId>();
 	const driverCount = random.int(0, 60);
 	while (ids.size < driverCount) {
@@ -173,16 +176,10 @@ function randomScenario(
 	}
 	const drivers = [...ids].toSorted().map((driverId) => ({
 		driverId,
-		cell:
-			driversOffGrid && random.int(0, 3) === 0
-				? ({
-						x: random.int(0, scenarioGrid.width + 19),
-						y: random.int(0, scenarioGrid.height + 19),
-					} as Cell)
-				: randomCell(),
+		cell: randomCell(offGrid.drivers),
 	}));
 	const trips = Array.from({ length: random.int(1, 30) }, () => ({
-		pickup: randomCell(),
+		pickup: randomCell(offGrid.pickups),
 		excluded: new Set(
 			drivers
 				.filter(() => random.int(0, 9) === 0)
