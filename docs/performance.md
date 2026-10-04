@@ -526,3 +526,34 @@ Every run that printed a report finished 600 of 600 ticks with 0 slow consumers.
 Against the in-process run ([After milestone 12](#after-milestone-12)): greedy reliably keeps real time at 50k there, so the live limit is now 2× below it, down from 5×. Settle is end-to-end over NATS across six processes on 4 CPUs, so this gap can't be attributed without CPU time per service.
 
 Next (proposal, no ADR): settle and the persister now fail one step apart (27.5k and 30k), both sensitive to runner speed. Recording CPU time per service in the load test report and CPU model in the runner note would show which service sets settle and whether the 4 CPUs are saturated; if the services' NATS decode dominates, ADR 0028's per-service subject subscriptions are the candidate fix named in [Against the in-process ceiling](#against-the-in-process-ceiling).
+
+## CPU time per service
+
+Which service's CPU settles the live limit, [#177](https://github.com/kludw/uber-simulator/issues/177). The load test report now gives each service's user + system CPU seconds (`resourceUsage().cpuTime`, microseconds, checked on Linux in `oven/bun:1.4.2`: a 2 s busy loop reads 2,001,611 µs user) with their share of the service's wall time (spawn to exit), and the host's CPU model. Measured 2026-10-04 on branch `177-loadtest-cpu` (master `96de468` plus the report change).
+
+### Method
+
+- `loadtest` workflow as in [After milestone 14](#after-milestone-14): greedy, 2 driver shards, 600 ticks, drain bound 5 min, one `ubuntu-latest` runner (4 CPUs, 15,989 MiB) per case.
+- Runs [37241329813](https://github.com/kludw/uber-simulator/actions/runs/37241329813) and [37241331711](https://github.com/kludw/uber-simulator/actions/runs/37241331711), each greedy 25k and 27.5k.
+- CPU per tick and per event: a service's CPU over 600 ticks or over the run's events of ticks 1..600; both include startup and, for the persister, the drain (2-3 s).
+- The clock's brain publishes one message per tick, but its bus subscribes to `sim.>` like every service (ADR 0028), so its CPU is close to the cost of receiving and decoding all traffic alone.
+
+### Results
+
+CPU seconds, user + system (share of the service's wall time):
+
+| Drivers | Run | CPU model | Settle p95 ms | Persister | Dispatch | Riders | Shard 0 | Shard 1 | Clock | Total (µs per event) |
+| ---: | --- | --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| 25,000 | [37241329813](https://github.com/kludw/uber-simulator/actions/runs/37241329813) | AMD EPYC 7763 | 551.6 | 291.8 (48%) | 123.5 (20%) | 104.9 (17%) | 128.0 (21%) | 126.0 (21%) | 99.9 (17%) | 874.1 (57.7) |
+| 25,000 | [37241331711](https://github.com/kludw/uber-simulator/actions/runs/37241331711) | AMD EPYC 7763 | 557.0 | 296.5 (49%) | 126.3 (21%) | 105.9 (18%) | 130.1 (22%) | 129.1 (21%) | 100.5 (17%) | 888.4 (58.7) |
+| 27,500 | [37241329813](https://github.com/kludw/uber-simulator/actions/runs/37241329813) | AMD EPYC 9V74 | 432.0 | 267.2 (44%) | 106.1 (18%) | 88.1 (15%) | 108.5 (18%) | 107.1 (18%) | 83.3 (14%) | 760.3 (45.6) |
+| 27,500 | [37241331711](https://github.com/kludw/uber-simulator/actions/runs/37241331711) | AMD EPYC 9V74 | 420.0 | 264.0 (44%) | 105.4 (17%) | 85.6 (14%) | 106.4 (18%) | 104.8 (17%) | 81.2 (14%) | 747.4 (44.9) |
+
+All four runs pass every criterion: 600 of 600 ticks, 0 overruns, 0 slow consumers, backlog within its bound, drain 2.0-3.1 s.
+
+- **No core is saturated on average.** The stack uses 1.25-1.48 of 4 cores (total CPU over 600 s); the busiest service, the persister, 44-49% of one. Every other service: 14-22%. These are run averages: they don't show per-tick bursts, and NATS server and the observer aren't counted.
+- **Receiving and decoding all `sim.>` traffic is most of each service's CPU.** The clock, which does little else, uses 81-100 s (135-168 ms per tick, 4.9-6.6 µs per event). That is 76-81% of dispatch's and each shard's CPU and 95% of the riders'. Five services each pay it: 5× the clock's CPU is 84-86% of all non-persister CPU and 54-57% of the stack's. Brain work (dispatch, shards over the clock) is 23-30 s per service per run.
+- **Which service sets settle: not shown.** Dispatch and the shards each spend 175-217 ms CPU per tick, of which about 135-168 ms is the decode floor; settle p95 (420-557 ms) can span several hops (clock -> shards -> dispatch -> shards), each queued behind its service's decode of the tick's traffic. CPU totals can't tell which hop is longest.
+- **The CPU model splits the runners.** Both 25k runs landed on EPYC 7763 and both 27.5k runs on EPYC 9V74, so fleet size and CPU model are confounded here: the 9V74 runs used 21-24% less CPU per event (45-46 vs 58-59 µs) and settled faster at the larger fleet (p95 420-432 vs 552-557 ms), but that alone doesn't separate the model's effect from the fleet's. What carries the attribution to the CPU model is the persister's decode per 10,000-event round, the same work at any fleet size: 109 ms on the 7763 (the slow group in [After milestone 14](#after-milestone-14)), 85-87 ms on the 9V74. So the two 27.5k passes here, after two fails in [After milestone 14](#after-milestone-14), don't change the live limit (greedy 25k): 27.5k passes on the faster CPU.
+
+Next (proposal, no ADR): the decode floor is paid once per service, five times over, and is most of each service's CPU, so ADR 0028's per-service subject subscriptions (each service receives only what its brain consumes; the clock nothing) is the candidate to raise settle's limit. It needs an ADR superseding 0028's `sim.>` subscription. Before that, a per-tick timing of decode vs brain in dispatch and the shards (like the persister's `rounds_timed`) would show whether decode sits on settle's critical path, which these totals can't.
