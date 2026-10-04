@@ -419,7 +419,7 @@ Not stable. ADR 0037 compares the mean pending count of the second half of the s
 
 The drain criterion can't replace it: at 13k-15k the persister fell behind by 2,260-2,301 events/s and still drained in 98-103 s, inside the 5 min bound.
 
-Proposed follow-up, an ADR superseding ADR 0037's trend criterion (not written here): judge the backlog in ticks of events, e.g. max pending over the second half ≤ 2 × events per tick (the persister never more than about 2 s behind), and/or sample pending at a fixed phase after `clock.ticked`. On these runs that criterion passes every run with a slope of -8 to 36 events/s and fails every run with a slope of 337 or more; the live limits above use it.
+Follow-up: [ADR 0038](adr/0038-persister-backlog-criterion.md) replaces the trend criterion with a backlog bound in ticks of events. The live limits above were judged with a 2-tick version on `num_pending` alone (max over the second half ≤ 2 × events per tick); that criterion passes every run with a slope of -8 to 36 events/s and fails every run with a slope of 337 or more. ADR 0038 adopts 3 ticks of `num_pending + num_ack_pending`, under which the same runs pass and fail.
 
 ### Against the in-process ceiling
 

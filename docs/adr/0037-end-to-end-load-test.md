@@ -1,6 +1,6 @@
 # 0037. End-to-end load test: the distributed stack at real time
 
-- Status: Accepted
+- Status: Accepted (persister trend criterion superseded by 0038)
 - Date: 2026-10-04
 
 ## Context
