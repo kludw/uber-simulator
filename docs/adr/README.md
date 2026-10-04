@@ -38,3 +38,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0032 | [Driver shifts](0032-driver-shifts.md)                                  | Accepted |
 | 0033 | [Scale fixes](0033-scale-fixes.md)                                      | Accepted |
 | 0034 | [Replay](0034-replay.md)                                                | Accepted |
+| 0035 | [Driver preferences](0035-driver-preferences.md)                        | Accepted |
