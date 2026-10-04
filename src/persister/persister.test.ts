@@ -274,7 +274,9 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 				nats: nc,
 				clickhouse: failingOnce,
 				source,
-				log: (entry) => logged.push(entry.type),
+				log: (entry) => {
+					if (entry.type !== "rounds_timed") logged.push(entry.type);
+				},
 			}),
 		);
 
@@ -309,7 +311,7 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 				clickhouse: alwaysFailing,
 				source,
 				log: (entry) => {
-					logged.push(entry.type);
+					if (entry.type !== "rounds_timed") logged.push(entry.type);
 					if (entry.type === "batch_not_persisted") giveUp();
 				},
 				retryDelaysMs: [0, 0],
@@ -332,6 +334,63 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 			],
 			unacked: 1,
 		});
+	}, 20_000);
+
+	test("logs rounds, events, and per-phase ms every 10 s and on stop", async () => {
+		const source = testSource();
+		const nc = await natsConnection();
+		// Controlled time: only inserts take any, 6 s each.
+		let nowMs = 0;
+		const slowInsert: Pick<ClickHouse, "insertEvents" | "command"> = {
+			command: clickhouse.command,
+			insertEvents() {
+				nowMs += 6000;
+				return Promise.resolve({ ok: true, value: undefined });
+			},
+		};
+		const timed: unknown[] = [];
+		const persister = await succeeded(
+			startPersister({
+				nats: nc,
+				clickhouse: slowInsert,
+				source,
+				log: (entry) => {
+					if (entry.type === "rounds_timed") timed.push(entry);
+				},
+				now: () => nowMs,
+			}),
+		);
+
+		// One event per round: each is persisted before the next is published.
+		for (let tick = 1; tick <= 3; tick++) {
+			publish(nc, source, { type: "clock.ticked", tick }, "run-e");
+			await drained(nc, source);
+		}
+		persister.stop();
+		await persister.stopped;
+
+		expect(timed).toEqual([
+			{
+				type: "rounds_timed",
+				intervalMs: 12_000,
+				rounds: 2,
+				events: 2,
+				fetchMs: 0,
+				decodeMs: 0,
+				insertMs: 12_000,
+				ackMs: 0,
+			},
+			{
+				type: "rounds_timed",
+				intervalMs: 6000,
+				rounds: 1,
+				events: 1,
+				fetchMs: 0,
+				decodeMs: 0,
+				insertMs: 6000,
+				ackMs: 0,
+			},
+		]);
 	}, 20_000);
 });
 

@@ -57,6 +57,8 @@ const batchWaitMs = 1000;
 // still failing stays unacked: JetStream redelivers it after the ack wait, so
 // the retry continues there.
 const defaultRetryDelaysMs = [1000, 2000, 4000, 8000];
+// How often the persister logs where its round time went (`rounds_timed`).
+const timingIntervalMs = 10_000;
 
 const unknownRunId = RunId.parse("unknown");
 
@@ -75,7 +77,22 @@ export type PersisterLogEntry =
 			rows: number;
 			error: ClickHouseError;
 	  }
-	| { type: "batch_not_persisted"; firstSeq: number; lastSeq: number };
+	| { type: "batch_not_persisted"; firstSeq: number; lastSeq: number }
+	// Every 10 s and on stop: rounds (fetches that returned messages) since
+	// the last entry, events inserted and acked, and ms spent in each phase of
+	// those rounds, rounded. Fetches that returned nothing are idle time, left
+	// out; intervalMs minus the phases is idle time plus that bookkeeping.
+	// insertMs includes failed attempts and the waits between them.
+	| ({ type: "rounds_timed"; intervalMs: number } & RoundsTiming);
+
+type RoundsTiming = {
+	rounds: number;
+	events: number;
+	fetchMs: number;
+	decodeMs: number;
+	insertMs: number;
+	ackMs: number;
+};
 
 export type PersisterError =
 	| MigrationFailed
@@ -100,6 +117,8 @@ export async function startPersister(options: {
 	log: (entry: PersisterLogEntry) => void;
 	// Tests shorten the waits.
 	retryDelaysMs?: number[];
+	// Milliseconds, for timing rounds only. Tests control it.
+	now?: () => number;
 }): Promise<Result<Persister, PersisterError>> {
 	const migrated = await migrate(options.clickhouse);
 	if (!migrated.ok) return migrated;
@@ -109,9 +128,27 @@ export async function startPersister(options: {
 	} catch (cause) {
 		return { ok: false, error: { type: "jetstream_setup_failed", cause } };
 	}
+	const now = options.now ?? (() => performance.now());
 	const stop = new AbortController();
 	const stopped = (async (): Promise<Result<void, PersisterError>> => {
+		let intervalStart = now();
+		let timing = noRounds();
+		const logTiming = (at: number) => {
+			options.log({
+				type: "rounds_timed",
+				intervalMs: Math.round(at - intervalStart),
+				rounds: timing.rounds,
+				events: timing.events,
+				fetchMs: Math.round(timing.fetchMs),
+				decodeMs: Math.round(timing.decodeMs),
+				insertMs: Math.round(timing.insertMs),
+				ackMs: Math.round(timing.ackMs),
+			});
+			intervalStart = at;
+			timing = noRounds();
+		};
 		while (!stop.signal.aborted) {
+			const fetchStart = now();
 			let batch: JsMsg[];
 			try {
 				batch = await Array.fromAsync(
@@ -123,15 +160,28 @@ export async function startPersister(options: {
 			} catch (cause) {
 				return { ok: false, error: { type: "fetch_failed", cause } };
 			}
-			await persist(
-				batch,
-				{
-					...options,
-					retryDelaysMs: options.retryDelaysMs ?? defaultRetryDelaysMs,
-				},
-				stop.signal,
-			);
+			if (batch.length > 0) {
+				const fetchMs = now() - fetchStart;
+				const round = await persist(
+					batch,
+					{
+						...options,
+						retryDelaysMs: options.retryDelaysMs ?? defaultRetryDelaysMs,
+						now,
+					},
+					stop.signal,
+				);
+				timing.rounds += 1;
+				timing.events += round.events;
+				timing.fetchMs += fetchMs;
+				timing.decodeMs += round.decodeMs;
+				timing.insertMs += round.insertMs;
+				timing.ackMs += round.ackMs;
+			}
+			const at = now();
+			if (at - intervalStart >= timingIntervalMs) logTiming(at);
 		}
+		logTiming(now());
 		return { ok: true, value: undefined };
 	})();
 	return { ok: true, value: { stop: () => stop.abort(), stopped } };
@@ -167,15 +217,29 @@ async function ensureConsumer(
 	return jetstream(nats).consumers.get(source.stream, source.consumer);
 }
 
+function noRounds(): RoundsTiming {
+	return {
+		rounds: 0,
+		events: 0,
+		fetchMs: 0,
+		decodeMs: 0,
+		insertMs: 0,
+		ackMs: 0,
+	};
+}
+
+// One round after its fetch: decode, insert (with retries), ack.
 async function persist(
 	batch: JsMsg[],
 	options: {
 		clickhouse: Pick<ClickHouse, "insertEvents">;
 		log: (entry: PersisterLogEntry) => void;
 		retryDelaysMs: number[];
+		now: () => number;
 	},
 	stopping: AbortSignal,
-): Promise<void> {
+): Promise<Omit<RoundsTiming, "rounds" | "fetchMs">> {
+	const decodeStart = options.now();
 	const ingestedAt = new Date();
 	const delivered: { message: JsMsg; row: EventRow }[] = [];
 	for (const message of batch) {
@@ -197,13 +261,23 @@ async function persist(
 		});
 		delivered.push({ message, row });
 	}
-	if (delivered.length === 0) return;
 	const rows = delivered.map(({ row }) => row);
+	const insertStart = options.now();
+	const decodeMs = insertStart - decodeStart;
+	if (delivered.length === 0) {
+		return { events: 0, decodeMs, insertMs: 0, ackMs: 0 };
+	}
 	for (let attempt = 1; ; attempt++) {
 		const inserted = await options.clickhouse.insertEvents(rows);
 		if (inserted.ok) {
+			const ackStart = options.now();
 			for (const { message } of delivered) message.ack();
-			return;
+			return {
+				events: rows.length,
+				decodeMs,
+				insertMs: ackStart - insertStart,
+				ackMs: options.now() - ackStart,
+			};
 		}
 		options.log({
 			type: "insert_failed",
@@ -220,6 +294,12 @@ async function persist(
 		firstSeq: rows[0]?.streamSeq ?? 0,
 		lastSeq: rows.at(-1)?.streamSeq ?? 0,
 	});
+	return {
+		events: 0,
+		decodeMs,
+		insertMs: options.now() - insertStart,
+		ackMs: 0,
+	};
 }
 
 function decode(
