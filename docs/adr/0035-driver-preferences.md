@@ -15,12 +15,12 @@ We will:
 - In picky mode each driver gets a maximum pickup distance (cells, Manhattan) drawn once at start, uniform in `[min, max]`, from the child stream `preference:<driverId>`. An idle driver declines an offer whose pickup is farther than its maximum from its current cell; otherwise it declines with probability `declineShare`, drawn from `offer:<tripId>:<driverId>` (one stream per offer, so the outcome doesn't depend on the order offers arrive in). A declined offer is an ordinary `offer_declined`.
 - Take no preference streams in `accept_all` mode, so default runs stay byte-identical.
 - Define one `picky` preset next to the other presets; select it with `--preferences off|picky` on `bun run sim` / `--compare` and `PREFERENCES` for driver services.
-- Validate config with Zod at the edge; a brain receiving an invalid config throws (`min > max`, negative distances, `declineShare` outside [0, 1]).
+- Validate config with Zod at the edge; a brain receiving an invalid config throws (`min > max`, negative or non-integer distances, `declineShare` outside [0, 1]).
 
 ## Rationale
 
 - Distance limits are the dominant real reason to decline and interact directly with matching: batched matching (ADR 0030) minimizes pickup distance, so it should suffer fewer distance declines than greedy. That makes the comparison informative.
-- A per-offer stream keeps a driver's decision a pure function of seed, driver, and trip, independent of offer timing.
+- A per-offer stream makes the random decline a pure function of seed, driver, and trip, independent of offer timing; the distance check depends on the driver's cell when the offer arrives (its own state), so it stays deterministic per input sequence.
 - Dispatch stays unaware of preferences: drivers own their decisions (ADR 0017), and the existing decline path already retries other drivers.
 
 ## Alternatives considered
@@ -31,5 +31,5 @@ We will:
 
 ## Consequences
 
-- With picky drivers, trips can be declined repeatedly and wait longer or be cancelled; `--compare` shows how greedy vs batched cope.
+- With picky drivers, trips can be declined repeatedly and wait longer or be cancelled; no livelock: each decline excludes that driver for the trip, so a trip runs out of candidates within at most one offer per driver and then waits until rider patience cancels it. In batched mode a declined pair costs the driver a whole window (`windowTicks`), a counter-force to batched's shorter pickups; `--compare` shows the net effect.
 - Repeated declines grow each trip's excluded-driver set (ADR 0018); a driver who declined a trip is never offered it again.
