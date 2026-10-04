@@ -370,7 +370,7 @@ All single 300-tick runs. "finished" means all 300 ticks ran, not that the run k
 
 ## Live limits
 
-The distributed stack at real time (`bun run loadtest`, [ADR 0037](adr/0037-end-to-end-load-test.md)): every service its own process over NATS, the persister writing to ClickHouse via JetStream. Measured 2026-10-04 at `47d91a0` (master after [#160](https://github.com/kludw/uber-simulator/pull/160)), [#158](https://github.com/kludw/uber-simulator/issues/158).
+The distributed stack at real time (`bun run loadtest`, [ADR 0037](adr/0037-end-to-end-load-test.md)): every service its own process over NATS, the persister writing to ClickHouse via JetStream. Measured 2026-10-04 at `47d91a0` (master after [#160](https://github.com/kludw/uber-simulator/pull/160)), [#158](https://github.com/kludw/uber-simulator/issues/158). Current limits, after the persister change: [After milestone 14](#after-milestone-14).
 
 ### Method
 
@@ -467,3 +467,62 @@ All four runs pass every criterion (ADR 0037 with ADR 0038's backlog bound): 0 o
 - **The persister now waits for events**: ms per round is events per round over the publish rate (10,000 / 12.1k = 825 ms, 10,000 / 20.2k = 495 ms), and fetch, which includes waiting for a full batch, takes 62-83% of it. Without fetch, decode + insert + ack is 142-188 ms per 10,000 events, about 53-70k events/s; how much of fetch is delivery rather than waiting isn't separated, so that is an upper bound on headroom, not a measured limit.
 - **Decode is now the largest busy phase at 20k** (80-108 ms, 8-11 µs per event, unchanged per event).
 - **Backlog**: ack pending max 10,000 in every run (one full round in flight). The second-half max is 1.8 ticks of events at 12k and 1.5 at 20k, inside the 3-tick bound; why it is higher in ticks at 12k (where a batch takes 825 ms to fill) is not separated by these samples.
+
+## After milestone 14
+
+Live limits with the faster persister ([ADR 0039](adr/0039-persister-batch-size.md)), judged by ADR 0037 with [ADR 0038](adr/0038-persister-backlog-criterion.md)'s backlog bound, [#167](https://github.com/kludw/uber-simulator/issues/167). Measured 2026-10-04 at `7df31d5` (master after [#170](https://github.com/kludw/uber-simulator/pull/170)).
+
+### Method
+
+- Same as [Live limits](#live-limits): `loadtest` workflow, one `ubuntu-latest` job per case, 2 driver shards, demand at the spec ratio, seed 1, 5-tick batch window, 600 ticks, drain bound 5 min. 4 CPUs, 15,988-15,989 MiB, 1-minute load average 0.25-2.11 at start.
+- Greedy bracketed upward from 20k (20k passed twice in [After raising the batch size](#after-raising-the-batch-size)), then bisected; batched at the largest greedy-passing size (25k) and one step below (20k). Two runs per size.
+- Runs, each case on its own runner:
+  - [37232329038](https://github.com/kludw/uber-simulator/actions/runs/37232329038), [37232338451](https://github.com/kludw/uber-simulator/actions/runs/37232338451): greedy 20k / 30k / 40k / 50k.
+  - [37233409769](https://github.com/kludw/uber-simulator/actions/runs/37233409769), [37233411419](https://github.com/kludw/uber-simulator/actions/runs/37233411419): greedy 25k.
+  - [37234185770](https://github.com/kludw/uber-simulator/actions/runs/37234185770), [37234187405](https://github.com/kludw/uber-simulator/actions/runs/37234187405): greedy 27.5k.
+  - [37233432135](https://github.com/kludw/uber-simulator/actions/runs/37233432135), [37233434289](https://github.com/kludw/uber-simulator/actions/runs/37233434289): batched 20k.
+  - [37234189292](https://github.com/kludw/uber-simulator/actions/runs/37234189292), [37234190970](https://github.com/kludw/uber-simulator/actions/runs/37234190970): batched 25k.
+- Persister ms per round and decode ms per round: totals of the persister's `rounds_timed` entries (services log), start to stop, so they include the drain. Every round fetched 9,994-10,000 events.
+
+### Results
+
+| Drivers | Matching | Run | Settle ms mean / p95 / max | Overruns | Events per tick | Backlog second-half max (limit) | Drain | Slow consumers | Persister ms per round (decode) | Failed |
+| ---: | --- | --- | --- | ---: | ---: | --- | --- | ---: | --- | --- |
+| 20,000 | greedy | [37232329038](https://github.com/kludw/uber-simulator/actions/runs/37232329038) | 376.8 / 439.6 / 584.8 | 0 | 20,196 | 30,142 (60,587) | 2.4 s | 0 | 496.6 (109.3) | none |
+| 20,000 | greedy | [37232338451](https://github.com/kludw/uber-simulator/actions/runs/37232338451) | 245.8 / 283.1 / 490.8 | 0 | 20,196 | 30,163 (60,587) | 2.1 s | 0 | 495.7 (79.6) | none |
+| 25,000 | greedy | [37233409769](https://github.com/kludw/uber-simulator/actions/runs/37233409769) | 244.3 / 289.8 / 487.3 | 0 | 25,243 | 34,749 (75,728) | 2.2 s | 0 | 397.0 (66.5) | none |
+| 25,000 | greedy | [37233411419](https://github.com/kludw/uber-simulator/actions/runs/37233411419) | 426.1 / 516.2 / 644.0 | 0 | 25,243 | 35,170 (75,728) | 2.3 s | 0 | 397.2 (104.3) | none |
+| 27,500 | greedy | [37234185770](https://github.com/kludw/uber-simulator/actions/runs/37234185770) | 555.4 / 681.8 / 901.5 | 0 | 27,766 | 60,028 (83,299) | 2.4 s | 0 | 361.3 (115.8) | settle |
+| 27,500 | greedy | [37234187405](https://github.com/kludw/uber-simulator/actions/runs/37234187405) | 513.4 / 616.5 / 759.1 | 0 | 27,766 | 40,604 (83,299) | 2.1 s | 0 | 361.3 (111.0) | settle |
+| 30,000 | greedy | [37232329038](https://github.com/kludw/uber-simulator/actions/runs/37232329038) | 307.6 / 364.2 / 471.7 | 0 | 30,290 | 38,711 (90,871) | 2.3 s | 0 | 330.5 (70.9) | none |
+| 30,000 | greedy | [37232338451](https://github.com/kludw/uber-simulator/actions/runs/37232338451) | 601.9 / 730.1 / 890.7 | 0 | 30,290 | 1,123,799 (90,871) | 24.3 s | 0 | 343.1 (108.8) | settle, backlog |
+| 40,000 | greedy | [37232329038](https://github.com/kludw/uber-simulator/actions/runs/37232329038) | 691.5 / 820.1 / 1,628.0 | 3 (0.5%) | 40,384 | 8,298,805 (121,153) | 164.5 s | 0 | 314.8 (98.0) | settle, backlog |
+| 40,000 | greedy | [37232338451](https://github.com/kludw/uber-simulator/actions/runs/37232338451) | 439.3 / 545.1 / 810.2 | 0 | 40,384 | 190,231 (121,153) | 5.4 s | 0 | 249.4 (72.3) | backlog |
+| 50,000 | greedy | [37232329038](https://github.com/kludw/uber-simulator/actions/runs/37232329038) | - | - | - | - | - | - | 690.0 (245.8) | stack failed: persister exited |
+| 50,000 | greedy | [37232338451](https://github.com/kludw/uber-simulator/actions/runs/37232338451) | 1,035.0 / 1,687.8 / 2,406.1 | 172 (28.7%) | 50,471 | 21,261,915 (151,413) | did not drain (5,782,570 left) | 0 | 367.2 (124.1) | settle, overruns, backlog, drain |
+| 20,000 | batched | [37233432135](https://github.com/kludw/uber-simulator/actions/runs/37233432135) | 387.3 / 547.3 / 1,455.2 | 1 (0.2%) | 20,196 | 29,806 (60,587) | 2.4 s | 0 | 496.7 (112.6) | none |
+| 20,000 | batched | [37233434289](https://github.com/kludw/uber-simulator/actions/runs/37233434289) | 224.1 / 306.9 / 441.0 | 0 | 20,196 | 29,884 (60,587) | 2.2 s | 0 | 495.6 (73.6) | none |
+| 25,000 | batched | [37234189292](https://github.com/kludw/uber-simulator/actions/runs/37234189292) | 501.3 / 707.8 / 1,474.2 | 13 (2.2%) | 25,242 | 37,135 (75,727) | 2.1 s | 0 | 397.3 (111.9) | settle, overruns |
+| 25,000 | batched | [37234190970](https://github.com/kludw/uber-simulator/actions/runs/37234190970) | 490.8 / 699.3 / 1,609.5 | 12 (2.0%) | 25,242 | 37,199 (75,727) | 2.1 s | 0 | 397.3 (109.5) | settle, overruns |
+
+Every run that printed a report finished 600 of 600 ticks with 0 slow consumers. Peak RSS per service 83.8-226.0 MiB, except batched dispatch: 193-211 MiB at 20k, 277-293 MiB at 25k.
+
+- **Greedy, live: 25k** (two runs, both pass every criterion). 27.5k fails settle in both runs (p95 616.5 and 681.8 ms); 30k passes in one run and fails in the other, so it isn't supported either. The milestone 14 target (20k) is met: four of four runs pass, counting the two in [After raising the batch size](#after-raising-the-batch-size).
+- **Batched, live: 20k** (two runs pass). 25k fails settle (p95 699-708 ms) and overruns (2.0-2.2% of ticks) in both runs, with the persister keeping up.
+- **What fails first now: settle.** At the first failing size (greedy 27.5k, batched 25k) only settle, and for batched overruns, fail; the backlog stays within its bound (at most 2.2 ticks of events). The persister fails next: from 30k up it falls behind in 4 of 5 reported runs, writing about 27-40k events/s (events per round over ms per round, averaged over the run including the drain: 29.1k at 30k, 31.8k and 40.1k at 40k, 27.2k at 50k). Overruns follow at 50k (28.7%). Slow consumers: 0 in every run.
+- **Runner speed decides near the limit.** Runs fall into two groups by the persister's decode time per 10,000-event round, the same work in every run: 66-80 ms or 98-124 ms. Settle p95 tracks it at every size with a run in each group: 20k 283 vs 440 ms, 25k 290 vs 516 ms, 30k 364 vs 730 ms, 40k 545 vs 820 ms (fast vs slow group); batched 20k 307 vs 547 ms. Both 27.5k runs and both batched 25k runs landed in the slow group, so on two fast runners 27.5k might pass; 30k passed on a fast one. The slow group points at less CPU per unit of work on the whole runner: a slower host or contention from outside the stack. Which one isn't separated: the runner note records CPU count and memory, not CPU model or steal time, and the report has no CPU time per service. The 1-minute load average at start (0.25-2.11) doesn't separate the groups.
+- **50k, run 37232329038: the stack failed.** The persister's fetch failed with JetStream `heartbeats missed` and the persister exited, which stopped the run (about tick 343, the last tick in the services log; 660 rounds persisted, far behind). From tick 272 on, dispatch also logged 1,463 `input_rejected` (1,416 `invalid_transition`, 47 `wrong_driver`, all `driver.arrived_at_pickup`); no other run logged any. Not investigated here: 50k fails in the other run on every criterion except slow consumers.
+
+### Against milestone 13
+
+| | Milestone 13 ([Live limits](#live-limits)) | Milestone 14 (this section) |
+| --- | --- | --- |
+| Greedy, live | 10k | 25k |
+| Batched, live | at least 10k (above not measured) | 20k |
+| Fails first | persister backlog (settle p95 at most 415 ms up to 20k) | settle (greedy 27.5k, batched 25k) |
+| Persister write rate while falling behind | 9.8-12.8k events/s | 27-40k events/s |
+| Settle p95 at 20k greedy | 415.0 ms (one run, persister falling behind) | 283.1-439.6 ms (four runs, persister keeping up) |
+
+Against the in-process run ([After milestone 12](#after-milestone-12)): greedy reliably keeps real time at 50k there, so the live limit is now 2× below it, down from 5×. Settle is end-to-end over NATS across six processes on 4 CPUs, so this gap can't be attributed without CPU time per service.
+
+Next (proposal, no ADR): settle and the persister now fail one step apart (27.5k and 30k), both sensitive to runner speed. Recording CPU time per service in the load test report and CPU model in the runner note would show which service sets settle and whether the 4 CPUs are saturated; if the services' NATS decode dominates, ADR 0028's per-service subject subscriptions are the candidate fix named in [Against the in-process ceiling](#against-the-in-process-ceiling).
