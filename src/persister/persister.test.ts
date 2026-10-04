@@ -336,6 +336,69 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 		});
 	}, 20_000);
 
+	test("a failed fetch is logged and retried", async () => {
+		const source = testSource();
+		const nc = await natsConnection();
+		const logged: string[] = [];
+		const { promise: fetchFailed, resolve: failFetch } =
+			Promise.withResolvers<void>();
+		const persister = await succeeded(
+			startPersister({
+				nats: nc,
+				clickhouse,
+				source,
+				log: (entry) => {
+					if (entry.type !== "rounds_timed") logged.push(entry.type);
+					if (entry.type === "fetch_failed") failFetch();
+				},
+				retryDelaysMs: [500, 500, 500, 500],
+			}),
+		);
+		const jsm = await jetstreamManager(nc);
+		const consumer = await jsm.consumers.info(source.stream, source.consumer);
+
+		// Deleting the consumer fails the fetch in flight; recreating it lets
+		// the next attempt succeed.
+		await jsm.consumers.delete(source.stream, source.consumer);
+		await fetchFailed;
+		await jsm.consumers.add(source.stream, consumer.config);
+		publish(nc, source, { type: "clock.ticked", tick: 1 }, "run-g");
+		// Stored before drained() looks, or it could see nothing pending yet.
+		while ((await jsm.streams.info(source.stream)).state.messages < 1) {
+			await Bun.sleep(50);
+		}
+		await drained(nc, source);
+		persister.stop();
+		await persister.stopped;
+
+		expect({ seqs: await storedSeqs("run-g"), logged }).toEqual({
+			seqs: [{ stream_seq: 1 }],
+			logged: ["fetch_failed"],
+		});
+	}, 20_000);
+
+	test("a closed connection ends the persister with fetch_failed, unretried", async () => {
+		const nc = await natsConnection();
+		const persister = await succeeded(
+			startPersister({
+				nats: nc,
+				clickhouse,
+				source: testSource(),
+				log: () => {},
+				// Longer than the test: only a failure that isn't retried ends it.
+				retryDelaysMs: [60_000],
+			}),
+		);
+
+		await nc.close();
+		const stopped = await persister.stopped;
+
+		expect(stopped).toMatchObject({
+			ok: false,
+			error: { type: "fetch_failed" },
+		});
+	}, 20_000);
+
 	test("inserts a backlog in batches of up to 10,000 events", async () => {
 		const source = testSource();
 		const nc = await natsConnection();

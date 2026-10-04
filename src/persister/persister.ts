@@ -58,7 +58,8 @@ const batchWaitMs = 1000;
 // batch can outlive the ack wait and be redelivered while still retrying;
 // harmless, the copies share stream_seq and collapse under FINAL. A batch
 // still failing stays unacked: JetStream redelivers it after the ack wait, so
-// the retry continues there.
+// the retry continues there. Also the waits between consecutive failed
+// fetches: a fifth failure in a row ends the persister with `fetch_failed`.
 const defaultRetryDelaysMs = [1000, 2000, 4000, 8000];
 // How often the persister logs where its round time went (`rounds_timed`).
 const timingIntervalMs = 10_000;
@@ -81,6 +82,9 @@ export type PersisterLogEntry =
 			error: ClickHouseError;
 	  }
 	| { type: "batch_not_persisted"; firstSeq: number; lastSeq: number }
+	// A fetch failed and will be retried. attempt counts consecutive failed
+	// fetches; a fetch that returns resets it.
+	| { type: "fetch_failed"; attempt: number; cause: unknown }
 	// Every 10 s and on stop: rounds (fetches that returned messages) since
 	// the last entry, events inserted and acked, and ms spent in each phase of
 	// those rounds, rounded. Fetches that returned nothing are idle time, left
@@ -150,6 +154,8 @@ export async function startPersister(options: {
 			intervalStart = at;
 			timing = noRounds();
 		};
+		const retryDelaysMs = options.retryDelaysMs ?? defaultRetryDelaysMs;
+		let failedFetches = 0;
 		while (!stop.signal.aborted) {
 			const fetchStart = now();
 			let batch: JsMsg[];
@@ -161,17 +167,26 @@ export async function startPersister(options: {
 					}),
 				);
 			} catch (cause) {
-				return { ok: false, error: { type: "fetch_failed", cause } };
+				// A closed connection never recovers; anything else (heartbeats
+				// missed under load, consumer briefly gone) may, so it is retried
+				// after the same waits as an insert. The last failure is returned,
+				// not logged.
+				const delay = retryDelaysMs[failedFetches];
+				if (options.nats.isClosed() || delay === undefined) {
+					return { ok: false, error: { type: "fetch_failed", cause } };
+				}
+				failedFetches += 1;
+				options.log({ type: "fetch_failed", attempt: failedFetches, cause });
+				if (stop.signal.aborted) break;
+				await Bun.sleep(delay);
+				continue;
 			}
+			failedFetches = 0;
 			if (batch.length > 0) {
 				const fetchMs = now() - fetchStart;
 				const round = await persist(
 					batch,
-					{
-						...options,
-						retryDelaysMs: options.retryDelaysMs ?? defaultRetryDelaysMs,
-						now,
-					},
+					{ ...options, retryDelaysMs, now },
 					stop.signal,
 				);
 				timing.rounds += 1;
