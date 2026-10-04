@@ -132,7 +132,7 @@ bun run sim -- --compare --seed 42 --ticks 3600 --demand city --requests-per-min
 | invariant violations | 0 | 0 | 0 | 0 |
 
 At spec load picky drivers cost both strategies about 26-29% of completed trips (cancellations about 8× higher), and pickups that do happen are faster, as only trips with a willing driver nearby get served.
-Under heavy load picky drivers lift greedy from 235 to 301 completed trips but cut batched from 421 to 336, likely because declining far pickups stops greedy's long pickups while batched, which already kept pickups short, loses a whole window per declined pair.
+Under heavy load picky drivers lift greedy from 235 to 301 completed trips but cut batched from 421 to 336, because picky declines (45,896 of greedy's 46,410 offers) cut greedy's mean matched pickup from 238 to 39 cells and match-to-pickup from 72 to 36 ticks (most of its matches used to be cancelled before pickup), while batched, whose matches were already mostly picked up (75-cell pickups), gains little and loses a window on each of its 11,878 declined offers (97% of 12,298), so its matches fall from 609 to 390.
 
 ### As separate processes over NATS
 
