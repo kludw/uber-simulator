@@ -44,6 +44,7 @@ type Driver =
 			tripId: TripId;
 			pickup: Cell;
 			dropoff: Cell;
+			arrivedAt: Tick;
 	  }
 	| {
 			state: "on_trip";
@@ -248,6 +249,11 @@ type Rejected = InputRejected<
 
 type Decision = { state: DriverShardState; outputs: DriverShardOutput[] };
 
+// ADR 0040: a driver at the pickup with no trip event for this long gives up
+// and goes idle. Above max rider patience (300), so the rider of a trip
+// dispatch still has matched cancels it first.
+const pickupWaitTimeoutTicks = 360;
+
 export function decideDriverShard(
 	state: DriverShardState,
 	input: DriverShardInput,
@@ -446,8 +452,20 @@ function onTick(
 			case "en_route":
 				drivers.set(driver.id, driveToPickup(driver, input.tick, outputs));
 				break;
-			case "offline":
 			case "at_pickup":
+				if (input.tick - driver.arrivedAt < pickupWaitTimeoutTicks) break;
+				drivers.set(
+					driver.id,
+					wander(
+						idle(driver.id, driver.pickup),
+						state.grid,
+						input.tick,
+						random,
+						outputs,
+					),
+				);
+				break;
+			case "offline":
 			case "at_dropoff":
 				break;
 			case "on_trip":
@@ -553,6 +571,7 @@ function driveToPickup(
 		tripId: driver.tripId,
 		pickup: driver.pickup,
 		dropoff: driver.dropoff,
+		arrivedAt: tick,
 	};
 }
 
