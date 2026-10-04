@@ -81,8 +81,9 @@ function wrap(client: ClickHouseClient): ClickHouse {
 					table: "events",
 					values: rows.map(toColumns),
 					format: "JSONEachRow",
-					// Batches stay below the ~1,000 rows ClickHouse wants per
-					// insert, so the server buffers them (ADR 0029).
+					// At low volume batches stay below the ~1,000 rows ClickHouse
+					// wants per insert, so the server buffers them (ADR 0029). Full
+					// 10,000-row batches took as long async as sync (ADR 0039).
 					clickhouse_settings: { async_insert: 1, wait_for_async_insert: 1 },
 				});
 			}),
