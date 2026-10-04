@@ -15,9 +15,9 @@ We will replace ADR 0037's persister trend criterion with a backlog criterion: t
 ## Rationale
 
 - Bounds lag, the thing that matters: the persister is never more than about 3 s of events behind, regardless of where in the tick a sample lands.
-- Separates the milestone 13 runs cleanly: those that kept up peaked at 1 tick or less; the smallest failing one (11k, 337 events/s) reached 173k, about 15 ticks.
+- Separates the milestone 13 runs cleanly: in those that kept up, `num_pending` peaked at 1 tick or less (ack pending, at most 1,000 there, adds under 0.1 tick at 10k+); the smallest failing one (11k, 337 events/s) reached 173k, about 15 ticks.
 - 3 ticks, not 1 or 2: leaves room for a persister that holds more than one batch in flight (milestone 14 may pipeline it), counted in `num_ack_pending`, without letting sustained growth pass over a 300 s second half (337 events/s grows by about 100k).
-- Uses only quantities the report already has.
+- Needs one small sampler change: the report records `num_pending` per sample but `num_ack_pending` only as a run-wide maximum; it must sample both together.
 
 ## Alternatives considered
 
@@ -27,6 +27,6 @@ We will replace ADR 0037's persister trend criterion with a backlog criterion: t
 
 ## Consequences
 
-- Live limits from milestone 13 ([Live limits](../performance.md#live-limits)) were judged with a 2-tick version of this rule; every run that passed there peaked at 1 tick or less, so they stand under 3 ticks.
-- The loadtest report changes: the trend line is replaced by the backlog line.
+- Live limits from milestone 13 ([Live limits](../performance.md#live-limits)) were judged with a 2-tick version of this rule on `num_pending` alone; every run that passed there peaked at 1 tick or less of `num_pending` and at most 1,000 more in ack pending, so they stand under 3 ticks of backlog.
+- The loadtest sampler records `num_pending + num_ack_pending` per sample, and the report's trend line is replaced by the backlog line.
 - A persister that falls behind by less than about 3 ticks' worth over a 600-tick run passes; longer runs judge it more strictly.
