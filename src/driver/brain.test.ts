@@ -442,6 +442,24 @@ describe("decideDriverShard on tick", () => {
 		]);
 	});
 
+	test("drivers still move in driver ID order after the first one accepts an offer", () => {
+		const random = scriptedRandom([0, 0, 9, 9, 9, 5]);
+		const started = startDriverShard(
+			{ grid, driverIds: [d1, d2], tick: tick(0) },
+			random,
+		);
+		const accepted = decideDriverShard(started.state, offer(d1), random);
+		const { outputs } = decideDriverShard(
+			accepted.state,
+			{ type: "clock.ticked", tick: tick(1) },
+			random,
+		);
+		expect(outputs).toEqual([
+			{ type: "driver.moved", tick: tick(1), driverId: d1, cell: cell(1, 0) },
+			{ type: "driver.moved", tick: tick(1), driverId: d2, cell: cell(9, 8) },
+		]);
+	});
+
 	test("driver keeps its wander target until it reaches it", () => {
 		const random = scriptedRandom([0, 0, 3, 0]);
 		const started = startDriverShard(
@@ -642,12 +660,14 @@ describe("decideDriverShard on offer", () => {
 			random,
 		);
 		const accepted = decideDriverShard(started.state, offer(d1), random);
+		// decide updates state in place (ADR 0033): compare with a snapshot.
+		const before = structuredClone(accepted.state);
 		const { state } = decideDriverShard(
 			accepted.state,
 			{ ...offer(d1), tripId: t2 },
 			random,
 		);
-		expect(state).toEqual(accepted.state);
+		expect(state).toEqual(before);
 	});
 
 	test("offer for a driver outside the shard is a bug", () => {
@@ -958,8 +978,9 @@ describe("decideDriverShard carrying the rider", () => {
 			tripId: t1,
 			driverId: d1,
 		};
+		const before = structuredClone(pickedUp.state);
 		expect(decideDriverShard(pickedUp.state, cancelled, random)).toEqual({
-			state: pickedUp.state,
+			state: before,
 			outputs: [
 				{
 					type: "input_rejected",
@@ -977,12 +998,13 @@ describe("decideDriverShard carrying the rider", () => {
 			{ type: "trip.picked_up", tick: tick(2), tripId: t1, driverId: d1 },
 			random,
 		);
+		const before = structuredClone(pickedUp.state);
 		const cancelled = decideDriverShard(
 			pickedUp.state,
 			{ type: "trip.cancelled", tick: tick(3), tripId: t2, driverId: d1 },
 			random,
 		);
-		expect(cancelled).toEqual({ state: pickedUp.state, outputs: [] });
+		expect(cancelled).toEqual({ state: before, outputs: [] });
 	});
 
 	test("offer expiry of the trip a driver is waiting at the dropoff for is rejected, state unchanged", () => {
@@ -1003,8 +1025,9 @@ describe("decideDriverShard carrying the rider", () => {
 			tripId: t1,
 			driverId: d1,
 		};
+		const before = structuredClone(arrived.state);
 		expect(decideDriverShard(arrived.state, expired, random)).toEqual({
-			state: arrived.state,
+			state: before,
 			outputs: [
 				{
 					type: "input_rejected",
