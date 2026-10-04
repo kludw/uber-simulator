@@ -82,6 +82,7 @@ export type PersisterLogEntry =
 	// the last entry, events inserted and acked, and ms spent in each phase of
 	// those rounds, rounded. Fetches that returned nothing are idle time, left
 	// out; intervalMs minus the phases is idle time plus that bookkeeping.
+	// insertMs includes failed attempts and the waits between them.
 	| ({ type: "rounds_timed"; intervalMs: number } & RoundsTiming);
 
 type RoundsTiming = {
