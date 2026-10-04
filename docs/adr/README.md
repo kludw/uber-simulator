@@ -39,3 +39,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0033 | [Scale fixes](0033-scale-fixes.md)                                      | Accepted |
 | 0034 | [Replay](0034-replay.md)                                                | Accepted |
 | 0035 | [Driver preferences](0035-driver-preferences.md)                        | Accepted |
+| 0036 | [Scale to 50k](0036-scale-to-50k.md)                                    | Accepted |
