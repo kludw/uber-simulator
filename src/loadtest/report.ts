@@ -1,14 +1,14 @@
 // The load test report (ADR 0037): what src/loadtest/main.ts measured over one
 // run, and that run's verdict on each criterion for a supported fleet size.
 import type { LoadtestArgs } from "./args.ts";
+import { maxTicksBehind, persisterBacklog } from "./backlog.ts";
 import type { SettleSummary } from "./settle.ts";
-import { pendingTrend } from "./trend.ts";
 
 export type LoadtestMeasurement = {
 	settle: SettleSummary;
-	// Persister consumer num_pending from the start to tick T, one sample per
-	// sampleIntervalMs.
-	persisterPending: number[];
+	// Persister consumer num_pending + num_ack_pending from the start to tick
+	// T, one sample per sampleIntervalMs.
+	persisterBacklog: number[];
 	persisterAckPendingMax: number;
 	sampleIntervalMs: number;
 	// How long after tick T the observer still counted events of ticks <= T.
@@ -24,7 +24,8 @@ export type LoadtestMeasurement = {
 	peakRssBytes: { service: string; bytes: number }[];
 };
 
-// ADR 0037's criteria; ADR 0036's band for settle p95.
+// ADR 0037's criteria; ADR 0036's band for settle p95; ADR 0038's persister
+// backlog bound (backlog.ts).
 const minTicks = 600;
 const maxSettleP95Ms = 610;
 const maxOverrunShare = 0.01;
@@ -36,7 +37,8 @@ export function loadtestReport(
 	const { count, driversPerShard } = args.driverShards;
 	const { matching } = args;
 	const { settle, drain } = measurement;
-	const trend = pendingTrend(measurement.persisterPending);
+	const eventsPerTick = settle.messages / settle.ticksObserved;
+	const backlog = persisterBacklog(measurement.persisterBacklog, eventsPerTick);
 	const overrunShare = settle.overruns / settle.ticksObserved;
 	const drainMinutes = args.drainBoundMs / 60_000;
 	const criteria: [boolean, string][] = [
@@ -49,7 +51,10 @@ export function loadtestReport(
 			overrunShare <= maxOverrunShare,
 			`overruns <= ${maxOverrunShare * 100}% of ticks`,
 		],
-		[trend !== undefined && !trend.rising, "persister pending not rising"],
+		[
+			backlog?.withinLimit === true,
+			`persister backlog <= ${maxTicksBehind} ticks of events`,
+		],
 		[drain.type === "drained", `persister drained within ${drainMinutes} min`],
 		[measurement.slowConsumers === 0, "no slow consumers"],
 	];
@@ -63,15 +68,15 @@ export function loadtestReport(
 		`settle ms: mean ${settle.settleMs.mean.toFixed(1)}, p95 ${settle.settleMs.p95.toFixed(1)}, max ${settle.settleMs.max.toFixed(1)}`,
 		`overruns: ${settle.overruns} of ${settle.ticksObserved} ticks (${(overrunShare * 100).toFixed(1)}%)`,
 		`last tick: events after the ${measurement.settleGraceMs / 1000} s grace window not observed, so its settle may be understated`,
-		`message rate: ${(settle.messages / settle.ticksObserved).toFixed(1)} per tick (${settle.messages} events of ticks 1..${args.ticks})`,
+		`message rate: ${eventsPerTick.toFixed(1)} per tick (${settle.messages} events of ticks 1..${args.ticks})`,
 		`observer: clock.ticked max deviation ${settle.clockMaxDeviationMs.toFixed(1)} ms, pending bytes max ${measurement.pendingBytes.observerMax}`,
 		`nats: slow consumers ${measurement.slowConsumers}, pending bytes max ${measurement.pendingBytes.anyMax} (any connection)`,
-		`persister pending (every ${measurement.sampleIntervalMs / 1000} s): ${measurement.persisterPending.join(" ")}`,
+		`persister backlog (pending + ack pending, every ${measurement.sampleIntervalMs / 1000} s): ${measurement.persisterBacklog.join(" ")}`,
 		`persister ack pending max: ${measurement.persisterAckPendingMax}`,
-		`persister pending trend: ${trend === undefined ? "too few samples" : `first half mean ${trend.firstHalfMean.toFixed(1)}, second half mean ${trend.secondHalfMean.toFixed(1)} (${trend.rising ? "rising" : "not rising"})`}`,
+		`persister backlog second-half max: ${backlog === undefined ? "too few samples" : `${backlog.secondHalfMax}, limit ${backlog.limit.toFixed(0)} (${maxTicksBehind} ticks of ${eventsPerTick.toFixed(1)} events)`}`,
 		`persister drain: ${drain.type === "drained" ? `${(drain.ms / 1000).toFixed(1)} s` : `did not drain in ${drainMinutes} min (pending ${drain.pending})`}`,
 		`peak rss MiB: ${measurement.peakRssBytes.map(({ service, bytes }) => `${service} ${(bytes / 2 ** 20).toFixed(1)}`).join(", ")}`,
-		"criteria (ADR 0037; supported live = the slower of two runs passes all):",
+		"criteria (ADRs 0037, 0038; supported live = the slower of two runs passes all):",
 		...criteria.map(
 			([passed, criterion]) => `  ${passed ? "pass" : "FAIL"}: ${criterion}`,
 		),
