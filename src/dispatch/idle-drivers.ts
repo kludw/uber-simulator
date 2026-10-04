@@ -52,15 +52,16 @@ export function indexIdleDrivers(
 	return index;
 }
 
+// A cell off the grid (bad input from another service; grid bounds are an
+// event log invariant) goes to the nearest edge bucket. The search stays
+// exact: from an in-grid pickup, the true cell is at least as far as the
+// clamped one, so the ring bound still holds.
 function bucketOf(index: IdleDriverIndex, cell: Cell): IdleDriver[] {
 	const size = index.search.cellsPerBucket;
-	const bucket =
-		index.buckets[
-			Math.floor(cell.y / size) * index.columns + Math.floor(cell.x / size)
-		];
-	if (bucket === undefined) {
-		throw new Error(`cell (${cell.x}, ${cell.y}) outside the grid`);
-	}
+	const column = Math.min(Math.floor(cell.x / size), index.columns - 1);
+	const row = Math.min(Math.floor(cell.y / size), index.rows - 1);
+	const bucket = index.buckets[row * index.columns + column];
+	if (bucket === undefined) throw new Error(`no bucket (${column}, ${row})`);
 	return bucket;
 }
 

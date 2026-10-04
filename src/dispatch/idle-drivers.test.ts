@@ -111,22 +111,38 @@ describe("takeNearest grid search", () => {
 	});
 
 	test("takes exactly what a linear scan takes", () => {
-		const random = createRandom(147);
-		for (let run = 0; run < 3000; run++) {
-			const { scenario, expected } = randomScenario(random);
-			const index = indexIdleDrivers(scenario.grid, scenario.drivers, {
-				cellsPerBucket: random.int(1, 6),
-				linearScanBelow: random.int(0, 1) === 0 ? 0 : random.int(0, 20),
-			});
+		expectLinearScanPicks({ seed: 147, driversOffGrid: false });
+	});
 
-			const taken = scenario.trips.map((trip) =>
-				takeNearest(index, trip.pickup, trip.excluded),
-			);
-
-			expect({ run, taken }).toEqual({ run, taken: expected });
-		}
+	// Cells come from other services' messages; grid bounds are an invariant
+	// checked over the event log, not by dispatch.
+	test("takes exactly what a linear scan takes with drivers off the grid", () => {
+		expectLinearScanPicks({ seed: 151, driversOffGrid: true });
 	});
 });
+
+function expectLinearScanPicks(options: {
+	seed: number;
+	driversOffGrid: boolean;
+}): void {
+	const random = createRandom(options.seed);
+	for (let run = 0; run < 3000; run++) {
+		const { scenario, expected } = randomScenario(
+			random,
+			options.driversOffGrid,
+		);
+		const index = indexIdleDrivers(scenario.grid, scenario.drivers, {
+			cellsPerBucket: random.int(1, 6),
+			linearScanBelow: random.int(0, 1) === 0 ? 0 : random.int(0, 20),
+		});
+
+		const taken = scenario.trips.map((trip) =>
+			takeNearest(index, trip.pickup, trip.excluded),
+		);
+
+		expect({ run, taken }).toEqual({ run, taken: expected });
+	}
+}
 
 type Scenario = {
 	grid: Grid;
@@ -136,7 +152,11 @@ type Scenario = {
 
 // Small grids and few cells per driver so ties and shared cells are common;
 // IDs with mixed digit counts so string order differs from numeric order.
-function randomScenario(random: Random): {
+// Off the grid: about a quarter of drivers up to 20 cells past its far edges.
+function randomScenario(
+	random: Random,
+	driversOffGrid: boolean,
+): {
 	scenario: Scenario;
 	expected: (DriverId | undefined)[];
 } {
@@ -151,9 +171,16 @@ function randomScenario(random: Random): {
 	while (ids.size < driverCount) {
 		ids.add(DriverId.parse(`d-${random.int(0, 999)}`));
 	}
-	const drivers = [...ids]
-		.toSorted()
-		.map((driverId) => ({ driverId, cell: randomCell() }));
+	const drivers = [...ids].toSorted().map((driverId) => ({
+		driverId,
+		cell:
+			driversOffGrid && random.int(0, 3) === 0
+				? ({
+						x: random.int(0, scenarioGrid.width + 19),
+						y: random.int(0, scenarioGrid.height + 19),
+					} as Cell)
+				: randomCell(),
+	}));
 	const trips = Array.from({ length: random.int(1, 30) }, () => ({
 		pickup: randomCell(),
 		excluded: new Set(
