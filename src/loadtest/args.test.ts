@@ -1,0 +1,56 @@
+import { describe, expect, test } from "bun:test";
+import { parseLoadtestArgs } from "./args.ts";
+
+describe("parseLoadtestArgs", () => {
+	test("demand scales with the fleet at the spec ratio, drivers split over two shards, five minutes to drain", () => {
+		expect(parseLoadtestArgs(["--drivers", "1000", "--ticks", "120"])).toEqual({
+			ok: true,
+			value: {
+				ticks: 120,
+				driverShards: { count: 2, driversPerShard: 500 },
+				// 10 requests/min per 100 drivers (docs/spec.md).
+				requestsPerMinute: 100,
+				matching: { type: "greedy" },
+				drainBoundMs: 300_000,
+				natsMonitoringUrl: "http://localhost:8222",
+			},
+		});
+	});
+
+	test("batched matching, shard count, and drain bound are set per run", () => {
+		expect(
+			parseLoadtestArgs([
+				"--drivers",
+				"10000",
+				"--shards",
+				"4",
+				"--matching",
+				"batched",
+				"--batch-window",
+				"10",
+				"--drain-minutes",
+				"0.5",
+			]),
+		).toMatchObject({
+			ok: true,
+			value: {
+				driverShards: { count: 4, driversPerShard: 2500 },
+				matching: { type: "batched", windowTicks: 10 },
+				drainBoundMs: 30_000,
+			},
+		});
+	});
+
+	test("a fleet that doesn't split evenly over the shards is invalid", () => {
+		expect(
+			parseLoadtestArgs(["--drivers", "1001", "--shards", "2"]),
+		).toMatchObject({ ok: false, error: { type: "invalid_args" } });
+	});
+
+	test("an unknown option is invalid", () => {
+		expect(parseLoadtestArgs(["--speed", "10"])).toMatchObject({
+			ok: false,
+			error: { type: "invalid_args" },
+		});
+	});
+});
