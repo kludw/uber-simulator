@@ -45,7 +45,10 @@ function solve(costs: readonly (readonly Cost[])[]): Pair[] {
 	const columns = costs[0]?.length ?? 0;
 	// Disallowed cells cost more than any whole set of allowed pairs, so the optimum
 	// uses as many allowed pairs as possible. Finite: Infinity breaks the potentials.
-	const sentinel = costs.flat().reduce<number>((sum, c) => sum + (c ?? 0), 1);
+	let sentinel = 1;
+	for (const row of costs) {
+		for (const cost of row) sentinel += cost ?? 0;
+	}
 
 	const rowPotential = new Array<number>(rows + 1).fill(0);
 	const columnPotential = new Array<number>(columns + 1).fill(0);
