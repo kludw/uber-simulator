@@ -20,8 +20,9 @@ import { createSettleTracker } from "./settle.ts";
 const persisterReadyTimeoutMs = 30_000;
 const sampleIntervalMs = 5000;
 const drainPollMs = 1000;
-// After tick T, how long events of ticks <= T may still arrive. Longer than
-// a tick: a tick still settling after this is an overrun anyway.
+// After tick T, how long the observer still counts events of ticks <= T.
+// Events of tick T arriving later are never seen, so tick T's settle is
+// understated by them (the report says so).
 const settleGraceMs = 2000;
 const observerName = "loadtest-observer";
 
@@ -210,6 +211,10 @@ const persisterPending: number[] = [];
 let persisterAckPendingMax = 0;
 const pendingBytes = { observerMax: 0, anyMax: 0 };
 let running = true;
+// Ends the sampler's wait between samples at once, so stopping it doesn't
+// delay the drain wait (and inflate drain time) by up to an interval.
+const { promise: samplingStopped, resolve: stopSampling } =
+	Promise.withResolvers<void>();
 const sampling = (async () => {
 	while (running) {
 		const consumer = await jsm.consumers
@@ -235,12 +240,13 @@ const sampling = (async () => {
 		} else {
 			console.error(`[loadtest] ${JSON.stringify(bytes.error)}`);
 		}
-		await Bun.sleep(sampleIntervalMs);
+		await Promise.race([Bun.sleep(sampleIntervalMs), samplingStopped]);
 	}
 })();
 
 const lastTickAtMs = await lastTickObserved;
 running = false;
+stopSampling();
 // The clock has no tick limit of its own.
 await stopChildren((name) => name === "clock");
 await Bun.sleep(settleGraceMs);
@@ -280,6 +286,7 @@ console.log(
 		persisterPending,
 		persisterAckPendingMax,
 		sampleIntervalMs,
+		settleGraceMs,
 		drain,
 		slowConsumers: slowConsumersAfter - slowConsumersBefore,
 		pendingBytes,

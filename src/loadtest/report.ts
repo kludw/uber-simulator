@@ -11,6 +11,8 @@ export type LoadtestMeasurement = {
 	persisterPending: number[];
 	persisterAckPendingMax: number;
 	sampleIntervalMs: number;
+	// How long after tick T the observer still counted events of ticks <= T.
+	settleGraceMs: number;
 	drain:
 		| { type: "drained"; ms: number }
 		| { type: "did_not_drain"; pending: number };
@@ -60,6 +62,7 @@ export function loadtestReport(
 		`host: ${measurement.host.cpus} CPUs, load average ${load1.toFixed(2)} ${load5.toFixed(2)} ${load15.toFixed(2)} (1, 5, 15 min, at end)`,
 		`settle ms: mean ${settle.settleMs.mean.toFixed(1)}, p95 ${settle.settleMs.p95.toFixed(1)}, max ${settle.settleMs.max.toFixed(1)}`,
 		`overruns: ${settle.overruns} of ${settle.ticksObserved} ticks (${(overrunShare * 100).toFixed(1)}%)`,
+		`last tick: events after the ${measurement.settleGraceMs / 1000} s grace window not observed, so its settle may be understated`,
 		`message rate: ${(settle.messages / settle.ticksObserved).toFixed(1)} per tick (${settle.messages} events of ticks 1..${args.ticks})`,
 		`observer: clock.ticked max deviation ${settle.clockMaxDeviationMs.toFixed(1)} ms, pending bytes max ${measurement.pendingBytes.observerMax}`,
 		`nats: slow consumers ${measurement.slowConsumers}, pending bytes max ${measurement.pendingBytes.anyMax} (any connection)`,
