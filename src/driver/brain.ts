@@ -68,6 +68,23 @@ export type Shifts =
 
 type TickRange = { min: number; max: number };
 
+// Missing = accept_all. Picky drivers decline far pickups and a share of the
+// rest (ADR 0035). Distances in cells.
+export type Preferences =
+	| { type: "accept_all" }
+	| {
+			type: "picky";
+			maxPickupDistance: { min: number; max: number };
+			declineShare: number;
+	  };
+
+// Each driver's max pickup distance, drawn once at start from stream
+// `preference:<driverId>`.
+type Picky = {
+	maxPickupDistances: ReadonlyMap<DriverId, number>;
+	declineShare: number;
+};
+
 // n-th period of a driver's schedule, drawn from stream `shift:<driverId>:<n>`.
 // Online or offline follows the driver: offline only while state is offline.
 type Period = { n: number; startedAt: Tick; ticks: number };
@@ -79,11 +96,12 @@ type Schedule = {
 };
 
 // Drivers kept sorted by ID: outputs and random draws follow that order.
-// schedule: null when always online.
+// schedule: null when always online. picky: null when accepting all.
 export type DriverShardState = {
 	grid: Grid;
 	drivers: Driver[];
 	schedule: Schedule | null;
+	picky: Picky | null;
 };
 
 export type DriverShardInput =
@@ -95,7 +113,13 @@ export type DriverShardInput =
 	| TripOfferExpired;
 
 export function startDriverShard(
-	config: { grid: Grid; driverIds: DriverId[]; tick: Tick; shifts?: Shifts },
+	config: {
+		grid: Grid;
+		driverIds: DriverId[];
+		tick: Tick;
+		shifts?: Shifts;
+		preferences?: Preferences;
+	},
 	random: Random,
 ): { state: DriverShardState; outputs: DriverWentOnline[] } {
 	const shifts = config.shifts ?? { type: "always_online" };
@@ -137,7 +161,42 @@ export function startDriverShard(
 			driverId: driver.id,
 			cell: driver.cell,
 		}));
-	return { state: { grid: config.grid, drivers, schedule }, outputs };
+	const picky = startPicky(config.preferences, config.driverIds, random);
+	return { state: { grid: config.grid, drivers, schedule, picky }, outputs };
+}
+
+// accept_all takes no preference streams, so default runs stay unchanged.
+function startPicky(
+	preferences: Preferences | undefined,
+	driverIds: DriverId[],
+	random: Random,
+): Picky | null {
+	if (preferences === undefined || preferences.type === "accept_all") {
+		return null;
+	}
+	assertValidPicky(preferences);
+	const { min, max } = preferences.maxPickupDistance;
+	const maxPickupDistances = new Map(
+		driverIds.map((id) => [id, random.child(`preference:${id}`).int(min, max)]),
+	);
+	return { maxPickupDistances, declineShare: preferences.declineShare };
+}
+
+// Same contract as assertValidShifts: parsed at the edge, invalid here = bug.
+function assertValidPicky(
+	picky: Extract<Preferences, { type: "picky" }>,
+): void {
+	const { min, max } = picky.maxPickupDistance;
+	if (!Number.isInteger(min) || !Number.isInteger(max) || !(min >= 0)) {
+		throw new Error(`max pickup distance [${min}, ${max}] not integers >= 0`);
+	}
+	if (min > max) {
+		throw new Error(`max pickup distance min ${min} above max ${max}`);
+	}
+	const share = picky.declineShare;
+	if (!(share >= 0 && share <= 1)) {
+		throw new Error(`decline share ${share} outside [0, 1]`);
+	}
 }
 
 // Config is parsed at the edge (CLI, env), so an invalid one here is a bug.
@@ -193,7 +252,7 @@ export function decideDriverShard(
 		case "clock.ticked":
 			return onTick(state, input, random);
 		case "offer":
-			return onOffer(state, input);
+			return onOffer(state, input, random);
 		case "trip.picked_up":
 			return onPickedUp(state, input);
 		case "trip.completed":
@@ -208,12 +267,19 @@ export function decideDriverShard(
 	}
 }
 
-function onOffer(state: DriverShardState, offer: Offer): Decision {
+function onOffer(
+	state: DriverShardState,
+	offer: Offer,
+	random: Random,
+): Decision {
 	const offered = state.drivers.find((driver) => driver.id === offer.driverId);
 	if (offered === undefined) {
 		throw new Error(`offer for driver ${offer.driverId} outside this shard`);
 	}
-	if (offered.state !== "idle") {
+	if (
+		offered.state !== "idle" ||
+		declines(state.picky, offered, offer, random)
+	) {
 		return {
 			state,
 			outputs: [
@@ -248,6 +314,23 @@ function onOffer(state: DriverShardState, offer: Offer): Decision {
 			},
 		],
 	};
+}
+
+function declines(
+	picky: Picky | null,
+	driver: IdleDriver,
+	offer: Offer,
+	random: Random,
+): boolean {
+	if (picky === null) return false;
+	const max = picky.maxPickupDistances.get(driver.id);
+	if (max === undefined) {
+		throw new Error(`driver ${driver.id} without a max pickup distance`);
+	}
+	if (distance(driver.cell, offer.pickup) > max) return true;
+	// One stream per offer: the outcome doesn't depend on offer arrival order.
+	const stream = random.child(`offer:${offer.tripId}:${driver.id}`);
+	return stream.float() < picky.declineShare;
 }
 
 function onPickedUp(state: DriverShardState, pickedUp: TripPickedUp): Decision {

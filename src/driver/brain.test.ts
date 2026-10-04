@@ -6,6 +6,7 @@ import {
 	type DriverShardInput,
 	type DriverShardState,
 	decideDriverShard,
+	type Preferences,
 	type Shifts,
 	startDriverShard,
 } from "./brain.ts";
@@ -359,6 +360,54 @@ describe("startDriverShard shift config", () => {
 	});
 });
 
+describe("startDriverShard preferences config", () => {
+	const picky: Extract<Preferences, { type: "picky" }> = {
+		type: "picky",
+		maxPickupDistance: { min: 2, max: 12 },
+		declineShare: 0.25,
+	};
+
+	test("accept_all takes no preference streams and accepts an idle driver's offer", () => {
+		const random = scriptedRandom([0, 0]);
+		const { state } = startDriverShard(
+			{
+				grid,
+				driverIds: [d1],
+				tick: tick(0),
+				preferences: { type: "accept_all" },
+			},
+			random,
+		);
+		const { outputs } = decideDriverShard(state, offer(d1), random);
+		expect(outputs).toEqual([
+			{ type: "offer_accepted", tripId: t1, driverId: d1 },
+		]);
+	});
+
+	const invalid: [string, Partial<typeof picky>][] = [
+		["min above max", { maxPickupDistance: { min: 5, max: 4 } }],
+		["negative distance", { maxPickupDistance: { min: -1, max: 4 } }],
+		["fractional distance", { maxPickupDistance: { min: 1, max: 4.5 } }],
+		["decline share below 0", { declineShare: -0.1 }],
+		["decline share above 1", { declineShare: 1.1 }],
+		["decline share NaN", { declineShare: Number.NaN }],
+	];
+
+	test.each(invalid)("%s throws", (_case, override) => {
+		expect(() =>
+			startDriverShard(
+				{
+					grid,
+					driverIds: [d1],
+					tick: tick(0),
+					preferences: { ...picky, ...override },
+				},
+				createRandom(1),
+			),
+		).toThrow();
+	});
+});
+
 describe("decideDriverShard on tick", () => {
 	test("idle driver without a wander target picks one and moves one step toward it", () => {
 		const random = scriptedRandom([0, 0, 3, 1]);
@@ -608,6 +657,71 @@ describe("decideDriverShard on offer", () => {
 			random,
 		);
 		expect(() => decideDriverShard(state, offer(d2), random)).toThrow();
+	});
+});
+
+describe("decideDriverShard with picky preferences", () => {
+	const picky: Preferences = {
+		type: "picky",
+		maxPickupDistance: { min: 2, max: 12 },
+		declineShare: 0.25,
+	};
+
+	// d-1 starts at (0, 0); offers pick up at (5, 5), distance 10.
+	function pickyAtOrigin(streams: Record<string, number[]>) {
+		const random = shiftRandom([0, 0], streams);
+		const { state } = startDriverShard(
+			{ grid, driverIds: [d1], tick: tick(0), preferences: picky },
+			random,
+		);
+		return { state, random };
+	}
+
+	test("idle driver declines a pickup farther than its max pickup distance", () => {
+		const { state, random } = pickyAtOrigin({ "preference:d-1": [9] });
+		const { outputs } = decideDriverShard(state, offer(d1), random);
+		expect(outputs).toEqual([
+			{ type: "offer_declined", tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("idle driver within range declines when the offer draw lands under the decline share", () => {
+		const { state, random } = pickyAtOrigin({
+			"preference:d-1": [10],
+			"offer:t-1:d-1": [0.2],
+		});
+		const { outputs } = decideDriverShard(state, offer(d1), random);
+		expect(outputs).toEqual([
+			{ type: "offer_declined", tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("idle driver within range accepts when the offer draw reaches the decline share", () => {
+		const { state, random } = pickyAtOrigin({
+			"preference:d-1": [12],
+			"offer:t-1:d-1": [0.25],
+		});
+		const { outputs } = decideDriverShard(state, offer(d1), random);
+		expect(outputs).toEqual([
+			{ type: "offer_accepted", tripId: t1, driverId: d1 },
+		]);
+	});
+
+	// No stream for t-2: a preference check would throw.
+	test("en route driver declines another offer before any preference check", () => {
+		const { state, random } = pickyAtOrigin({
+			"preference:d-1": [10],
+			"offer:t-1:d-1": [0.9],
+		});
+		const accepted = decideDriverShard(state, offer(d1), random);
+		const { outputs } = decideDriverShard(
+			accepted.state,
+			{ ...offer(d1), tripId: t2, pickup: cell(9, 9) },
+			random,
+		);
+		expect(outputs).toEqual([
+			{ type: "offer_declined", tripId: t2, driverId: d1 },
+		]);
 	});
 });
 
