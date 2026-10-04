@@ -238,7 +238,7 @@ Shares are grouped by owning `src/` function (see Method), at 50k greedy / 50k b
 
 1. **Driver shards: keep drivers by ID and update in place** (44.0% / 35.5%). Each event does `state.drivers.find` (O(drivers per shard)) and most then `state.drivers.map` to copy the array; with events proportional to the fleet that is O(drivers²) per shard per tick. Owned state (ADR 0033) applies; tracked in [#123](https://github.com/kludw/uber-simulator/issues/123). Iteration order must stay the same so event logs stay byte-identical (checked by hashing, as for the [Long runs](#long-runs) fix).
 2. **Dispatch matching: less work per (trip, driver) pair** (23.6% greedy, 37.0% batched). Options, each needing its own measurement: read each idle driver's cell once per tick instead of once per pair (`cellOf` alone is 9.5% greedy, 18.7% batched); compute the Hungarian sentinel without `costs.flat()` (`flat` 2.7% self); a spatial index for greedy's nearest-driver search (exact); k-nearest candidates for batched (not exact; ADR 0033 rejected it while not needed, so a new ADR).
-3. **Rider brain: keep riders by trip ID and update in place** (20.0% / 17.4%). Same pattern as 1, sized by riders in flight rather than drivers; also #123.
+3. **Rider brain: keep riders by trip ID and update in place** (20.0% / 17.4%). Same pattern as 1, sized by riders in flight rather than drivers; tracked in [#146](https://github.com/kludw/uber-simulator/issues/146).
 4. **`offerPairs`** (3.8% / 3.0%): not worth changing before 1-3.
 5. **Bus** (1.9% / 1.5%): not worth changing.
 

@@ -29,13 +29,14 @@ type Rider =
 	| { state: "riding"; id: RiderId; tripId: TripId };
 
 // spawned: riders spawned so far; numbers both rider and trip IDs.
-// Riders kept ordered by ID: patience cancels follow that order.
+// riders: by trip ID (how inputs address them), updated in place (ADR 0033,
+// 0036). Kept in spawn order, so patience cancels sort by rider ID themselves.
 export type RidersState = {
 	grid: Grid;
 	requestsPerMinute: number;
 	demand: Demand;
 	spawned: number;
-	riders: Rider[];
+	riders: Map<TripId, Rider>;
 };
 
 export type RidersInput =
@@ -72,7 +73,7 @@ export function startRiders(config: {
 		requestsPerMinute: config.requestsPerMinute,
 		demand,
 		spawned: 0,
-		riders: [],
+		riders: new Map(),
 	};
 }
 
@@ -102,21 +103,18 @@ export function decideRiders(
 }
 
 function onPickedUp(state: RidersState, pickedUp: TripPickedUp): Decision {
-	const addressed = state.riders.find(
-		(rider) => rider.tripId === pickedUp.tripId,
-	);
+	const addressed = state.riders.get(pickedUp.tripId);
 	if (addressed === undefined) return { state, outputs: [] };
 	if (addressed.state === "riding") {
 		return reject(state, pickedUp, "rider_already_riding");
 	}
 	// A cancelling rider rides too: pickup reached dispatch before the cancel.
-	const riders = state.riders.map(
-		(rider): Rider =>
-			rider.id === addressed.id
-				? { state: "riding", id: rider.id, tripId: rider.tripId }
-				: rider,
-	);
-	return { state: { ...state, riders }, outputs: [] };
+	state.riders.set(addressed.tripId, {
+		state: "riding",
+		id: addressed.id,
+		tripId: addressed.tripId,
+	});
+	return { state, outputs: [] };
 }
 
 function reject(
@@ -128,34 +126,28 @@ function reject(
 }
 
 function onCompleted(state: RidersState, completed: TripCompleted): Decision {
-	const addressed = state.riders.find(
-		(rider) => rider.tripId === completed.tripId,
-	);
+	const addressed = state.riders.get(completed.tripId);
 	if (addressed === undefined) return { state, outputs: [] };
 	if (addressed.state !== "riding") {
 		return reject(state, completed, "rider_not_riding");
 	}
-	return removeRider(state, addressed.id);
+	return removeRider(state, addressed.tripId);
 }
 
 function onCancelled(state: RidersState, cancelled: TripCancelled): Decision {
-	const addressed = state.riders.find(
-		(rider) => rider.tripId === cancelled.tripId,
-	);
+	const addressed = state.riders.get(cancelled.tripId);
 	if (addressed === undefined) return { state, outputs: [] };
 	if (addressed.state === "riding") {
 		return reject(state, cancelled, "rider_already_riding");
 	}
-	return removeRider(state, addressed.id);
+	return removeRider(state, addressed.tripId);
 }
 
 function onCancelRejected(
 	state: RidersState,
 	rejected: CancelTripRejected,
 ): Decision {
-	const addressed = state.riders.find(
-		(rider) => rider.tripId === rejected.tripId,
-	);
+	const addressed = state.riders.get(rejected.tripId);
 	if (addressed === undefined) return { state, outputs: [] };
 	if (addressed.state === "waiting") {
 		return reject(state, rejected, "cancel_not_requested");
@@ -165,7 +157,7 @@ function onCancelRejected(
 		rejected.error.type === "invalid_transition" &&
 		rejected.error.from !== "picked_up"
 	) {
-		return removeRider(state, addressed.id);
+		return removeRider(state, addressed.tripId);
 	}
 	// Dispatch never knew the trip (e.g. request_trip lost): no trip event
 	// will ever end it.
@@ -173,7 +165,7 @@ function onCancelRejected(
 		addressed.state === "cancelling" &&
 		rejected.error.type === "unknown_trip"
 	) {
-		return removeRider(state, addressed.id);
+		return removeRider(state, addressed.tripId);
 	}
 	// Otherwise dispatch's trip event (picked_up, completed) decides what's next.
 	return { state, outputs: [] };
@@ -183,19 +175,17 @@ function onRequestRejected(
 	state: RidersState,
 	rejected: RequestTripRejected,
 ): Decision {
-	const addressed = state.riders.find(
-		(rider) => rider.tripId === rejected.tripId,
-	);
+	const addressed = state.riders.get(rejected.tripId);
 	if (addressed === undefined) return { state, outputs: [] };
 	if (addressed.state === "riding") {
 		return reject(state, rejected, "rider_already_riding");
 	}
-	return removeRider(state, addressed.id);
+	return removeRider(state, addressed.tripId);
 }
 
-function removeRider(state: RidersState, id: RiderId): Decision {
-	const riders = state.riders.filter((rider) => rider.id !== id);
-	return { state: { ...state, riders }, outputs: [] };
+function removeRider(state: RidersState, tripId: TripId): Decision {
+	state.riders.delete(tripId);
+	return { state, outputs: [] };
 }
 
 function onTick(
@@ -211,22 +201,24 @@ function onTick(
 		root: random,
 		demand,
 	});
-	let spawned = state.spawned;
-	const riders: Rider[] = [];
+	const outOfPatience: Rider[] = [];
+	for (const rider of state.riders.values()) {
+		if (rider.state !== "waiting") continue;
+		if (input.tick < rider.requestedAt + rider.patience) continue;
+		outOfPatience.push(rider);
+	}
+	outOfPatience.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 	const outputs: RidersOutput[] = [];
-	for (const rider of state.riders) {
-		if (
-			rider.state !== "waiting" ||
-			input.tick < rider.requestedAt + rider.patience
-		) {
-			riders.push(rider);
-			continue;
-		}
+	for (const rider of outOfPatience) {
 		outputs.push({ type: "cancel_trip", tripId: rider.tripId });
-		riders.push({ state: "cancelling", id: rider.id, tripId: rider.tripId });
+		state.riders.set(rider.tripId, {
+			state: "cancelling",
+			id: rider.id,
+			tripId: rider.tripId,
+		});
 	}
 	for (let i = 0; i < spawnCount; i++) {
-		spawned++;
+		state.spawned++;
 		const pickup = nextPickup();
 		let dropoff = randomCell(state.grid, demand);
 		while (distance(pickup, dropoff) === 0) {
@@ -234,12 +226,12 @@ function onTick(
 		}
 		const rider: Rider = {
 			state: "waiting",
-			id: `r-${spawned}` as RiderId,
-			tripId: `t-${spawned}` as TripId,
+			id: `r-${state.spawned}` as RiderId,
+			tripId: `t-${state.spawned}` as TripId,
 			requestedAt: input.tick,
 			patience: patience.int(120, 300),
 		};
-		riders.push(rider);
+		state.riders.set(rider.tripId, rider);
 		outputs.push({
 			type: "request_trip",
 			tick: input.tick,
@@ -249,8 +241,7 @@ function onTick(
 			dropoff,
 		});
 	}
-	riders.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-	return { state: { ...state, spawned, riders }, outputs };
+	return { state, outputs };
 }
 
 // Knuth's method: fine for the small per-tick means used here.
