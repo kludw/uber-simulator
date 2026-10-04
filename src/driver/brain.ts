@@ -89,17 +89,20 @@ type Picky = {
 // Online or offline follows the driver: offline only while state is offline.
 type Period = { n: number; startedAt: Tick; ticks: number };
 
+// periods: updated in place (ADR 0033).
 type Schedule = {
 	onlineTicks: TickRange;
 	offlineTicks: TickRange;
-	periods: ReadonlyMap<DriverId, Period>;
+	periods: Map<DriverId, Period>;
 };
 
-// Drivers kept sorted by ID: outputs and random draws follow that order.
+// drivers: by ID, inserted sorted by ID; outputs and random draws follow
+// that order. Entries are replaced in place (ADR 0033, 0036): replacing a
+// key's value keeps its position, so never delete and re-insert one.
 // schedule: null when always online. picky: null when accepting all.
 export type DriverShardState = {
 	grid: Grid;
-	drivers: Driver[];
+	drivers: Map<DriverId, Driver>;
 	schedule: Schedule | null;
 	picky: Picky | null;
 };
@@ -130,13 +133,13 @@ export function startDriverShard(
 		id,
 		cell: randomCell(config.grid, random),
 	}));
-	let drivers: Driver[];
+	const drivers = new Map<DriverId, Driver>();
 	let schedule: Schedule | null = null;
 	if (shifts.type === "always_online") {
-		drivers = placed.map(({ id, cell }) => idle(id, cell));
+		for (const { id, cell } of placed) drivers.set(id, idle(id, cell));
 	} else {
 		const periods = new Map<DriverId, Period>();
-		drivers = placed.map(({ id, cell }): Driver => {
+		for (const { id, cell } of placed) {
 			const stream = random.child(shiftStream(id, 0));
 			const online = stream.float() < shifts.startOnlineShare;
 			const range = online ? shifts.onlineTicks : shifts.offlineTicks;
@@ -145,22 +148,24 @@ export function startDriverShard(
 				startedAt: config.tick,
 				ticks: stream.int(range.min, range.max),
 			});
-			return online ? idle(id, cell) : { state: "offline", id, cell };
-		});
+			drivers.set(id, online ? idle(id, cell) : { state: "offline", id, cell });
+		}
 		schedule = {
 			onlineTicks: shifts.onlineTicks,
 			offlineTicks: shifts.offlineTicks,
 			periods,
 		};
 	}
-	const outputs: DriverWentOnline[] = drivers
-		.filter((driver) => driver.state === "idle")
-		.map((driver) => ({
+	const outputs: DriverWentOnline[] = [];
+	for (const driver of drivers.values()) {
+		if (driver.state !== "idle") continue;
+		outputs.push({
 			type: "driver.went_online",
 			tick: config.tick,
 			driverId: driver.id,
 			cell: driver.cell,
-		}));
+		});
+	}
 	const picky = startPicky(config.preferences, config.driverIds, random);
 	return { state: { grid: config.grid, drivers, schedule, picky }, outputs };
 }
@@ -272,7 +277,7 @@ function onOffer(
 	offer: Offer,
 	random: Random,
 ): Decision {
-	const offered = state.drivers.find((driver) => driver.id === offer.driverId);
+	const offered = state.drivers.get(offer.driverId);
 	if (offered === undefined) {
 		throw new Error(`offer for driver ${offer.driverId} outside this shard`);
 	}
@@ -291,21 +296,16 @@ function onOffer(
 			],
 		};
 	}
-	const drivers = state.drivers.map(
-		(driver): Driver =>
-			driver.id === offer.driverId
-				? {
-						state: "en_route",
-						id: driver.id,
-						cell: offered.cell,
-						tripId: offer.tripId,
-						pickup: offer.pickup,
-						dropoff: offer.dropoff,
-					}
-				: driver,
-	);
+	state.drivers.set(offered.id, {
+		state: "en_route",
+		id: offered.id,
+		cell: offered.cell,
+		tripId: offer.tripId,
+		pickup: offer.pickup,
+		dropoff: offer.dropoff,
+	});
 	return {
-		state: { ...state, drivers },
+		state,
 		outputs: [
 			{
 				type: "offer_accepted",
@@ -334,9 +334,7 @@ function declines(
 }
 
 function onPickedUp(state: DriverShardState, pickedUp: TripPickedUp): Decision {
-	const addressed = state.drivers.find(
-		(driver) => driver.id === pickedUp.driverId,
-	);
+	const addressed = state.drivers.get(pickedUp.driverId);
 	if (addressed === undefined) return { state, outputs: [] };
 	if (addressed.state !== "at_pickup") {
 		return reject(state, pickedUp, "driver_not_at_pickup");
@@ -357,9 +355,7 @@ function onCompleted(
 	state: DriverShardState,
 	completed: TripCompleted,
 ): Decision {
-	const addressed = state.drivers.find(
-		(driver) => driver.id === completed.driverId,
-	);
+	const addressed = state.drivers.get(completed.driverId);
 	if (addressed === undefined) return { state, outputs: [] };
 	if (addressed.state !== "at_dropoff") {
 		return reject(state, completed, "driver_not_at_dropoff");
@@ -387,20 +383,18 @@ function reject(
 }
 
 function replaceDriver(state: DriverShardState, replacement: Driver): Decision {
-	const drivers = state.drivers.map((driver) =>
-		driver.id === replacement.id ? replacement : driver,
-	);
-	return { state: { ...state, drivers }, outputs: [] };
+	state.drivers.set(replacement.id, replacement);
+	return { state, outputs: [] };
 }
 
 function onTripEnded(
 	state: DriverShardState,
 	ended: TripCancelled | TripOfferExpired,
 ): Decision {
-	const addressed = state.drivers.find(
-		(driver) => driver.id === ended.driverId,
-	);
-	// Not this driver's current trip: the driver isn't involved.
+	// No driver (cancelled before any match), or not this driver's current
+	// trip: the driver isn't involved.
+	if (ended.driverId === null) return { state, outputs: [] };
+	const addressed = state.drivers.get(ended.driverId);
 	if (
 		addressed === undefined ||
 		addressed.state === "idle" ||
@@ -429,33 +423,35 @@ function onTick(
 	random: Random,
 ): Decision {
 	const outputs: DriverShardOutput[] = [];
-	const drivers: Driver[] = [];
-	const periods = new Map(state.schedule?.periods);
-	for (const driver of state.drivers) {
+	const { drivers, schedule } = state;
+	// Only existing keys are set while iterating: order stays by ID.
+	for (const driver of drivers.values()) {
 		const changed =
-			state.schedule === null
+			schedule === null
 				? null
-				: changeShift(driver, state.schedule, input.tick, random);
-		if (changed !== null) {
-			drivers.push(changed.driver);
-			periods.set(driver.id, changed.period);
+				: changeShift(driver, schedule, input.tick, random);
+		if (schedule !== null && changed !== null) {
+			drivers.set(driver.id, changed.driver);
+			schedule.periods.set(driver.id, changed.period);
 			outputs.push(changed.output);
 			continue;
 		}
 		switch (driver.state) {
 			case "idle":
-				drivers.push(wander(driver, state.grid, input.tick, random, outputs));
+				drivers.set(
+					driver.id,
+					wander(driver, state.grid, input.tick, random, outputs),
+				);
 				break;
 			case "en_route":
-				drivers.push(driveToPickup(driver, input.tick, outputs));
+				drivers.set(driver.id, driveToPickup(driver, input.tick, outputs));
 				break;
 			case "offline":
 			case "at_pickup":
 			case "at_dropoff":
-				drivers.push(driver);
 				break;
 			case "on_trip":
-				drivers.push(driveToDropoff(driver, input.tick, outputs));
+				drivers.set(driver.id, driveToDropoff(driver, input.tick, outputs));
 				break;
 			default: {
 				const unhandled: never = driver;
@@ -463,9 +459,7 @@ function onTick(
 			}
 		}
 	}
-	const schedule =
-		state.schedule === null ? null : { ...state.schedule, periods };
-	return { state: { ...state, drivers, schedule }, outputs };
+	return { state, outputs };
 }
 
 // Ends the driver's current period if it is over; the next one starts this

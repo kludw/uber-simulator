@@ -442,6 +442,24 @@ describe("decideDriverShard on tick", () => {
 		]);
 	});
 
+	test("drivers still move in driver ID order after the first one accepts an offer", () => {
+		const random = scriptedRandom([0, 0, 9, 9, 9, 5]);
+		const started = startDriverShard(
+			{ grid, driverIds: [d1, d2], tick: tick(0) },
+			random,
+		);
+		const accepted = decideDriverShard(started.state, offer(d1), random);
+		const { outputs } = decideDriverShard(
+			accepted.state,
+			{ type: "clock.ticked", tick: tick(1) },
+			random,
+		);
+		expect(outputs).toEqual([
+			{ type: "driver.moved", tick: tick(1), driverId: d1, cell: cell(1, 0) },
+			{ type: "driver.moved", tick: tick(1), driverId: d2, cell: cell(9, 8) },
+		]);
+	});
+
 	test("driver keeps its wander target until it reaches it", () => {
 		const random = scriptedRandom([0, 0, 3, 0]);
 		const started = startDriverShard(
