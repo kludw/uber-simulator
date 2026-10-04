@@ -36,3 +36,4 @@ We will raise the persister's batch size from 1,000 to 10,000 messages, and the 
 - Backlog under load includes up to 10,000 ack pending (under 1 tick at 12k, 0.5 at 20k), inside ADR 0038's 3-tick bound.
 - A crash or failed batch redelivers up to 10,000 events instead of 1,000; FINAL collapses them as before.
 - The existing durable consumer is updated in place on the next persister start (ADR 0029's add-then-update).
+- Measured on CI ([After raising the batch size](../performance.md#after-raising-the-batch-size)): 12k and 20k greedy each keep up in two runs; insert 54-88 ms per 10,000 events; the persister now spends most of each round waiting in fetch for a full batch, and decode is its largest busy phase.
