@@ -32,7 +32,7 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0026 | [Brains reject invalid inputs with `input_rejected` outputs](0026-brains-reject-invalid-inputs.md) | Accepted |
 | 0027 | [In-process bus, service shell, runner](0027-in-process-bus-and-runner.md) | Accepted |
 | 0028 | [NATS bus: subjects and delivery](0028-nats-bus-subjects-and-delivery.md) | Accepted |
-| 0029 | [Event persistence](0029-event-persistence.md)                           | Accepted |
+| 0029 | [Event persistence](0029-event-persistence.md)                           | Accepted (batch size superseded by 0039) |
 | 0030 | [Batched matching](0030-batched-matching.md)                            | Accepted |
 | 0031 | [Hotspot demand](0031-hotspot-demand.md)                                | Accepted |
 | 0032 | [Driver shifts](0032-driver-shifts.md)                                  | Accepted |
@@ -42,3 +42,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0036 | [Scale to 50k](0036-scale-to-50k.md)                                    | Accepted |
 | 0037 | [End-to-end load test](0037-end-to-end-load-test.md)                    | Accepted (persister trend criterion superseded by 0038) |
 | 0038 | [Persister backlog criterion](0038-persister-backlog-criterion.md)      | Accepted |
+| 0039 | [Persister batch size](0039-persister-batch-size.md)                    | Accepted |

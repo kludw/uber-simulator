@@ -447,3 +447,23 @@ Shares are of the summed phases. Events per round is 999.9 in every run (rounded
 - **Decode**: 7.7-10.2 ms per round, about 8-10 µs per event. **Ack**: under 1.1%, since `ack()` only queues.
 - **12k, falling behind or not**: 90.1 ms per round is 11.1k events/s, below the 12.1k published; 82.7 ms is 12.1k, level with it. The two runs differ by 7.4 ms per round, 4.6 ms of it in insert.
 - **Ack pending at 1,000**: every round fetched a full 1,000 messages, and the consumer allows 1,000 unacked, so during each round's decode and insert the whole batch is ack pending. That matches the report's ack pending max of 1,000 in all four runs. The 1k smoke run's ack pending climbing to about 958 is not explained by these runs (1k wasn't timed).
+
+### After raising the batch size
+
+The persister after [ADR 0039](adr/0039-persister-batch-size.md) (up to 10,000 events per round, max ack pending 10,000), [#166](https://github.com/kludw/uber-simulator/issues/166). Measured 2026-10-04 at `e122269`, same method as above (greedy, 600 ticks, `ubuntu-latest`, 4 CPUs, 1-minute load average 0.02-0.58 at end). Totals over every `rounds_timed` entry of a run.
+
+- Runs: [37231337122](https://github.com/kludw/uber-simulator/actions/runs/37231337122), [37231342238](https://github.com/kludw/uber-simulator/actions/runs/37231342238), each 12k and 20k greedy.
+
+| Drivers | Run | Settle p95 | Backlog second-half max (limit) | Rounds | Events per round | ms per round | Fetch | Decode | Insert | Ack |
+| ---: | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 12,000 | [37231337122](https://github.com/kludw/uber-simulator/actions/runs/37231337122) | 262.4 | 21,790 (36,354), pass | 730 | 9,977 | 825.6 | 80.9% (668.2 ms) | 11.5% (94.8 ms) | 6.5% (53.8 ms) | 1.1% (8.9 ms) |
+| 12,000 | [37231342238](https://github.com/kludw/uber-simulator/actions/runs/37231342238) | 190.9 | 21,820 (36,354), pass | 730 | 9,977 | 825.4 | 82.9% (684.3 ms) | 9.6% (79.2 ms) | 6.7% (55.4 ms) | 0.8% (6.5 ms) |
+| 20,000 | [37231337122](https://github.com/kludw/uber-simulator/actions/runs/37231337122) | 296.7 | 30,163 (60,587), pass | 1,214 | 9,998 | 495.7 | 64.7% (320.6 ms) | 16.2% (80.4 ms) | 17.8% (88.0 ms) | 1.4% (6.7 ms) |
+| 20,000 | [37231342238](https://github.com/kludw/uber-simulator/actions/runs/37231342238) | 433.9 | 30,138 (60,587), pass | 1,214 | 9,998 | 496.6 | 62.2% (308.8 ms) | 21.8% (108.3 ms) | 14.3% (70.9 ms) | 1.7% (8.5 ms) |
+
+All four runs pass every criterion (ADR 0037 with ADR 0038's backlog bound): 0 overruns, 0 slow consumers, drain 2.0-2.2 s (empty at the first check), no failed inserts. **Greedy, live: at least 20k** (two runs), the milestone 14 target; above 20k is not measured here (next ticket).
+
+- **Insert is no longer the cost**: 54-88 ms per 10,000-event insert, against 62-67 ms per 1,000 before, about 8-12x less per event.
+- **The persister now waits for events**: ms per round is events per round over the publish rate (10,000 / 12.1k = 825 ms, 10,000 / 20.2k = 495 ms), and fetch, which includes waiting for a full batch, takes 62-83% of it. Without fetch, decode + insert + ack is 142-188 ms per 10,000 events, about 53-70k events/s; how much of fetch is delivery rather than waiting isn't separated, so that is an upper bound on headroom, not a measured limit.
+- **Decode is now the largest busy phase at 20k** (80-108 ms, 8-11 µs per event, unchanged per event).
+- **Backlog**: ack pending max 10,000 in every run (one full round in flight). The second-half max is 1.8 ticks of events at 12k and 1.5 at 20k, inside the 3-tick bound; why it is higher in ticks at 12k (where a batch takes 825 ms to fill) is not separated by these samples.

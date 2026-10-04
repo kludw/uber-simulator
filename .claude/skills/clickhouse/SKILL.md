@@ -30,6 +30,7 @@ Snapshot verified against clickhouse.com/docs + clickhouse-js README/CHANGELOG o
 
 1. Batch client-side. Docs: at least 1,000 rows per insert, ideally 10,000–100,000. Many small sync inserts cause "too many parts" errors.
 2. Can't batch enough (e.g. live mode, low volume)? Use async inserts with `clickhouse_settings: { async_insert: 1, wait_for_async_insert: 1 }` (docs' strong recommendation for async mode).
+   The persister batches up to 10,000 rows per insert and keeps async-with-wait for its low-volume rounds (ADR 0029, 0039). Each insert has a fixed ~60 ms cost: raise rows per insert before anything else.
 3. Adapter buffers events, flushes on size or interval, flushes on shutdown before `close()`.
 
 ## Tables

@@ -336,6 +336,45 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 		});
 	}, 20_000);
 
+	test("inserts a backlog in batches of up to 10,000 events", async () => {
+		const source = testSource();
+		const nc = await natsConnection();
+		// A first start creates the stream, so the backlog can wait in it.
+		const creating = await succeeded(
+			startPersister({ nats: nc, clickhouse, source, log: () => {} }),
+		);
+		creating.stop();
+		await creating.stopped;
+		for (let tick = 1; tick <= 12_000; tick++) {
+			publish(nc, source, { type: "clock.ticked", tick }, "run-f");
+		}
+		const jsm = await jetstreamManager(nc);
+		while ((await jsm.streams.info(source.stream)).state.messages < 12_000) {
+			await Bun.sleep(50);
+		}
+		const batchSizes: number[] = [];
+		const recording: Pick<ClickHouse, "insertEvents" | "command"> = {
+			command: clickhouse.command,
+			insertEvents(rows: EventRow[]) {
+				batchSizes.push(rows.length);
+				return Promise.resolve({ ok: true, value: undefined });
+			},
+		};
+		const persister = await succeeded(
+			startPersister({
+				nats: nc,
+				clickhouse: recording,
+				source,
+				log: () => {},
+			}),
+		);
+		await drained(nc, source);
+		persister.stop();
+		await persister.stopped;
+
+		expect(batchSizes).toEqual([10_000, 2000]);
+	}, 20_000);
+
 	test("logs rounds, events, and per-phase ms every 10 s and on stop", async () => {
 		const source = testSource();
 		const nc = await natsConnection();

@@ -48,7 +48,10 @@ export const simEvents: EventSource = {
 };
 
 // Fetch up to this many messages or for this long, whichever comes first.
-const batchSize = 1000;
+// Each insert costs about 60 ms however small, so a round of 10,000 events
+// does about 10x the work of a 1,000-event round in about 2-3x the time
+// (ADR 0039).
+const batchSize = 10_000;
 const batchWaitMs = 1000;
 // Waits between insert attempts for one batch: 5 attempts, 15 s of waiting.
 // Each attempt can itself take up to the client's 30 s request timeout, so a
