@@ -20,8 +20,19 @@ export type LoadtestMeasurement = {
 	slowConsumers: number;
 	// Largest /connz pending_bytes sampled.
 	pendingBytes: { observerMax: number; anyMax: number };
-	host: { cpus: number; loadAverage: [number, number, number] };
+	host: {
+		cpus: number;
+		cpuModel: string;
+		loadAverage: [number, number, number];
+	};
 	peakRssBytes: { service: string; bytes: number }[];
+	// wallMs: from the service's spawn to its exit.
+	cpuTime: {
+		service: string;
+		userMicros: number;
+		systemMicros: number;
+		wallMs: number;
+	}[];
 };
 
 // ADR 0037's criteria; ADR 0036's band for settle p95; ADR 0038's persister
@@ -64,7 +75,7 @@ export function loadtestReport(
 		`requests per minute: ${args.requestsPerMinute}`,
 		`matching: ${matching.type === "batched" ? `batched (window ${matching.windowTicks} ticks)` : "greedy"}`,
 		`ticks: ${args.ticks} (${settle.ticksObserved} observed), speed 1`,
-		`host: ${measurement.host.cpus} CPUs, load average ${load1.toFixed(2)} ${load5.toFixed(2)} ${load15.toFixed(2)} (1, 5, 15 min, at end)`,
+		`host: ${measurement.host.cpus} CPUs (${measurement.host.cpuModel}), load average ${load1.toFixed(2)} ${load5.toFixed(2)} ${load15.toFixed(2)} (1, 5, 15 min, at end)`,
 		`settle ms: mean ${settle.settleMs.mean.toFixed(1)}, p95 ${settle.settleMs.p95.toFixed(1)}, max ${settle.settleMs.max.toFixed(1)}`,
 		`overruns: ${settle.overruns} of ${settle.ticksObserved} ticks (${(overrunShare * 100).toFixed(1)}%)`,
 		`last tick: events after the ${measurement.settleGraceMs / 1000} s grace window not observed, so its settle may be understated`,
@@ -76,6 +87,7 @@ export function loadtestReport(
 		`persister backlog second-half max: ${backlog === undefined ? "too few samples" : `${backlog.secondHalfMax}, limit ${backlog.limit.toFixed(0)} (${maxTicksBehind} ticks of ${eventsPerTick.toFixed(1)} events)`}`,
 		`persister drain: ${drain.type === "drained" ? `${(drain.ms / 1000).toFixed(1)} s` : `did not drain in ${drainMinutes} min (pending ${drain.pending})`}`,
 		`peak rss MiB: ${measurement.peakRssBytes.map(({ service, bytes }) => `${service} ${(bytes / 2 ** 20).toFixed(1)}`).join(", ")}`,
+		`cpu s (user + system, share of the service's wall time): ${measurement.cpuTime.map(({ service, userMicros, systemMicros, wallMs }) => `${service} ${(userMicros / 1e6).toFixed(1)} + ${(systemMicros / 1e6).toFixed(1)} (${(((userMicros + systemMicros) / 1000 / wallMs) * 100).toFixed(0)}%)`).join(", ")}`,
 		"criteria (ADRs 0037, 0038; supported live = the slower of two runs passes all):",
 		...criteria.map(
 			([passed, criterion]) => `  ${passed ? "pass" : "FAIL"}: ${criterion}`,

@@ -79,6 +79,8 @@ type Child = {
 	name: string;
 	subprocess: Bun.Subprocess<"ignore", "pipe", "inherit">;
 	output: Promise<void>;
+	spawnedAtMs: number;
+	exitedAtMs: number | undefined;
 	// Set once the load test stops it; an exit before is a failure.
 	stopping: boolean;
 };
@@ -96,10 +98,13 @@ function spawn(service: Service, onLine: (line: string) => void = () => {}) {
 		name: service.name,
 		subprocess,
 		output: forwardLines(subprocess.stdout, `[${service.name}] `, onLine),
+		spawnedAtMs: performance.now(),
+		exitedAtMs: undefined,
 		stopping: false,
 	};
 	children.push(child);
 	void subprocess.exited.then((code) => {
+		child.exitedAtMs = performance.now();
 		if (!child.stopping) markChildFailed(`${service.name} exited (${code})`);
 	});
 	return child;
@@ -290,12 +295,29 @@ console.log(
 		drain,
 		slowConsumers: slowConsumersAfter - slowConsumersBefore,
 		pendingBytes,
-		host: { cpus: cpus().length, loadAverage: [load1, load5, load15] },
+		host: {
+			cpus: cpus().length,
+			cpuModel: cpus()[0]?.model ?? "unknown",
+			loadAverage: [load1, load5, load15],
+		},
 		peakRssBytes: children.map((child) => ({
 			service: child.name,
 			// Documented in bytes (bun.com/docs/runtime/child-process).
 			bytes: child.subprocess.resourceUsage()?.maxRSS ?? 0,
 		})),
+		cpuTime: children.map((child) => {
+			// Documented in microseconds (bun.com/docs/runtime/child-process).
+			// Typed number, but bigint at runtime in Bun 1.4.2 (checked on Linux
+			// and macOS): Number() works for both.
+			const usage = child.subprocess.resourceUsage()?.cpuTime;
+			return {
+				service: child.name,
+				userMicros: Number(usage?.user ?? 0),
+				systemMicros: Number(usage?.system ?? 0),
+				// Every child has exited by now (stopChildren above).
+				wallMs: (child.exitedAtMs ?? performance.now()) - child.spawnedAtMs,
+			};
+		}),
 	}),
 );
 process.exit(0);
