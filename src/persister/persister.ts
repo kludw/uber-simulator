@@ -177,6 +177,7 @@ export async function startPersister(options: {
 				}
 				failedFetches += 1;
 				options.log({ type: "fetch_failed", attempt: failedFetches, cause });
+				if (stop.signal.aborted) break;
 				await Bun.sleep(delay);
 				continue;
 			}

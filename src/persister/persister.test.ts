@@ -363,6 +363,10 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 		await fetchFailed;
 		await jsm.consumers.add(source.stream, consumer.config);
 		publish(nc, source, { type: "clock.ticked", tick: 1 }, "run-g");
+		// Stored before drained() looks, or it could see nothing pending yet.
+		while ((await jsm.streams.info(source.stream)).state.messages < 1) {
+			await Bun.sleep(50);
+		}
 		await drained(nc, source);
 		persister.stop();
 		await persister.stopped;
@@ -389,7 +393,10 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 		await nc.close();
 		const stopped = await persister.stopped;
 
-		expect(stopped.ok || stopped.error.type).toBe("fetch_failed");
+		expect(stopped).toMatchObject({
+			ok: false,
+			error: { type: "fetch_failed" },
+		});
 	}, 20_000);
 
 	test("inserts a backlog in batches of up to 10,000 events", async () => {
