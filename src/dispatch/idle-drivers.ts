@@ -6,7 +6,7 @@ export type IdleDriver = { driverId: DriverId; cell: Cell };
 // Square buckets of cellsPerBucket x cellsPerBucket cells. Below
 // linearScanBelow drivers left, a linear scan beats searching mostly empty
 // buckets (ADR 0036). Defaults measured at 50k drivers (docs/performance.md).
-export type IdleDriverSearch = {
+type IdleDriverSearch = {
 	cellsPerBucket: number;
 	linearScanBelow: number;
 };
@@ -17,8 +17,11 @@ const defaultSearch: IdleDriverSearch = {
 };
 
 // One tick's idle drivers, owned by the caller for that tick: takeNearest
-// removes the driver it returns.
-export type IdleDriverIndex = {
+// removes the driver it returns. Opaque: callers can't name `internals`.
+const internals: unique symbol = Symbol("idle driver index");
+export type IdleDriverIndex = { readonly [internals]: Index };
+
+type Index = {
 	grid: Grid;
 	search: IdleDriverSearch;
 	drivers: readonly IdleDriver[];
@@ -41,7 +44,7 @@ export function indexIdleDrivers(
 		{ length: columns * rows },
 		(): IdleDriver[] => [],
 	);
-	const index = {
+	const index: Index = {
 		grid,
 		search,
 		drivers,
@@ -51,14 +54,14 @@ export function indexIdleDrivers(
 		buckets,
 	};
 	for (const driver of drivers) bucketOf(index, driver.cell).push(driver);
-	return index;
+	return { [internals]: index };
 }
 
 // A cell off the grid (bad input from another service; grid bounds are an
 // event log invariant) goes to the nearest edge bucket. The search stays
 // exact: from an in-grid pickup, the true cell is at least as far as the
 // clamped one, so the ring bound still holds.
-function bucketOf(index: IdleDriverIndex, cell: Cell): IdleDriver[] {
+function bucketOf(index: Index, cell: Cell): IdleDriver[] {
 	const size = index.search.cellsPerBucket;
 	const column = Math.min(Math.floor(cell.x / size), index.columns - 1);
 	const row = Math.min(Math.floor(cell.y / size), index.rows - 1);
@@ -70,10 +73,11 @@ function bucketOf(index: IdleDriverIndex, cell: Cell): IdleDriver[] {
 // The driver nearest to the pickup, ties to the lowest ID (plain string
 // order), never one taken or excluded; exactly what a linear scan returns.
 export function takeNearest(
-	index: IdleDriverIndex,
+	idle: IdleDriverIndex,
 	pickup: Cell,
 	excluded: ReadonlySet<DriverId>,
 ): DriverId | undefined {
+	const index = idle[internals];
 	const remaining = index.drivers.length - index.taken.size;
 	// The ring bound holds for in-grid pickups only (see bucketOf); a pickup
 	// off the grid is bad input, so take the scan, exact by construction.
@@ -86,7 +90,11 @@ export function takeNearest(
 	if (nearest === undefined) return undefined;
 	index.taken.add(nearest.driverId);
 	const bucket = bucketOf(index, nearest.cell);
-	bucket.splice(bucket.indexOf(nearest), 1);
+	const position = bucket.indexOf(nearest);
+	if (position === -1) {
+		throw new Error(`${nearest.driverId} not in its bucket`);
+	}
+	bucket.splice(position, 1);
 	return nearest.driverId;
 }
 
@@ -107,7 +115,7 @@ function closer(nearest: Nearest, driver: IdleDriver, pickup: Cell): Nearest {
 }
 
 function scanAll(
-	index: IdleDriverIndex,
+	index: Index,
 	pickup: Cell,
 	excluded: ReadonlySet<DriverId>,
 ): IdleDriver | undefined {
@@ -125,7 +133,7 @@ function scanAll(
 // at up to twice the distance of ring r+1's nearest, so keep expanding until
 // nothing in ring r or beyond can be as near as the best found.
 function searchRings(
-	index: IdleDriverIndex,
+	index: Index,
 	pickup: Cell,
 	excluded: ReadonlySet<DriverId>,
 ): IdleDriver | undefined {
