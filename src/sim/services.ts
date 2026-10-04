@@ -9,6 +9,7 @@ import {
 import {
 	type DriverShardInput,
 	decideDriverShard,
+	type Preferences,
 	type Shifts,
 	startDriverShard,
 } from "../driver/brain.ts";
@@ -36,6 +37,8 @@ export type SimConfig = {
 	demand?: Demand | undefined;
 	// Driver shards' shift model (ADR 0032); always online when unset.
 	shifts?: Shifts | undefined;
+	// Driver shards' offer preferences (ADR 0035); accept all when unset.
+	preferences?: Preferences | undefined;
 };
 
 export type Rejected = InputRejected<Message, string>;
@@ -78,6 +81,7 @@ export function driverShardService(
 						driverIds,
 						tick: startTick,
 						shifts: config.shifts,
+						preferences: config.preferences,
 					},
 					random,
 				),

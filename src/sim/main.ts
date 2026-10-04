@@ -20,14 +20,22 @@ if (!args.ok) {
 	process.exit(2);
 }
 
-const { bus, compare, windowTicks, demandName, shiftsName, config } =
-	args.value;
+const {
+	bus,
+	compare,
+	windowTicks,
+	demandName,
+	shiftsName,
+	preferencesName,
+	config,
+} = args.value;
 const { count, driversPerShard } = config.driverShards;
 const loadLines = [
 	`demand: ${demandName}`,
 	`requests per minute: ${config.requestsPerMinute}`,
 	`driver shards: ${count} x ${driversPerShard}`,
 	`shifts: ${shiftsName}`,
+	`preferences: ${preferencesName}`,
 ];
 const batched: Matching = { type: "batched", windowTicks };
 
