@@ -71,7 +71,7 @@ Watch-only: a live run, or a stored run's replay with `?replay=<runId>` (0034). 
 9. **Scale to 10k drivers** (0033): profile-first (`docs/performance.md`), owned brain state for dispatch positions, rectangular matching, streaming run checks; target p95 < 1 s per tick at 10k. Done.
 10. **Replay** (0034): `bun run replay -- --run <id>` republishes a stored run from ClickHouse on `replay.<id>.*`, paced by tick; the UI watches it with `?replay=<id>`. Done.
 11. **Driver preferences** (0035): drivers decline offers beyond a per-driver max pickup distance or at random (`picky` preset, `--preferences off|picky`). Done.
-12. **Scale to 50k drivers** (0036): indexed brain state, spatial driver lookup in dispatch, exact results; target unprofiled p95 < 1 s per tick at 50k (two CI runs each).
+12. **Scale to 50k drivers** (0036): indexed brain state, spatial driver lookup in dispatch, exact results; target unprofiled p95 < 1 s per tick at 50k (two CI runs each). Done.
 
 ## Later (not v1)
 
