@@ -106,19 +106,22 @@ jobs:
           cap=$(awk "BEGIN { print int($TICKS / 60 + $DRAIN_MINUTES + 5) }")
           set +e
           # bun run loadtest, called directly so timeout's SIGTERM reaches the
-          # load test, which then stops its services.
-          timeout "${cap}m" bun src/loadtest/main.ts --drivers "$DRIVERS" --matching "$MATCHING" \
+          # load test, which then stops its services; SIGKILL 1 min later if
+          # it hasn't exited.
+          timeout -k 1m "${cap}m" bun src/loadtest/main.ts --drivers "$DRIVERS" --matching "$MATCHING" \
             --ticks "$TICKS" --drain-minutes "$DRAIN_MINUTES" \
             > out/report.txt 2> out/services.log
           code=$?
           set -e
           # 0: report printed (verdicts inside). 1: stack or infra failed, 2:
-          # invalid args (both explained in services.log). timeout exits 124;
-          # the OOM killer sends SIGKILL (137).
+          # invalid args (both explained in services.log); a service that
+          # dies (OOM-killed included) also exits 1, named in services.log.
+          # timeout exits 124, or 137 when it had to SIGKILL; 137 is also the
+          # OOM killer taking the load test itself.
           case $code in
             0) status="" ;;
             124) status="did not finish in ${cap} min (killed)" ;;
-            137) status="out of memory (killed)" ;;
+            137) status="killed (SIGKILL: out of memory, or no exit 1 min after the ${cap} min cap)" ;;
             *) status="failed (exit $code)" ;;
           esac
           if [ -n "$status" ]; then echo "status: $status" >> out/report.txt; fi
