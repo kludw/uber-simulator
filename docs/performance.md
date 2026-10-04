@@ -1,6 +1,6 @@
 # Performance
 
-Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), and 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12).
+Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12), and 76k-500k in [Ceiling](#ceiling).
 
 ## Method
 
@@ -336,3 +336,34 @@ Grouped by nearest named `src/` caller, as in [Toward 50k](#toward-50k) (self-ti
 - The ADR 0036 targets are gone from the top: driver-shard event handlers (44.0% / 35.5% before; now `onPickedUp` + `onOffer` + `onCompleted`) are 0.30% / 0.09%, the rider brain (20.0% / 17.4%) is 1.3% / 0.4%, and greedy's nearest-driver search (`indexIdleDrivers` + `searchRings` + `closer`) is 3.9%.
 - Greedy has no dominant hot spot left: per-tick work proportional to the fleet (moving every driver, every driver report, every message through the bus) and dispatch's per-tick walk of live trips and idle drivers.
 - Batched is now 74% matching: the exact Hungarian solve, O(queued² × idle) per batch tick, and the dense cost matrix it reads. One tick in 5 is a batch tick, so its p95 falls on one. This is where ADR 0036's follow-up (k-nearest pruning vs dispatch sharding) would act if batched ever misses the target.
+
+## Ceiling
+
+How far the in-process run goes past 50k. Measured 2026-10-04 at `e16f94a` (master after [#152](https://github.com/kludw/uber-simulator/pull/152)), [#154](https://github.com/kludw/uber-simulator/issues/154).
+
+### Method
+
+- Same command, scenario, and runner as [After milestone 12](#after-milestone-12): 2 driver shards, demand at the spec ratio, seed 1, 5-tick batch window, unprofiled (`-f cpu_profile=false`), 4 CPUs, 15,989 MiB, 1-minute load average 0.28-1.08 at start.
+- 300 ticks, not 600, and **one run per case**. ADR 0036's band rule needs the slower of two runs, so no case here is judged "reliably met"; the 610 ms band is quoted for context only. Single runs varied by up to 32% in mean at 50k ([After milestone 12](#after-milestone-12)).
+- Runs ([workflow](https://github.com/kludw/uber-simulator/actions/workflows/bench.yaml)):
+  - Greedy, 100k / 200k / 500k: [37204837077](https://github.com/kludw/uber-simulator/actions/runs/37204837077).
+  - Batched, 76k / 100k: [37204843377](https://github.com/kludw/uber-simulator/actions/runs/37204843377).
+
+### Results
+
+| Drivers | Matching | Requests/min | Mean ms/tick | p95 ms/tick | Messages | Peak RSS | Heap at end (objects) | Status |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 100,000 | greedy | 10,000 | 73.92 | 90.32 | 30,552,757 | 327.9 MiB | 104.5 MiB (1.77 M) | finished |
+| 200,000 | greedy | 20,000 | 134.53 | 163.12 | 61,111,147 | 540.4 MiB | 156.8 MiB (2.51 M) | finished |
+| 500,000 | greedy | 50,000 | 507.94 | 612.35 | 152,550,882 | 1,066.6 MiB | 458.2 MiB (8.13 M) | finished |
+| 76,000 | batched | 7,600 | 278.56 | 1,290.43 | 23,219,136 | 2,271.9 MiB | 266.9 MiB (0.99 M) | finished |
+| 100,000 | batched | 10,000 | 504.60 | 2,472.08 | 30,551,812 | 3,168.6 MiB | 451.3 MiB (1.29 M) | finished |
+
+All single 300-tick runs. "finished" means all 300 ticks ran, not that the run kept real time (1,000 ms per tick).
+
+- **Greedy keeps real time up to 500k** in these runs: p95 612.35 ms, under 1,000 ms (1.63× headroom) but 2.35 ms above the 610 ms band, so by ADR 0036's rule it would not count as reliably met even with a second run this close. Above 500k is not measured.
+- **Batched misses at 76k**: p95 1,290.43 ms (mean 278.56 ms); its p95 falls on batch ticks, as at 50k. At 50k it met the target narrowly (p95 566.24-599.53 ms, 600 ticks, two runs). So the batched ceiling lies between 50k and 76k; nothing in between was run.
+- **Greedy growth per driver.** Messages grow linearly (305.1-305.6 per driver over 300 ticks). Per-tick time does not: 100k → 200k (2× drivers) mean 1.82×, p95 1.81×; 200k → 500k (2.5×) mean 3.78×, p95 3.75×. Mean ms per tick per 1,000 drivers: 0.74, 0.67, 1.02. Three single runs on a shared runner can't fix an exponent; they show roughly linear cost to 200k and faster-than-linear growth between 200k and 500k, not attributed (no profile). Peak RSS grows about 2.2 KiB per extra driver from 100k to 200k and 1.8 KiB from 200k to 500k.
+- Batched, 76k → 100k (1.32× drivers): mean 1.81×, p95 1.92×, peak RSS 1.39×. At 100k, batched peak RSS is 9.7× greedy's (3,168.6 vs 327.9 MiB); what sets it is not measured (see [Batched peak memory](#batched-peak-memory)).
+- Not compared directly with the 50k rows: those are 600-tick runs, these 300.
+- In process only: one Bun process, in-memory bus. The distributed stack over NATS (`bun run dev`) is not measured here; it is measured separately ([milestone 13](spec.md#milestones), [ADR 0037](adr/0037-end-to-end-load-test.md)).
