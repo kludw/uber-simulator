@@ -1,6 +1,6 @@
 # Performance
 
-Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), and 1-hour runs in [Long runs](#long-runs).
+Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), and 20k-50k in [Toward 50k](#toward-50k).
 
 ## Method
 
@@ -165,3 +165,81 @@ Two runs per case, 10k drivers, at `50d8d45`:
 - Unprofiled, per-tick cost at 3,600 ticks is flat against 600 (1.01×, 0.97×); same-case runs differ by up to 64%, more than any growth left. Profiled greedy is 1.35×; its 3,600-tick profile has no hot spot sized by trips (no `Map` copy; `offerPairs` now walks only trips not yet ended), and profiled runs differ from unprofiled ones in both directions (600-tick greedy is faster profiled), so that gap isn't attributed further.
 - Top hot spots at 3,600 ticks are now the driver-shard and rider brains' copy-on-update arrays (`map` 21.8% from `replaceDriver` / `onPickedUp` / `onOffer`, `filter` 9.0% from rider `removeRider`, `find` 5.6% at greedy; `map` 12.0% self at batched), sized by drivers or riders per shard, not by run length; then dispatch's per-tick matching (`greedyPairs`, `offerPairs`, `cellOf`). Owned state (ADR 0033) would apply to those arrays if a profile ever makes them the bottleneck.
 - Heap at the end (unprofiled, 3,600 ticks) is 33-44 MiB, still growing with trips: dispatch keeps each ended trip.
+
+## Toward 50k
+
+Measured 2026-10-04 at `1bc3a92` ([#143](https://github.com/kludw/uber-simulator/issues/143), milestone [#142](https://github.com/kludw/uber-simulator/issues/142)): 20k and 50k drivers, measurements only. Targets (#142): 50k drivers, greedy and batched, p95 < 1,000 ms per tick on the CI runner; memory grows with trips, not messages.
+
+### Method
+
+- Same command, scenario, runner, and Bun version as [Method](#method): 2 driver shards (10,000 or 25,000 drivers each), demand at the spec ratio (2,000 requests/min at 20k, 5,000 at 50k), 600 ticks. 4 CPUs, 15,989 MiB, 1-minute load average 0.14-1.59 at start.
+- Runs ([workflow](https://github.com/kludw/uber-simulator/actions/workflows/bench.yaml)), all finished 600 ticks inside the 60 min cap:
+  - [37197242785](https://github.com/kludw/uber-simulator/actions/runs/37197242785): 20k / 50k × greedy / batched, CPU-profiled.
+  - [37197252026](https://github.com/kludw/uber-simulator/actions/runs/37197252026): 50k greedy and batched, no profiler (`-f cpu_profile=false`).
+- One run per case; runner noise (up to 64% between same-case runs above) applies.
+- Hot-spot shares come from each run's `--cpu-prof-md` summary (self time; `file:line` as the profile reports it). The grouped shares under Candidate fixes are computed from the same `.cpuprofile` files by assigning each sample to its nearest named caller in `src/` (so a native `map` / `find` / `filter` counts toward the brain function that called it); each sample counts once.
+
+### Results
+
+| Drivers | Matching | Profiled | Mean ms/tick | p95 ms/tick | Messages | Peak RSS | Heap at end (objects) | Status |
+| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 20,000 | greedy | yes | 58.84 | 78.13 | 12,218,108 | 230.7 MiB | 43.0 MiB (0.67 M) | finished |
+| 20,000 | batched | yes | 71.21 | 208.14 | 12,217,967 | 363.4 MiB | 61.7 MiB (0.50 M) | finished |
+| 50,000 | greedy | yes | 340.41 | 477.96 | 30,534,879 | 729.9 MiB | 52.8 MiB (0.86 M) | finished |
+| 50,000 | batched | yes | 447.11 | 1,317.96 | 30,534,210 | 1,677.6 MiB | 477.5 MiB (1.60 M) | finished |
+| 50,000 | greedy | no | 194.36 | 267.24 | 30,534,879 | 254.9 MiB | 78.8 MiB (1.11 M) | finished |
+| 50,000 | batched | no | 336.23 | 972.13 | 30,534,210 | 1,236.8 MiB | 122.1 MiB (0.83 M) | finished |
+
+- p95 target at 50k, unprofiled: greedy 267.24 ms, met with 3.7× headroom. Batched 972.13 ms, under 1,000 by 2.8%, less than run-to-run noise, so not reliably met; profiled it is 1,317.96 ms.
+- Messages are 2.50× from 20k to 50k and 5.00× from 10k (6,109,043 greedy, [After milestone 9 fixes](#after-milestone-9-fixes)), proportional to fleet and demand.
+- Per-tick cost grows faster than the fleet. Profiled, 20k → 50k (2.5×): greedy mean 5.8×, batched mean 6.3× (p95 6.1×, 6.3×), close to 2.5² = 6.25. Unprofiled, 10k → 50k (5×; 10k from run 37156733825 at `424942c`, two milestones earlier): greedy mean 8.7×, batched 12.4×. Two or three points per case and one run each don't pin down an exponent.
+- The profiler costs more here than at 10k (where profiled and unprofiled means were within 3%): at 50k profiled / unprofiled is 1.75× (greedy) and 1.33× (batched) in mean ms per tick, 1.79× and 1.36× at p95. Shares below are from profiled runs; whether they hold unprofiled is not measured.
+
+### Top hot spots (CPU profiles, self time)
+
+| Case | Function | Share (self) |
+| --- | --- | ---: |
+| 50k greedy | `map` (native), called from driver-shard `replaceDriver`, rider `onPickedUp`, driver-shard `onOffer` (copies of `state.drivers` / `state.riders` per event) | 15.4% |
+| 50k greedy | `greedyPairs` (`src/dispatch/brain.ts:239`) | 13.9% |
+| 50k greedy | `cellOf` (`src/dispatch/brain.ts:275`), called from `greedyPairs` | 9.4% |
+| 50k greedy | driver-shard `onPickedUp` (`src/driver/brain.ts:337`, `state.drivers.find`) | 7.9% |
+| 50k greedy | `map` callbacks: rider brain / `src/driver/brain.ts:391` (`replaceDriver`) / driver brain | 7.3% / 5.7% / 4.7% |
+| 50k greedy | `find` (native), from driver-shard `onCompleted`, `onPickedUp`, `onOffer` | 6.6% |
+| 50k greedy | `filter` (native), from rider `removeRider` (`src/rider/brain.ts:197`) | 5.8% |
+| 50k batched | `cellOf` (`src/dispatch/brain.ts:275`), called from the `batchedPairs` cost matrix | 18.6% |
+| 50k batched | `map` (native), from `batchedPairs` and the driver-shard and rider brains | 13.6% |
+| 50k batched | `solve` (Hungarian loop, `src/dispatch/matching.ts:58`) | 8.9% (+1.5% at :57) |
+| 50k batched | `map` callbacks: driver brain / rider brain | 7.8% / 5.9% |
+| 50k batched | `filter` (native), rider `removeRider` | 5.0% |
+| 50k batched | `flat` (native), from `solve` (`src/dispatch/matching.ts:48`, the sentinel sum over the whole cost matrix) | 2.7% |
+| 20k greedy | `map` / `greedyPairs` / driver-shard `onPickedUp` | 12.8% / 12.6% / 7.6% |
+| 20k batched | `cellOf` / `map` / `solve` (`:58`) | 15.7% / 14.2% / 7.6% |
+
+- No single function dominates. The costs sit in two places: brains that scan and copy a whole array per event (driver shards: `state.drivers`, 25,000 per shard at 50k; riders: `state.riders`), and dispatch matching that does work per (queued trip, idle driver) pair every tick (greedy) or every batch tick (batched).
+- Everything else measured is small at 50k: bus `drain` + `shift` 1.0% total (greedy), `onDriverReported` 0.7-1.0% self.
+
+### Memory (unprofiled)
+
+- 50k batched peaks at 1,236.8 MiB RSS against 254.9 MiB for 50k greedy, with the same message count (30.5 M) and a heap at the end of 122.1 vs 78.8 MiB. Heap still live at the end does not explain the batched peak. Not attributed: no heap snapshot was taken during a batch tick. A candidate in the code: each batch tick builds a queued × idle cost matrix in `batchedPairs` and `solve` copies all of it once more (`costs.flat()`); `flat` is 2.7% self in the 50k batched profile. Unmeasured.
+- Against 10k unprofiled at 600 ticks (run 37156733825, `424942c`): heap at end 14.9 → 78.8 MiB greedy (5.3×), 18.5 → 122.1 MiB batched (6.6×), for 5× drivers and 5× messages; peak RSS 131.4 → 254.9 MiB greedy (1.9×), 143.4 → 1,236.8 MiB batched (8.6×).
+- Memory over run length at 50k (the #142 target: two run lengths, unprofiled) is not measured; only 600 ticks were run.
+
+### Candidate fixes, ranked by measured impact
+
+Shares are grouped by owning `src/` function (see Method), at 50k greedy / 50k batched (20k in brackets).
+
+| # | Hot spot | 50k greedy | 50k batched | 20k greedy / batched |
+| ---: | --- | ---: | ---: | ---: |
+| 1 | Driver-shard brain, `state.drivers` scan + copy per event: `replaceDriver`, `onOffer`, `onPickedUp`, `onCompleted` | 44.0% | 35.5% | 44.0% / 35.7% |
+| 2 | Dispatch matching per (trip, idle driver) pair: greedy `greedyPairs` + `cellOf`; batched cost matrix (`batchedPairs` + `cellOf`) + Hungarian (`solve`, `minCostMatching`) | 23.6% | 37.0% (21.9 + 15.1) | 17.6% / 33.0% |
+| 3 | Rider brain, `state.riders` scan + copy per event: `onPickedUp`, `removeRider`, `onCompleted` | 20.0% | 17.4% | 16.2% / 13.1% |
+| 4 | Dispatch `offerPairs`: walks every live trip and sorts every driver ID each tick | 3.8% | 3.0% | 6.6% / 5.2% |
+| 5 | In-memory bus `drain` / `publish` | 1.9% | 1.5% | 4.5% / 3.5% |
+
+1. **Driver shards: keep drivers by ID and update in place** (44.0% / 35.5%). Each event does `state.drivers.find` (O(drivers per shard)) and most then `state.drivers.map` to copy the array; with events proportional to the fleet that is O(drivers²) per shard per tick. Owned state (ADR 0033) applies; tracked in [#123](https://github.com/kludw/uber-simulator/issues/123). Iteration order must stay the same so event logs stay byte-identical (checked by hashing, as for the [Long runs](#long-runs) fix).
+2. **Dispatch matching: less work per (trip, driver) pair** (23.6% greedy, 37.0% batched). Options, each needing its own measurement: read each idle driver's cell once per tick instead of once per pair (`cellOf` alone is 9.5% greedy, 18.7% batched); compute the Hungarian sentinel without `costs.flat()` (`flat` 2.7% self); a spatial index for greedy's nearest-driver search (exact); k-nearest candidates for batched (not exact; ADR 0033 rejected it while not needed, so a new ADR).
+3. **Rider brain: keep riders by trip ID and update in place** (20.0% / 17.4%). Same pattern as 1, sized by riders in flight rather than drivers; also #123.
+4. **`offerPairs`** (3.8% / 3.0%): not worth changing before 1-3.
+5. **Bus** (1.9% / 1.5%): not worth changing.
+
+Upper bounds only: each share is what removing that work entirely would save in a profiled run; the actual saving, and the shares in unprofiled runs, are not measured. Batched p95 is the case closest to the target (972.13 ms unprofiled); there, fixes 1-3 cover 89.9% of profiled CPU.
