@@ -115,7 +115,7 @@ describe("decideRiders on tick", () => {
 				"patience:1": { ints: [150] },
 			}),
 		);
-		expect(state.riders).toEqual([
+		expect([...state.riders.values()]).toEqual([
 			{
 				state: "waiting",
 				id: RiderId.parse("r-1"),
@@ -390,7 +390,7 @@ describe("decideRiders over many ticks", () => {
 
 	test("every waiting rider has patience between 120 and 300 ticks", () => {
 		const { state } = runTicks(6000, 42);
-		const outOfRange = state.riders.filter(
+		const outOfRange = [...state.riders.values()].filter(
 			(rider) =>
 				rider.state === "waiting" &&
 				(rider.patience < 120 || rider.patience > 300),
@@ -441,15 +441,18 @@ function waitingRider(): RidersState {
 	return {
 		...startRiders({ grid, requestsPerMinute: 10 }),
 		spawned: 1,
-		riders: [
-			{
-				state: "waiting",
-				id: r1,
-				tripId: t1,
-				requestedAt: tick(1),
-				patience: 150,
-			},
-		],
+		riders: new Map([
+			[
+				t1,
+				{
+					state: "waiting",
+					id: r1,
+					tripId: t1,
+					requestedAt: tick(1),
+					patience: 150,
+				},
+			],
+		]),
 	};
 }
 
@@ -482,15 +485,18 @@ describe("decideRiders patience", () => {
 		const r9: RidersState = {
 			...startRiders({ grid, requestsPerMinute: 10 }),
 			spawned: 9,
-			riders: [
-				{
-					state: "waiting",
-					id: RiderId.parse("r-9"),
-					tripId: TripId.parse("t-9"),
-					requestedAt: tick(1),
-					patience: 150,
-				},
-			],
+			riders: new Map([
+				[
+					TripId.parse("t-9"),
+					{
+						state: "waiting",
+						id: RiderId.parse("r-9"),
+						tripId: TripId.parse("t-9"),
+						requestedAt: tick(1),
+						patience: 150,
+					},
+				],
+			]),
 		};
 		const r10 = decideRiders(
 			r9,
@@ -536,7 +542,7 @@ describe("decideRiders trip outcomes", () => {
 			scriptedRandom({}),
 		);
 		expect(completed).toEqual({
-			state: { ...waitingRider(), riders: [] },
+			state: { ...waitingRider(), riders: new Map() },
 			outputs: [],
 		});
 	});
@@ -549,7 +555,7 @@ describe("decideRiders trip outcomes", () => {
 			scriptedRandom({}),
 		);
 		expect(cancelled).toEqual({
-			state: { ...waitingRider(), riders: [] },
+			state: { ...waitingRider(), riders: new Map() },
 			outputs: [],
 		});
 	});
@@ -570,8 +576,10 @@ function cancelRejected(state: RidersState) {
 describe("decideRiders cancel rejected", () => {
 	test("rider whose cancel is rejected after pickup stays", () => {
 		const cancelling = quietTick(waitingRider(), 151);
+		// decide updates state in place (ADR 0033): compare with a snapshot.
+		const before = structuredClone(cancelling.state);
 		expect(cancelRejected(cancelling.state)).toEqual({
-			state: cancelling.state,
+			state: before,
 			outputs: [],
 		});
 	});
@@ -585,8 +593,9 @@ describe("decideRiders cancel rejected", () => {
 	test("riding rider whose cancel rejection arrives after the pickup stays", () => {
 		const cancelling = quietTick(waitingRider(), 151);
 		const riding = pickedUp(cancelling.state, 152);
+		const before = structuredClone(riding.state);
 		expect(cancelRejected(riding.state)).toEqual({
-			state: riding.state,
+			state: before,
 			outputs: [],
 		});
 	});
@@ -604,17 +613,17 @@ describe("decideRiders cancel rejected", () => {
 			scriptedRandom({}),
 		);
 		expect(rejected).toEqual({
-			state: { ...waitingRider(), riders: [] },
+			state: { ...waitingRider(), riders: new Map() },
 			outputs: [],
 		});
 	});
 
 	// Only under message loss: the trip.* event that ended the trip never arrived.
 	test("rider whose cancel is rejected for a completed or cancelled trip is removed", () => {
-		const cancelling = quietTick(waitingRider(), 151);
+		// Fresh state per outcome: decide may update it in place (ADR 0033).
 		const decisions = (["completed", "cancelled"] as const).map((from) =>
 			decideRiders(
-				cancelling.state,
+				quietTick(waitingRider(), 151).state,
 				{
 					type: "cancel_trip_rejected",
 					tripId: t1,
@@ -624,18 +633,17 @@ describe("decideRiders cancel rejected", () => {
 			),
 		);
 		expect(decisions).toEqual([
-			{ state: { ...waitingRider(), riders: [] }, outputs: [] },
-			{ state: { ...waitingRider(), riders: [] }, outputs: [] },
+			{ state: { ...waitingRider(), riders: new Map() }, outputs: [] },
+			{ state: { ...waitingRider(), riders: new Map() }, outputs: [] },
 		]);
 	});
 
 	// The trip is over regardless of what the rider saw (trip.completed lost).
 	test("riding rider whose cancel is rejected for a completed or cancelled trip is removed", () => {
-		const cancelling = quietTick(waitingRider(), 151);
-		const riding = pickedUp(cancelling.state, 152);
+		// Fresh state per outcome: decide may update it in place (ADR 0033).
 		const decisions = (["completed", "cancelled"] as const).map((from) =>
 			decideRiders(
-				riding.state,
+				pickedUp(quietTick(waitingRider(), 151).state, 152).state,
 				{
 					type: "cancel_trip_rejected",
 					tripId: t1,
@@ -645,8 +653,8 @@ describe("decideRiders cancel rejected", () => {
 			),
 		);
 		expect(decisions).toEqual([
-			{ state: { ...waitingRider(), riders: [] }, outputs: [] },
-			{ state: { ...waitingRider(), riders: [] }, outputs: [] },
+			{ state: { ...waitingRider(), riders: new Map() }, outputs: [] },
+			{ state: { ...waitingRider(), riders: new Map() }, outputs: [] },
 		]);
 	});
 });
@@ -667,7 +675,7 @@ function requestRejected(state: RidersState) {
 describe("decideRiders request rejected", () => {
 	test("waiting rider whose request is rejected is removed", () => {
 		expect(requestRejected(waitingRider())).toEqual({
-			state: { ...waitingRider(), riders: [] },
+			state: { ...waitingRider(), riders: new Map() },
 			outputs: [],
 		});
 	});
@@ -675,7 +683,7 @@ describe("decideRiders request rejected", () => {
 	test("cancelling rider whose request is rejected is removed", () => {
 		const cancelling = quietTick(waitingRider(), 151);
 		expect(requestRejected(cancelling.state)).toEqual({
-			state: { ...waitingRider(), riders: [] },
+			state: { ...waitingRider(), riders: new Map() },
 			outputs: [],
 		});
 	});
@@ -712,8 +720,9 @@ describe("decideRiders invalid inputs", () => {
 			tripId: t1,
 			driverId: d1,
 		};
+		const before = structuredClone(riding.state);
 		expect(decideRiders(riding.state, again, scriptedRandom({}))).toEqual({
-			state: riding.state,
+			state: before,
 			outputs: [
 				{
 					type: "input_rejected",
@@ -753,8 +762,9 @@ describe("decideRiders invalid inputs", () => {
 			tripId: t1,
 			driverId: d1,
 		};
+		const before = structuredClone(riding.state);
 		expect(decideRiders(riding.state, cancelled, scriptedRandom({}))).toEqual({
-			state: riding.state,
+			state: before,
 			outputs: [
 				{
 					type: "input_rejected",
@@ -767,8 +777,9 @@ describe("decideRiders invalid inputs", () => {
 
 	test("request rejection for a rider already riding is rejected, state unchanged", () => {
 		const riding = pickedUp(waitingRider(), 100);
+		const before = structuredClone(riding.state);
 		expect(requestRejected(riding.state)).toEqual({
-			state: riding.state,
+			state: before,
 			outputs: [
 				{
 					type: "input_rejected",
