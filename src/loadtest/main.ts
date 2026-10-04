@@ -207,7 +207,7 @@ const services: Service[] = [
 ];
 for (const service of services) spawn(service);
 
-const persisterPending: number[] = [];
+const persisterBacklog: number[] = [];
 let persisterAckPendingMax = 0;
 const pendingBytes = { observerMax: 0, anyMax: 0 };
 let running = true;
@@ -224,7 +224,7 @@ const sampling = (async () => {
 				return undefined;
 			});
 		if (consumer !== undefined) {
-			persisterPending.push(consumer.num_pending);
+			persisterBacklog.push(consumer.num_pending + consumer.num_ack_pending);
 			persisterAckPendingMax = Math.max(
 				persisterAckPendingMax,
 				consumer.num_ack_pending,
@@ -283,7 +283,7 @@ const [load1 = 0, load5 = 0, load15 = 0] = loadavg();
 console.log(
 	loadtestReport(args.value, {
 		settle: settle.summary(),
-		persisterPending,
+		persisterBacklog,
 		persisterAckPendingMax,
 		sampleIntervalMs,
 		settleGraceMs,
