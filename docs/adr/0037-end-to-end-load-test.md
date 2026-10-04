@@ -11,18 +11,20 @@
 
 We will add a load-test command, `bun run loadtest -- --drivers N --ticks T [--matching ...] [--shards K]`, and a manual CI workflow running it, that:
 
-- starts the real stack the way `bun run dev` does (persister first, then dispatch, riders, K driver shards, clock at `SPEED=1`) against NATS and ClickHouse, with demand at the spec ratio;
-- runs an observer on its own NATS connection subscribed to `sim.events.>` that records, per tick, the delay from the tick's `clock.ticked` to the last `driver.moved` of that tick ("settle latency"), and counts messages;
-- samples the persister's JetStream consumer every few seconds (pending messages, ack floor) and reads NATS server monitoring (`/varz`, slow consumers) at the end;
-- stops after T ticks, waits for the persister to drain (bounded), and prints a report: settle latency mean / p95 / max, message rate, persister pending over time and drain time, slow-consumer count, peak RSS per service.
+- starts the real stack the way `bun run dev` does (persister first, then dispatch, riders, K driver shards, clock at `SPEED=1`) against NATS and ClickHouse, with demand at the spec ratio, after purging the `SIM_EVENTS` stream so the persister starts from an empty backlog; it stops the clock after tick T (the clock has no tick limit of its own);
+- runs an observer on its own NATS connection subscribed to `sim.events.>`, decoding only subject and `tick`. Every event carries its tick, so settle latency of tick t = latest receipt time of any event with `tick = t` minus receipt time of `clock.ticked` t, finalized at the end of the run. It covers every service that publishes events (drivers, dispatch, riders), and an event of tick t arriving after `clock.ticked` t+1 makes that tick an overrun (settle >= 1,000 ms);
+- checks the observer's own validity: `clock.ticked` inter-arrival must stay near 1,000 ms (the clock uses an absolute schedule), reporting max deviation and the observer's pending bytes from NATS `/connz`;
+- samples the persister's JetStream consumer (`num_pending`, `num_ack_pending`) every few seconds, and after tick T waits for the persister to drain, up to a bound, reporting drain time or "did not drain";
+- reports: settle latency mean / p95 / max and overrun count, message rate, persister pending over time with the first-half vs second-half trend, drain time, NATS `/varz` `slow_consumers` (clients the server disconnected) and `/connz` pending bytes, host CPU count and load, and peak RSS per service.
 
-A fleet size counts as supported live when, at `SPEED=1`, settle latency p95 is under 1,000 ms, the persister's pending count stays bounded (doesn't grow tick over tick) and NATS reports no slow consumers. The UI is measured separately (browser rendering is out of this command's scope).
+A fleet size counts as supported live when, at `SPEED=1` with T >= 600, the slower of two runs has settle p95 <= 610 ms (ADR 0036's band) and no more than 1% overruns, the persister's pending count in the second half of the run is not higher on average than in the first half and it drains within the bound, and no slow consumers are reported. The UI is measured separately (browser rendering is out of this command's scope).
 
 ## Rationale
 
-- Settle latency is the direct measure of "keeps real time": if a tick's work isn't done before the next tick, latency grows without bound.
-- Persister pending is the direct measure of "storage keeps up"; a growing backlog means stored data lags live indefinitely.
-- Slow-consumer counts catch the case where NATS drops messages to a lagging subscriber (core NATS is at-most-once, ADR 0028).
+- Settle latency over every event of a tick is the direct measure of "keeps real time" for all publishing services, observable without knowing how many events a tick produces.
+- Persister pending, judged by its trend and drain time from an empty start, is the direct measure of "storage keeps up"; a single sample would mostly show batch oscillation.
+- Slow-consumer counts and pending bytes catch subscribers that can't keep up; core NATS is at-most-once (ADR 0028), so a disconnected slow consumer loses messages.
+- The same two-run, 610 ms band as ADR 0036 keeps live and in-process verdicts comparable.
 - Reusing `bun run dev`'s start order and real processes measures what users actually run.
 
 ## Alternatives considered
@@ -33,5 +35,6 @@ A fleet size counts as supported live when, at `SPEED=1`, settle latency p95 is 
 
 ## Consequences
 
-- CI gains a heavier manual workflow (NATS + ClickHouse + 4+ processes); the 4-CPU runner bounds what it can show.
+- CI gains a heavier manual workflow (NATS, ClickHouse, and K+4 service processes plus the observer on a 4-CPU runner). Every service Zod-parses all `sim.>` traffic (ADR 0028), so decoding likely saturates the host before the brains do: CI results are a lower bound on a contended host, and the report includes CPU count and load.
+- If the live limit lands well below the in-process ceiling, the next step is ADR 0028's per-service subject subscriptions.
 - Results become the README's answer to "how many drivers does the live system support".
