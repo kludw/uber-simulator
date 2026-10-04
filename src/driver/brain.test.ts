@@ -698,7 +698,7 @@ describe("decideDriverShard with picky preferences", () => {
 
 	test("idle driver within range accepts when the offer draw reaches the decline share", () => {
 		const { state, random } = pickyAtOrigin({
-			"preference:d-1": [10],
+			"preference:d-1": [12],
 			"offer:t-1:d-1": [0.25],
 		});
 		const { outputs } = decideDriverShard(state, offer(d1), random);
