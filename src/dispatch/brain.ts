@@ -408,6 +408,8 @@ function onArrival(
 	if (trip === undefined) return { state, outputs: [] };
 	// The rider's cancel reached dispatch first: a legitimate race, not an error.
 	if (trip.state === "cancelled") return { state, outputs: [] };
+	// Its offer expired before its accept arrived; trip.offer_expired frees it.
+	if (trip.excludedDrivers.has(arrival.driverId)) return { state, outputs: [] };
 	const atPickup = arrival.type === "driver.arrived_at_pickup";
 	const next = atPickup
 		? pickUp(trip, arrival.driverId, arrival.cell)

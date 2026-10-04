@@ -722,6 +722,36 @@ describe("decideDispatch driver arrivals", () => {
 
 		expect(outputs).toEqual([]);
 	});
+
+	// Overload: dispatch expires the offer before the driver's accept reaches
+	// it; the driver drives to the pickup until trip.offer_expired frees it.
+	test("ignores a pickup arrival by a driver whose offer expired", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			ticked(2),
+			ticked(5),
+			accepted(t1, d1),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("ignores a pickup arrival by a driver whose offer expired after the trip matched another driver", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 3)),
+			wentOnline(d2, cell(9, 9)),
+			ticked(2),
+			ticked(5),
+			ticked(6),
+			accepted(t1, d2),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
 });
 
 function cancelTrip(tripId: TripId): DispatchInput {
