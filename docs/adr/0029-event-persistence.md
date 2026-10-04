@@ -1,6 +1,6 @@
 # 0029. Persist events from JetStream into one ClickHouse events table
 
-- Status: Accepted
+- Status: Accepted (batch size and max ack pending superseded by 0039)
 - Date: 2026-10-02
 
 ## Context
