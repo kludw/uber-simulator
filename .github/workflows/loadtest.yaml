@@ -1,0 +1,137 @@
+name: loadtest
+
+# Manual only: `gh workflow run loadtest.yaml --ref master` runs `bun run
+# loadtest` (ADR 0037) for 1k drivers, greedy, 600 ticks; set the cases with
+# -f, e.g. `-f drivers="5000 10000" -f matching="greedy batched"`. One job
+# (own runner, NATS, ClickHouse) per drivers x matching case. Each case's
+# report, runner note, service logs, and NATS log are uploaded as one
+# artifact (`gh run download <run id>`).
+on:
+  workflow_dispatch:
+    inputs:
+      drivers:
+        description: Fleet sizes, space-separated
+        type: string
+        default: "1000"
+      matching:
+        description: Matching strategies, space-separated (greedy, batched)
+        type: string
+        default: "greedy"
+      ticks:
+        description: Ticks per run (ADR 0037 judges T >= 600; jobs stop at 60 min)
+        type: number
+        default: 600
+      drain_minutes:
+        description: Minutes after the last tick for the persister to drain
+        type: number
+        default: 5
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      runs: ${{ steps.runs.outputs.runs }}
+    steps:
+      - id: runs
+        env:
+          DRIVERS: ${{ inputs.drivers }}
+          MATCHING: ${{ inputs.matching }}
+        run: |
+          runs=$(jq -cn --arg d "$DRIVERS" --arg m "$MATCHING" \
+            '[($d | split(" ") | map(select(. != ""))[]) as $drivers
+              | ($m | split(" ") | map(select(. != ""))[]) as $matching
+              | {drivers: $drivers, matching: $matching}]')
+          echo "runs=$runs" >> "$GITHUB_OUTPUT"
+
+  loadtest:
+    needs: matrix
+    runs-on: ubuntu-latest
+    # Backstop for setup and upload; the run itself is capped below.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        run: ${{ fromJSON(needs.matrix.outputs.runs) }}
+    # Same image, healthcheck, and credentials as ci.yaml and compose.yaml.
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.9.8.3
+        ports:
+          - 8123:8123
+        env:
+          CLICKHOUSE_USER: sim
+          CLICKHOUSE_PASSWORD: sim
+          CLICKHOUSE_DB: sim
+        options: >-
+          --ulimit nofile=262144:262144
+          --health-cmd "wget -q --spider http://localhost:8123/ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      NATS_URL: nats://localhost:4222
+      CLICKHOUSE_URL: http://localhost:8123
+      CLICKHOUSE_USER: sim
+      CLICKHOUSE_PASSWORD: sim
+      CLICKHOUSE_DB: sim
+      DRIVERS: ${{ matrix.run.drivers }}
+      MATCHING: ${{ matrix.run.matching }}
+      TICKS: ${{ inputs.ticks }}
+      DRAIN_MINUTES: ${{ inputs.drain_minutes }}
+    steps:
+      - uses: actions/checkout@v5
+      # JetStream and the monitoring port (8222) the load test reads: run with
+      # infra/nats.conf like ci.yaml, since a service container can't mount a
+      # file from the checkout.
+      - name: Start NATS
+        run: |
+          docker run -d --name nats -p 4222:4222 -p 8222:8222 \
+            -v "$PWD/infra/nats.conf:/etc/nats/nats-server.conf:ro" \
+            nats:2.15.0-alpine
+          timeout 60 sh -c 'until curl -sf http://localhost:8222/healthz; do sleep 1; done'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run db:migrate
+      - name: Load test
+        run: |
+          mkdir -p out
+          { echo "runner: $(nproc) cpus, $(free -m | awk '/Mem:/ {print $2}') MiB"; echo "load average: $(cut -d' ' -f1-3 /proc/loadavg)"; } > out/machine.txt
+          # Ticks run at 1 s each; the cap allows startup, the drain bound,
+          # and 5 min slack, and kills a run that hangs.
+          cap=$(awk "BEGIN { print int($TICKS / 60 + $DRAIN_MINUTES + 5) }")
+          set +e
+          # bun run loadtest, called directly so timeout's SIGTERM reaches the
+          # load test, which then stops its services.
+          timeout "${cap}m" bun src/loadtest/main.ts --drivers "$DRIVERS" --matching "$MATCHING" \
+            --ticks "$TICKS" --drain-minutes "$DRAIN_MINUTES" \
+            > out/report.txt 2> out/services.log
+          code=$?
+          set -e
+          # 0: report printed (verdicts inside). 1: stack or infra failed, 2:
+          # invalid args (both explained in services.log). timeout exits 124;
+          # the OOM killer sends SIGKILL (137).
+          case $code in
+            0) status="" ;;
+            124) status="did not finish in ${cap} min (killed)" ;;
+            137) status="out of memory (killed)" ;;
+            *) status="failed (exit $code)" ;;
+          esac
+          if [ -n "$status" ]; then echo "status: $status" >> out/report.txt; fi
+          cat out/machine.txt out/report.txt
+          tail -n 20 out/services.log
+          [ -z "$status" ]
+      - name: NATS log
+        if: always()
+        run: |
+          mkdir -p out
+          docker logs nats > out/nats.log 2>&1 || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: loadtest-${{ matrix.run.drivers }}-${{ matrix.run.matching }}
+          path: out/
