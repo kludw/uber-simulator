@@ -2,10 +2,11 @@
 
 - Status: Accepted
 - Date: 2026-10-05
+- Extends the driver states of 0025 (new `at_pickup -> idle` transition; nothing superseded)
 
 ## Context
 
-A driver `at_pickup` (ADR 0024, 0025) leaves only on a trip event: `trip.picked_up`, `trip.cancelled`, `trip.offer_expired`. Over core NATS a message can be lost (ADR 0028: "handled by brain timeouts and the rejection paths"). Since #175 dispatch ignores `driver.arrived_at_pickup` from a driver excluded for the trip (its accept arrived after the offer expired); `trip.offer_expired` is the only thing that frees it. If that event is lost, the driver waits at the pickup forever and dispatch, which already counts it idle, keeps offering it trips it declines.
+A driver `at_pickup` (ADR 0024, 0025) leaves only on a trip event: `trip.picked_up`, `trip.cancelled`, `trip.offer_expired`. Over core NATS a message can be lost (ADR 0028: "handled by brain timeouts and the rejection paths"). Since #175 dispatch ignores `driver.arrived_at_pickup` from a driver excluded for the trip (its accept arrived after the offer expired); `trip.offer_expired` is the only thing that frees it. If that event is lost, the driver waits at the pickup forever and dispatch, which already counts it idle, keeps offering it trips it declines. Same for a `trip.cancelled` lost to a driver `en_route` or `at_pickup` for that trip: dispatch ignores arrivals for a cancelled trip and counts the driver free, while the driver waits forever.
 
 Riders wait at most 300 ticks from request (patience 120-300, `src/rider/brain.ts`), then cancel; the rider is at the pickup, so an arrival reaching dispatch is answered within a tick or two.
 
@@ -16,7 +17,7 @@ We will free a driver that has been `at_pickup` for 360 ticks without a trip eve
 ## Rationale
 
 - Ticks since arrival, not since offer: the brain knows its own arrival tick; it never sees the request tick.
-- 360 > max patience 300 + margin for message delay: when dispatch holds the trip `matched` and the driver's arrival was lost, the rider's cancel (at most 300 ticks after request, so at most 300 after arrival) frees the driver first. Absent a second lost message the timeout fires only for a driver dispatch already counts free (lost `trip.offer_expired`), so freeing it is consistent with dispatch.
+- 360 > max patience 300 + margin for message delay: when dispatch holds the trip `matched` and the driver's arrival was lost, the rider's cancel (at most 300 ticks after request, so at most 300 after arrival) frees the driver first. With one lost `trip.offer_expired` or `trip.cancelled` the timeout fires only for a driver dispatch already counts free, so freeing it is consistent with dispatch. A lost `trip.picked_up` or two losses leave dispatch holding the driver (Consequences).
 - No event: the cases the timeout fixes need no one else to change state. The cases where dispatch still holds the driver need two lost messages or a lost `trip.picked_up` (below), and no event can repair those without new trip transitions.
 - In-process runs never lose messages, so the timeout never fires: the README sim outputs are unchanged.
 
