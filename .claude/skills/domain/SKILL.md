@@ -31,6 +31,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Active trip**: a trip from `matched` until `completed` or `cancelled`; the UI draws its pickup-dropoff line.
 - **Ended trip**: a `completed` or `cancelled` trip; no transition leaves it. Dispatch keeps it out of matching but still answers late and duplicate inputs for it.
 - **Summary**: a run's headline numbers (trip counts, mean ticks from request to pickup, rejected inputs, invariant violations), computed from its event log.
+- **Load test**: the distributed stack at real time for a fleet size (`bun run loadtest`, 0037). **Settle latency** of tick t: receipt of the last event of tick t minus receipt of `clock.ticked` t, at the load test's observer. **Overrun**: a tick with an event arriving after `clock.ticked` t+1.
 - **Run report**: a persisted run's headline numbers queried from ClickHouse (`bun run report`, `src/analytics/report.ts`): trip counts, mean ticks from request to pickup and from pickup to completion, completed trips per simulated minute. Its trip counts and mean ticks to pickup agree with the summary of the same event log.
 - **Input rejected**: brain output for an input addressed to one of its entities but invalid for that entity's state. Logged by the shell, never published.
 - **Violation**: a broken spec invariant (`docs/spec.md`) found in an event log, tagged by `type` (e.g. `illegal_trip_transition`).

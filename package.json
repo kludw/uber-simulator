@@ -13,7 +13,8 @@
 		"typecheck": "tsc && tsc -p src/ui",
 		"lint": "biome ci",
 		"check": "biome check --write",
-		"bench": "bun src/bench/main.ts"
+		"bench": "bun src/bench/main.ts",
+		"loadtest": "bun src/loadtest/main.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.15",
