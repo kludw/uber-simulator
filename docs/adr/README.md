@@ -40,4 +40,5 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0034 | [Replay](0034-replay.md)                                                | Accepted |
 | 0035 | [Driver preferences](0035-driver-preferences.md)                        | Accepted |
 | 0036 | [Scale to 50k](0036-scale-to-50k.md)                                    | Accepted |
-| 0037 | [End-to-end load test](0037-end-to-end-load-test.md)                    | Accepted |
+| 0037 | [End-to-end load test](0037-end-to-end-load-test.md)                    | Accepted (persister trend criterion superseded by 0038) |
+| 0038 | [Persister backlog criterion](0038-persister-backlog-criterion.md)      | Accepted |
