@@ -1,6 +1,6 @@
 # Performance
 
-Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12), and 76k-500k in [Ceiling](#ceiling).
+Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12), 76k-500k in [Ceiling](#ceiling), and the distributed stack over NATS in [Live limits](#live-limits).
 
 ## Method
 
@@ -366,4 +366,63 @@ All single 300-tick runs. "finished" means all 300 ticks ran, not that the run k
 - **Greedy growth per driver.** Messages grow linearly (305.1-305.6 per driver over 300 ticks). Per-tick time does not: 100k → 200k (2× drivers) mean 1.82×, p95 1.81×; 200k → 500k (2.5×) mean 3.78×, p95 3.75×. Mean ms per tick per 1,000 drivers: 0.74, 0.67, 1.02. Three single runs on a shared runner can't fix an exponent; they show roughly linear cost to 200k and faster-than-linear growth between 200k and 500k, not attributed (no profile). Peak RSS grows about 2.2 KiB per extra driver from 100k to 200k and 1.8 KiB from 200k to 500k.
 - Batched, 76k → 100k (1.32× drivers): mean 1.81×, p95 1.92×, peak RSS 1.39×. At 100k, batched peak RSS is 9.7× greedy's (3,168.6 vs 327.9 MiB); what sets it is not measured (see [Batched peak memory](#batched-peak-memory)).
 - Not compared directly with the 50k rows: those are 600-tick runs, these 300.
-- In process only: one Bun process, in-memory bus. The distributed stack over NATS (`bun run dev`) is not measured here; it is measured separately ([milestone 13](spec.md#milestones), [ADR 0037](adr/0037-end-to-end-load-test.md)).
+- In process only: one Bun process, in-memory bus. The distributed stack over NATS (`bun run dev`) is not measured here; it is measured separately in [Live limits](#live-limits).
+
+## Live limits
+
+The distributed stack at real time (`bun run loadtest`, [ADR 0037](adr/0037-end-to-end-load-test.md)): every service its own process over NATS, the persister writing to ClickHouse via JetStream. Measured 2026-10-04 at `47d91a0` (master after [#160](https://github.com/kludw/uber-simulator/pull/160)), [#158](https://github.com/kludw/uber-simulator/issues/158).
+
+### Method
+
+- `loadtest` workflow ([workflow](https://github.com/kludw/uber-simulator/actions/workflows/loadtest.yaml), README [Load test](../README.md#load-test)), one `ubuntu-latest` job per case: 2 driver shards, demand at the spec ratio, seed 1, 5-tick batch window, `SPEED=1`, 600 ticks, drain bound 5 min. 4 CPUs, 15,988-15,993 MiB, 1-minute load average 0.29-1.61 at start.
+- Runs, each case on its own runner:
+  - [37207500717](https://github.com/kludw/uber-simulator/actions/runs/37207500717): greedy 1k / 5k / 10k / 20k (bracket).
+  - [37208486357](https://github.com/kludw/uber-simulator/actions/runs/37208486357): greedy 10k / 11k / 12k / 15k.
+  - [37209276002](https://github.com/kludw/uber-simulator/actions/runs/37209276002): greedy 11k / 12k / 13k / 14k.
+  - [37210180314](https://github.com/kludw/uber-simulator/actions/runs/37210180314), [37210185179](https://github.com/kludw/uber-simulator/actions/runs/37210185179): batched 9k / 10k, twice.
+- Judged per ADR 0037: the slower of two runs must pass every criterion. 13k-20k ran once each and fell behind in that run, so a second run couldn't make them pass.
+- Pending slope: least-squares slope of the persister's pending count over the second half of its 5 s samples, in events per second. Computed from the reports' samples, not printed by them. Large and positive = the persister falls further behind every second.
+- Peak RSS per service is in bytes, as the report assumes: on Linux (Docker, `oven/bun:1.4.2`) a child holding a 512 MiB buffer had `Subprocess.resourceUsage().maxRSS` 553,668,608 against its own `/proc/self/status` `VmHWM` of 538,084 kB (551.0 MB). In process, `process.resourceUsage().maxRSS` is in kilobytes (13,300 in the same parent), which `bun run bench` already converts.
+
+### Results
+
+| Drivers | Matching | Run | Settle ms mean / p95 / max | Overruns | Events per tick | Pending max | Pending slope /s | Trend (ADR 0037) | Drain | Slow consumers | Peak RSS per service, MiB |
+| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | ---: | --- |
+| 1,000 | greedy | [37207500717](https://github.com/kludw/uber-simulator/actions/runs/37207500717) | 21.7 / 28.9 / 51.3 | 0 | 1,011 | 740 | 0 | rising | 2.1 s | 0 | 66.5-98.3 |
+| 5,000 | greedy | [37207500717](https://github.com/kludw/uber-simulator/actions/runs/37207500717) | 52.1 / 62.4 / 121.4 | 0 | 5,049 | 5,031 | 11 | rising | 2.1 s | 0 | 79.3-114.5 |
+| 10,000 | greedy | [37207500717](https://github.com/kludw/uber-simulator/actions/runs/37207500717) | 183.3 / 217.3 / 348.8 | 0 | 10,098 | 9,971 | -7 | rising | 2.1 s | 0 | 86.3-113.9 |
+| 10,000 | greedy | [37208486357](https://github.com/kludw/uber-simulator/actions/runs/37208486357) | 181.7 / 216.2 / 413.6 | 0 | 10,098 | 9,971 | -8 | rising | 2.2 s | 0 | 81.6-113.8 |
+| 11,000 | greedy | [37208486357](https://github.com/kludw/uber-simulator/actions/runs/37208486357) | 125.6 / 148.9 / 278.6 | 0 | 11,108 | 10,881 | -7 | rising | 2.1 s | 0 | 85.5-114.8 |
+| 11,000 | greedy | [37209276002](https://github.com/kludw/uber-simulator/actions/runs/37209276002) | 213.7 / 257.4 / 457.0 | 0 | 11,108 | 173,415 | 337 | rising | 16.2 s | 0 | 82.4-112.9 |
+| 12,000 | greedy | [37208486357](https://github.com/kludw/uber-simulator/actions/runs/37208486357) | 160.8 / 191.0 / 317.2 | 0 | 12,118 | 11,233 | -4 | rising | 2.1 s | 0 | 83.2-116.0 |
+| 12,000 | greedy | [37209276002](https://github.com/kludw/uber-simulator/actions/runs/37209276002) | 221.9 / 266.6 / 337.0 | 0 | 12,118 | 699,763 | 1,252 | rising | 56.4 s | 0 | 84.9-115.9 |
+| 13,000 | greedy | [37209276002](https://github.com/kludw/uber-simulator/actions/runs/37209276002) | 235.5 / 272.5 / 397.1 | 0 | 13,129 | 1,303,973 | 2,260 | rising | 103.4 s | 0 | 79.5-112.0 |
+| 14,000 | greedy | [37209276002](https://github.com/kludw/uber-simulator/actions/runs/37209276002) | 261.5 / 302.0 / 376.4 | 0 | 14,138 | 2,127,671 | 3,572 | rising | 170.5 s | 0 | 85.1-112.0 |
+| 15,000 | greedy | [37208486357](https://github.com/kludw/uber-simulator/actions/runs/37208486357) | 156.4 / 184.1 / 252.6 | 0 | 15,148 | 1,359,668 | 2,301 | rising | 98.3 s | 0 | 90.3-114.4 |
+| 20,000 | greedy | [37207500717](https://github.com/kludw/uber-simulator/actions/runs/37207500717) | 356.7 / 415.0 / 595.8 | 0 | 20,196 | 6,181,278 | 10,388 | rising | did not drain (2,323,486 left) | 0 | 84.6-124.3 |
+| 9,000 | batched | [37210180314](https://github.com/kludw/uber-simulator/actions/runs/37210180314) | 107.1 / 134.0 / 229.1 | 0 | 9,088 | 9,017 | 2 | rising | 2.1 s | 0 | 80.9-111.0 |
+| 9,000 | batched | [37210185179](https://github.com/kludw/uber-simulator/actions/runs/37210185179) | 166.7 / 207.1 / 262.7 | 0 | 9,088 | 8,960 | 32 | rising | 2.2 s | 0 | 82.7-112.9 |
+| 10,000 | batched | [37210180314](https://github.com/kludw/uber-simulator/actions/runs/37210180314) | 184.3 / 237.9 / 308.2 | 0 | 10,098 | 9,293 | 36 | rising | 2.1 s | 0 | 81.1-111.6 |
+| 10,000 | batched | [37210185179](https://github.com/kludw/uber-simulator/actions/runs/37210185179) | 154.7 / 196.9 / 247.2 | 0 | 10,098 | 2,789 | -2 | not rising | 2.2 s | 0 | 82.0-112.9 |
+
+Every run finished 600 of 600 ticks and passed `ticks >= 600`, settle p95, overruns, and no slow consumers. `clock.ticked` max deviation 18.8-91.3 ms. A drain of 2.1-2.2 s means empty at the first check: the drain wait starts after the 2 s grace window, so it can't report less.
+
+- **What fails first: the persister.** Settle p95 stays at or under 415 ms up to 20k with no overruns and no slow consumers, so the services keep real time across the whole range measured; host CPU never showed up as a failed criterion. The persister's backlog is the only criterion that separates sizes. In runs that fall behind, it grows linearly from the first sample (slope 337-10,388 events/s). In runs that keep up, it stays under one tick's events (max 740-11,233 against 1,011-12,118 events per tick) with a slope near zero (-8 to 36 events/s).
+- **Persister throughput varies between runners.** Intake minus slope gives what the persister wrote while falling behind: 10.6-10.9k events/s in run 37209276002 (11k-14k), 12.8k at 15k in 37208486357, 9.8k at 20k in 37207500717. At 12k, run 37208486357 kept up (at least 12.1k events/s) and run 37209276002 did not (about 10.9k). After the last tick, with the other services stopped, backlogs drained at about 10.7-13.8k events/s (last sample over drain time). The persister fetches, inserts, and acks at most 1,000 events per round, one round at a time (`src/persister/persister.ts`), so 10.8k events/s is about 93 ms per round; which part of the round dominates is not measured.
+- **Greedy, live: 10k** (two runs, both keep up), judged with the backlog criterion proposed below in place of ADR 0037's trend. 11k and 12k each kept up in one run and fell behind in the other. 10k publishes 10.1k events/s, about 5% below the lowest in-run persister throughput seen (10.6k), so the margin is thin.
+- **Batched, live: at least 10k** (9k and 10k, two runs each, all keep up), same criterion. Above 10k is not measured. Batched publishes the same event volume as greedy (10,098 per tick at 10k), and its settle p95 (134-238 ms) is in greedy's range.
+- **Strictly by ADR 0037, no size passes**: the trend criterion fails in at least one of the two runs at every size, including 1k, where the persister needs about 1k events/s. Of all 16 runs, only one passed every criterion (10k batched, 37210185179).
+
+### The pending-trend rule at T >= 600
+
+Not stable. ADR 0037 compares the mean pending count of the second half of the samples with the first half. It read "rising" in 15 of 16 runs, including 9 of the 10 that kept up. There it is a step, not growth: in the greedy runs that kept up, pending is at or near 0 (at most 2,125) for the first 44-80 samples, then jumps to a plateau just under one tick's events and stays there (10k greedy: 0 until sample 55-60, then about 7,000-10,000 to the end; slopes -7 and -8 events/s). Three of the four batched runs show the same step. The two 10k greedy runs contain the same plateau sub-sequences (e.g. `8888 8387 8889 9434 9971`) at different sample positions. One possible explanation: the sampler waits 5 s after each sample's requests, so its phase drifts against the 1 s ticks, and pending at a given phase of the tick is set by that tick's seeded, identical events. Not verified: the report doesn't record sample times relative to `clock.ticked`.
+
+The drain criterion can't replace it: at 13k-15k the persister fell behind by 2,260-2,301 events/s and still drained in 98-103 s, inside the 5 min bound.
+
+Proposed follow-up, an ADR superseding ADR 0037's trend criterion (not written here): judge the backlog in ticks of events, e.g. max pending over the second half ≤ 2 × events per tick (the persister never more than about 2 s behind), and/or sample pending at a fixed phase after `clock.ticked`. On these runs that criterion passes every run with a slope of -8 to 36 events/s and fails every run with a slope of 337 or more; the live limits above use it.
+
+### Against the in-process ceiling
+
+[After milestone 12](#after-milestone-12) and [Ceiling](#ceiling) time the brains and the in-memory bus in one process (ms of work per tick); the load test times end-to-end settle over NATS and the persister's backlog. Different metrics, so only the limits compare. In process: greedy reliably keeps real time at 50k (two runs) and in single runs up to 500k; batched reliably at 50k, ceiling between 50k and 76k. Live: greedy 10k, batched at least 10k, both limited by the persister, not by settle; 5× below the in-process 50k.
+
+ADR 0037 named ADR 0028's per-service subject subscriptions as the next step if the live limit landed well below the in-process one. These runs don't indicate it: it would cut the traffic each service decodes, but settle, the measure of services keeping up, passes up to 20k. The limit is the persister's write throughput, a single JetStream consumer that already receives only `sim.events.>`. Raising that is the indicated next step (its own ticket, likely an ADR; out of scope for #158).

@@ -72,7 +72,7 @@ Watch-only: a live run, or a stored run's replay with `?replay=<runId>` (0034). 
 10. **Replay** (0034): `bun run replay -- --run <id>` republishes a stored run from ClickHouse on `replay.<id>.*`, paced by tick; the UI watches it with `?replay=<id>`. Done.
 11. **Driver preferences** (0035): drivers decline offers beyond a per-driver max pickup distance or at random (`picky` preset, `--preferences off|picky`). Done.
 12. **Scale to 50k drivers** (0036): indexed brain state, spatial driver lookup in dispatch, exact results; target unprofiled p95 < 1 s per tick at 50k (two CI runs each). Done.
-13. **Live limits** (0037): `bun run loadtest` runs the distributed stack at real time and reports settle latency, persister backlog, and NATS slow consumers; find the largest live fleet that keeps up.
+13. **Live limits** (0037): `bun run loadtest` runs the distributed stack at real time and reports settle latency, persister backlog, and NATS slow consumers; find the largest live fleet that keeps up. Done: 10k greedy, at least 10k batched, limited by the persister ([Live limits](performance.md#live-limits)).
 
 ## Later (not v1)
 
