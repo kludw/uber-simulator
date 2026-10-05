@@ -261,6 +261,42 @@ describe("runInProcess", () => {
 		expect(freeingDriver).not.toBeEmpty();
 	});
 
+	// ADR 0041: a driver waiting at a pickup or dropoff confirms 10 ticks after
+	// arriving and every 10 ticks after, so each lost arrival or trip event
+	// costs one 10-tick round. A round fails only if its confirm or the reply
+	// is lost too (about 2% at 1% loss), so 3 rounds cover every wait here.
+	// Trips: at most the longest drive on the grid plus that wait. Every spec
+	// invariant still holds: the event log keeps every message, and loss only
+	// delays the facts dispatch and drivers publish. Riders are not recovered
+	// (lost trip events leave them waiting or riding), so they go unchecked.
+	test("with 1% of messages lost, waiting drivers move on, matched and picked-up trips end, and no invariant breaks", () => {
+		const grid = { width: 50, height: 50 };
+		const ticks = 3600;
+		const { eventLog } = runInProcess({
+			keepEventLog: true,
+			seed: 1,
+			ticks,
+			grid,
+			driverShards: { count: 1, driversPerShard: 20 },
+			requestsPerMinute: 20,
+			lossShare: 0.01,
+		});
+
+		const waitBound = 3 * 10 + 1;
+		const tripBound = grid.width - 1 + (grid.height - 1) + waitBound;
+		expect({
+			confirmed: eventLog.some((message) => message.type === "confirm_trip"),
+			stuckDrivers: longWaits(eventLog, ticks, waitBound),
+			stuckTrips: longTripStages(eventLog, ticks, tripBound),
+			violations: checkInvariants(eventLog, grid),
+		}).toEqual({
+			confirmed: true,
+			stuckDrivers: [],
+			stuckTrips: [],
+			violations: [],
+		});
+	}, 30_000);
+
 	test("publishes clock.ticked for ticks 1..N in order", () => {
 		const { eventLog } = runInProcess({ ...quietConfig, keepEventLog: true });
 
@@ -374,6 +410,93 @@ describe("runInProcess", () => {
 		]);
 	});
 });
+
+type Overdue = { id: string; since: number; stage: string };
+
+// Arrivals whose driver neither reported again (moved, arrived, went offline)
+// nor got its trip picked up or completed within bound ticks. Arrivals too
+// close to the run's end to tell are skipped.
+function longWaits(
+	eventLog: readonly Message[],
+	ticks: number,
+	bound: number,
+): Overdue[] {
+	const waiting = new Map<string, Overdue & { tripId: string }>();
+	const overdue: Overdue[] = [];
+	const resolve = (driverId: string, tick: number) => {
+		const wait = waiting.get(driverId);
+		if (wait === undefined) return;
+		waiting.delete(driverId);
+		const { id, since, stage } = wait;
+		if (tick - since > bound) overdue.push({ id, since, stage });
+	};
+	for (const message of eventLog) {
+		switch (message.type) {
+			case "driver.arrived_at_pickup":
+			case "driver.arrived_at_dropoff":
+				resolve(message.driverId, message.tick);
+				waiting.set(message.driverId, {
+					id: message.driverId,
+					since: message.tick,
+					stage: message.type,
+					tripId: message.tripId,
+				});
+				break;
+			case "driver.moved":
+			case "driver.went_offline":
+				resolve(message.driverId, message.tick);
+				break;
+			case "trip.picked_up":
+			case "trip.completed":
+				if (waiting.get(message.driverId)?.tripId === message.tripId) {
+					resolve(message.driverId, message.tick);
+				}
+				break;
+		}
+	}
+	for (const { id, since, stage } of waiting.values()) {
+		if (ticks - since > bound) overdue.push({ id, since, stage });
+	}
+	return overdue;
+}
+
+// Trips that stayed matched or picked up longer than bound ticks. Stages
+// begun too close to the run's end to tell are skipped.
+function longTripStages(
+	eventLog: readonly Message[],
+	ticks: number,
+	bound: number,
+): Overdue[] {
+	const active = new Map<string, Overdue>();
+	const overdue: Overdue[] = [];
+	const end = (tripId: string, tick: number) => {
+		const stage = active.get(tripId);
+		if (stage === undefined) return;
+		active.delete(tripId);
+		if (tick - stage.since > bound) overdue.push(stage);
+	};
+	for (const message of eventLog) {
+		switch (message.type) {
+			case "trip.matched":
+			case "trip.picked_up":
+				end(message.tripId, message.tick);
+				active.set(message.tripId, {
+					id: message.tripId,
+					since: message.tick,
+					stage: message.type,
+				});
+				break;
+			case "trip.completed":
+			case "trip.cancelled":
+				end(message.tripId, message.tick);
+				break;
+		}
+	}
+	for (const stage of active.values()) {
+		if (ticks - stage.since > bound) overdue.push(stage);
+	}
+	return overdue;
+}
 
 // Integration tests need a real server: `docker compose up -d --wait`, then
 // NATS_URL from .env (Bun loads it) or the environment. The runs publish on
