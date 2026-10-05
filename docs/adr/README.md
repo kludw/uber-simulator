@@ -46,3 +46,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0040 | [Pickup wait timeout](0040-pickup-wait-timeout.md)                      | Superseded by 0041 |
 | 0041 | [Confirm trip while waiting](0041-confirm-trip-while-waiting.md)        | Accepted |
 | 0042 | [Subscribe to taken types](0042-subscribe-to-taken-types.md)            | Accepted |
+| 0043 | [Learn drivers from moves](0043-learn-drivers-from-moves.md)          | Accepted |
