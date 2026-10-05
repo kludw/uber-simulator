@@ -24,7 +24,7 @@ Snapshot verified against nats.js READMEs/migration.md + docs.nats.io on 2026-10
 
 1. Connect: `const nc = await connect({ servers: "localhost:4222" })`.
 2. Publish: `nc.publish(subject, JSON.stringify(payload))`.
-3. Subscribe: `const sub = nc.subscribe(subject); for await (const m of sub) { ... }`. Async handling in the iterator, not in callbacks (callbacks must not `await`).
+3. Subscribe: `const sub = nc.subscribe(subject); for await (const m of sub) { ... }`. Async handling in the iterator, not in callbacks (callbacks must not `await`). Exception: the bus (`src/bus/nats.ts`) uses `nc.subscribe(subject, { callback: (err, m) => ... })`: synchronous, called in arrival order on the connection, so several subscriptions keep one publisher's order (0042). A throw inside a callback only stops the client's reader (callbacks per core README "Async vs. Callbacks"; the throw lands in the client's read loop, which logs "reader closed", per `@nats-io/nats-core` 3.4.0 source): catch it.
 4. Request/reply: `await nc.request(subject, data, { timeout })`; responder `m.respond(data)`. Not used by services (ADR 0028).
 5. Payloads: `m.string()` / `m.json()`. `JSONCodec` / `StringCodec` are removed.
 6. Incoming payloads are untrusted: `m.json()` result goes through Zod `safeParse` (see `validation` skill). Never cast.
@@ -45,7 +45,7 @@ Snapshot verified against nats.js READMEs/migration.md + docs.nats.io on 2026-10
 
 1. Dot-delimited tokens, case-sensitive. Tokens: letters, digits, `-`, `_` only. Never start with `$` (reserved).
 2. Wildcards subscriber-only: `*` = exactly one token, `>` = one or more, last token only.
-3. Scheme (0028), all names in `src/shared/subjects.ts` (pure, imported by bus, persister, replay, and UI): `sim.events.<entity>.<verb>` (incl. `sim.events.clock.ticked`), `sim.commands.<name>`, `sim.offers.<driverId>`, `sim.replies.<name>`. Each service: one connection, one subscription on `sim.>`, Zod-parse, then its `accepts` predicate. Replay (0034): `replay.<runId>.<live subject>` (`replaySubject`; UI wildcard `replaySubjects`), plain connection, publish only, never `sim.*`.
+3. Scheme (0028), all names in `src/shared/subjects.ts` (pure, imported by bus, persister, replay, and UI): `sim.events.<entity>.<verb>` (incl. `sim.events.clock.ticked`), `sim.commands.<name>`, `sim.offers.<driverId>`, `sim.replies.<name>`. Each service (0042): one connection, one subscription per message type it takes (`subscriptionSubject`: the type's subject, `sim.offers.*` for offers), declared at connect (`inputs`) and flushed; all delivered through one synchronous `callback` (not async iterators, which would lose order between subscriptions), Zod-parse, then the subscribers of that type. Never one `sim.>` subscription per service (every service decoding all traffic was most of the CPU, 0042). Replay (0034): `replay.<runId>.<live subject>` (`replaySubject`; UI wildcard `replaySubjects`), plain connection, publish only, never `sim.*`.
 
 ## Local setup
 

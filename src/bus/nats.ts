@@ -110,16 +110,21 @@ export async function connectNatsBus(options: {
 		intervalStart = at;
 		timing = { ...noMessages };
 	};
-	// A throw inside the client's callback would only stop its reader, so a
-	// bug (or a subscription error) is kept, ends delivery, and rejects close.
-	let failure: { cause: unknown } | undefined;
+	// A throw inside the client's callback would only stop the client's
+	// reader, with a console.log: a bug (or a subscription error) ends
+	// delivery and is rethrown outside the client, as an uncaught error (exit
+	// code 1), like a rejected iterator loop before ADR 0042.
+	let broken = false;
 	const deliver = (error: Error | null, received: Msg) => {
-		if (failure) return;
+		if (broken) return;
 		try {
 			if (error) throw error;
 			receive(received);
 		} catch (cause) {
-			failure = { cause };
+			broken = true;
+			queueMicrotask(() => {
+				throw cause;
+			});
 		}
 	};
 	const receive = (received: Msg) => {
@@ -212,12 +217,7 @@ export async function connectNatsBus(options: {
 					})
 					// Drained: every callback has run.
 					.then(() => watching)
-					.then(() => {
-						logTiming(now());
-						if (failure) {
-							throw new Error("delivering a message failed", failure);
-						}
-					});
+					.then(() => logTiming(now()));
 				return closing;
 			},
 		},

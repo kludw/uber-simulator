@@ -1,6 +1,6 @@
 # 0028. NATS bus: plain subjects for every message, local predicate filtering
 
-- Status: Accepted
+- Status: Accepted (one `sim.>` subscription per service superseded by 0042)
 - Date: 2026-10-02
 - Supersedes 0014, 0015, and 0018's offer transport
 
