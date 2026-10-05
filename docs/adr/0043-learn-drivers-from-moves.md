@@ -9,7 +9,7 @@
 
 Measured on the load test artifacts ([#195](https://github.com/kludw/uber-simulator/issues/195), [performance.md](../performance.md#start-up-race)): dispatch's received count is constant per size in most runs and short by 1,408 (greedy 40k), 22,568 (batched 30k) and 8,168 (batched 32.5k) in three runs; each shortfall is below the fleet size, and in the two largest dispatch logged `service_started` after both shards. The shards' and riders' received counts (offers, `trip_status`, replies) are the same in the short and full runs at 40k greedy and 30k batched: the trip flow didn't change.
 
-Dispatch already treats `driver.moved` like `driver.went_online` (stores the driver's cell). An idle driver moves on tick 1 (unless its first wander target is its own cell, then on a later tick), and dispatch matches only on `clock.ticked`, from tick 2 for the first requests (tick 1). So a missed start-up `driver.went_online` delays nothing.
+Dispatch already treats `driver.moved` like `driver.went_online` (stores the driver's cell). An idle driver moves on tick 1 (unless its first wander target is its own cell, then on a later tick), and dispatch matches only on `clock.ticked`, from tick 2 for the first requests (tick 1). So a missed start-up `driver.went_online` delays nothing for a driver that moves on tick 1; one whose first wander target is its own cell (about 1 in 250,000 drivers at 500 × 500, ~0.16 per 40k run) is unknown to dispatch for a tick or two longer.
 
 ## Decision
 
@@ -17,7 +17,7 @@ We will keep the start order as is and rely on dispatch learning a driver from i
 
 ## Rationale
 
-The race costs no behavior, only up to N of ~600N messages in dispatch's count. Ordering start adds a readiness handshake for one more service in two launchers to fix a measurement detail.
+The race costs at most a tick or two of matching for a rare driver that doesn't move on tick 1, plus up to N of ~600N messages in dispatch's count. Ordering start adds a readiness handshake for one more service in two launchers to fix a measurement detail.
 
 ## Alternatives considered
 
