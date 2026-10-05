@@ -7,6 +7,7 @@ import {
 } from "../shared/grid.ts";
 import type {
 	ClockTicked,
+	ConfirmTrip,
 	DriverArrivedAtDropoff,
 	DriverArrivedAtPickup,
 	DriverId,
@@ -23,6 +24,7 @@ import type {
 	TripId,
 	TripOfferExpired,
 	TripPickedUp,
+	TripStatus,
 } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 
@@ -54,7 +56,13 @@ type Driver =
 			dropoff: Cell;
 	  }
 	// Position is the dropoff: no separate cell.
-	| { state: "at_dropoff"; id: DriverId; tripId: TripId; dropoff: Cell };
+	| {
+			state: "at_dropoff";
+			id: DriverId;
+			tripId: TripId;
+			dropoff: Cell;
+			arrivedAt: Tick;
+	  };
 
 // Missing = always_online. In shift mode drivers alternate online and offline
 // periods with lengths uniform in the ranges (ADR 0032).
@@ -114,7 +122,8 @@ export type DriverShardInput =
 	| TripPickedUp
 	| TripCompleted
 	| TripCancelled
-	| TripOfferExpired;
+	| TripOfferExpired
+	| TripStatus;
 
 export function startDriverShard(
 	config: {
@@ -237,6 +246,7 @@ type DriverShardOutput =
 	| DriverArrivedAtDropoff
 	| OfferAccepted
 	| OfferDeclined
+	| ConfirmTrip
 	| Rejected;
 
 type Rejected = InputRejected<
@@ -249,10 +259,15 @@ type Rejected = InputRejected<
 
 type Decision = { state: DriverShardState; outputs: DriverShardOutput[] };
 
-// ADR 0040: a driver at the pickup with no trip event for this long gives up
-// and goes idle. Above max rider patience (300), so the rider of a trip
-// dispatch still has matched cancels it first.
-const pickupWaitTimeoutTicks = 360;
+// ADR 0041: a driver waiting at the pickup or dropoff asks dispatch about its
+// trip every this many ticks without a trip event. Any trip event for it
+// moves it out of waiting, so the wait counts from arrival.
+const confirmEveryTicks = 10;
+
+function confirmDue(arrivedAt: Tick, tick: Tick): boolean {
+	const waited = tick - arrivedAt;
+	return waited > 0 && waited % confirmEveryTicks === 0;
+}
 
 export function decideDriverShard(
 	state: DriverShardState,
@@ -271,6 +286,8 @@ export function decideDriverShard(
 		case "trip.cancelled":
 		case "trip.offer_expired":
 			return onTripEnded(state, input);
+		case "trip_status":
+			return onTripStatus(state, input);
 		default: {
 			const unhandled: never = input;
 			throw new Error(`unhandled driver shard input: ${unhandled}`);
@@ -423,6 +440,41 @@ function onTripEnded(
 	});
 }
 
+// Dispatch's answer to confirm_trip (ADR 0041). Acted on only by a driver
+// still waiting for that trip at that stage; anything else is a late or
+// duplicate reply and is ignored, not rejected.
+function onTripStatus(state: DriverShardState, status: TripStatus): Decision {
+	const addressed = state.drivers.get(status.driverId);
+	const ignored = { state, outputs: [] };
+	if (addressed === undefined) return ignored;
+	if (
+		addressed.state === "at_pickup" &&
+		addressed.tripId === status.tripId &&
+		status.stage === "pickup"
+	) {
+		if (status.status === "released") {
+			return replaceDriver(state, idle(addressed.id, addressed.pickup));
+		}
+		if (status.status !== "picked_up") return ignored;
+		return replaceDriver(state, {
+			state: "on_trip",
+			id: addressed.id,
+			cell: addressed.pickup,
+			tripId: addressed.tripId,
+			dropoff: addressed.dropoff,
+		});
+	}
+	if (
+		addressed.state === "at_dropoff" &&
+		addressed.tripId === status.tripId &&
+		status.stage === "dropoff" &&
+		status.status !== "picked_up"
+	) {
+		return replaceDriver(state, idle(addressed.id, addressed.dropoff));
+	}
+	return ignored;
+}
+
 function onTick(
 	state: DriverShardState,
 	input: ClockTicked,
@@ -453,20 +505,26 @@ function onTick(
 				drivers.set(driver.id, driveToPickup(driver, input.tick, outputs));
 				break;
 			case "at_pickup":
-				if (input.tick - driver.arrivedAt < pickupWaitTimeoutTicks) break;
-				drivers.set(
-					driver.id,
-					wander(
-						idle(driver.id, driver.pickup),
-						state.grid,
-						input.tick,
-						random,
-						outputs,
-					),
-				);
+				if (!confirmDue(driver.arrivedAt, input.tick)) break;
+				outputs.push({
+					type: "confirm_trip",
+					tripId: driver.tripId,
+					driverId: driver.id,
+					stage: "pickup",
+					cell: driver.pickup,
+				});
+				break;
+			case "at_dropoff":
+				if (!confirmDue(driver.arrivedAt, input.tick)) break;
+				outputs.push({
+					type: "confirm_trip",
+					tripId: driver.tripId,
+					driverId: driver.id,
+					stage: "dropoff",
+					cell: driver.dropoff,
+				});
 				break;
 			case "offline":
-			case "at_dropoff":
 				break;
 			case "on_trip":
 				drivers.set(driver.id, driveToDropoff(driver, input.tick, outputs));
@@ -600,5 +658,6 @@ function driveToDropoff(
 		id: driver.id,
 		tripId: driver.tripId,
 		dropoff: driver.dropoff,
+		arrivedAt: tick,
 	};
 }

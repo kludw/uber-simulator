@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
-import { DriverId, type Offer, Tick, TripId } from "../shared/messages.ts";
+import {
+	DriverId,
+	type Offer,
+	Tick,
+	TripId,
+	type TripStatus,
+} from "../shared/messages.ts";
 import { createRandom, type Random } from "../shared/random.ts";
 import {
 	type DriverShardInput,
@@ -601,14 +607,18 @@ describe("decideDriverShard on tick", () => {
 	});
 });
 
-describe("decideDriverShard pickup wait timeout", () => {
+describe("decideDriverShard confirming its trip", () => {
 	// Driver starts next to the pickup (5, 5) and arrives on tick 1.
-	function arrivedOnTick1(random: Random) {
+	function arrivedOnTick1(random: Random, dropoff = cell(8, 2)) {
 		const started = startDriverShard(
 			{ grid, driverIds: [d1], tick: tick(0) },
 			random,
 		);
-		const accepted = decideDriverShard(started.state, offer(d1), random);
+		const accepted = decideDriverShard(
+			started.state,
+			{ ...offer(d1), dropoff },
+			random,
+		);
 		return decideDriverShard(
 			accepted.state,
 			{ type: "clock.ticked", tick: tick(1) },
@@ -616,46 +626,250 @@ describe("decideDriverShard pickup wait timeout", () => {
 		).state;
 	}
 
-	test("driver with no trip event for 360 ticks after arrival goes back to wandering on tick 361", () => {
-		const random = scriptedRandom([5, 4, 5, 9]);
-		const stillWaiting = decideDriverShard(
+	// Ticks from..to inclusive, collecting every output.
+	function runTicks(
+		state: DriverShardState,
+		from: number,
+		to: number,
+		random: Random,
+	) {
+		const outputs: unknown[] = [];
+		let current = state;
+		for (let n = from; n <= to; n++) {
+			const decided = decideDriverShard(
+				current,
+				{ type: "clock.ticked", tick: tick(n) },
+				random,
+			);
+			current = decided.state;
+			outputs.push(...decided.outputs);
+		}
+		return { state: current, outputs };
+	}
+
+	test("driver waiting at the pickup confirms its trip on ticks 11 and 21 after arriving on tick 1", () => {
+		const random = scriptedRandom([5, 4]);
+		const { outputs } = runTicks(arrivedOnTick1(random), 2, 21, random);
+		const confirm = {
+			type: "confirm_trip",
+			tripId: t1,
+			driverId: d1,
+			stage: "pickup",
+			cell: cell(5, 5),
+		};
+		expect(outputs).toEqual([confirm, confirm]);
+	});
+
+	// Picked up on tick 2, one step from the dropoff (6, 5): arrives on tick 3.
+	function arrivedAtDropoffOnTick3(random: Random) {
+		const pickedUp = decideDriverShard(
+			arrivedOnTick1(random, cell(6, 5)),
+			{ type: "trip.picked_up", tick: tick(2), tripId: t1, driverId: d1 },
+			random,
+		);
+		return runTicks(pickedUp.state, 3, 3, random).state;
+	}
+
+	test("driver waiting at the dropoff confirms its trip on ticks 13 and 23 after arriving on tick 3", () => {
+		const random = scriptedRandom([5, 4]);
+		const { outputs } = runTicks(
+			arrivedAtDropoffOnTick3(random),
+			4,
+			23,
+			random,
+		);
+		const confirm = {
+			type: "confirm_trip",
+			tripId: t1,
+			driverId: d1,
+			stage: "dropoff",
+			cell: cell(6, 5),
+		};
+		expect(outputs).toEqual([confirm, confirm]);
+	});
+
+	test("driver at the pickup told its trip is picked up moves toward the dropoff", () => {
+		const random = scriptedRandom([5, 4]);
+		const told = decideDriverShard(
 			arrivedOnTick1(random),
-			{ type: "clock.ticked", tick: tick(360) },
+			{
+				type: "trip_status",
+				tripId: t1,
+				driverId: d1,
+				stage: "pickup",
+				status: "picked_up",
+			},
 			random,
 		);
-		const gaveUp = decideDriverShard(
-			stillWaiting.state,
-			{ type: "clock.ticked", tick: tick(361) },
-			random,
-		);
-		expect([stillWaiting.outputs, gaveUp.outputs]).toEqual([
-			[],
-			[
-				{
-					type: "driver.moved",
-					tick: tick(361),
-					driverId: d1,
-					cell: cell(5, 6),
-				},
-			],
+		const { outputs } = runTicks(told.state, 12, 12, random);
+		expect(outputs).toEqual([
+			{ type: "driver.moved", tick: tick(12), driverId: d1, cell: cell(6, 5) },
 		]);
 	});
 
-	test("driver picked up before the timeout keeps carrying the rider past it", () => {
-		const random = scriptedRandom([5, 4]);
-		const pickedUp = decideDriverShard(
-			arrivedOnTick1(random),
-			{ type: "trip.picked_up", tick: tick(360), tripId: t1, driverId: d1 },
+	test("driver at the dropoff told its trip is completed goes back to wandering from the dropoff", () => {
+		const random = scriptedRandom([5, 4, 6, 9]);
+		const told = decideDriverShard(
+			arrivedAtDropoffOnTick3(random),
+			{
+				type: "trip_status",
+				tripId: t1,
+				driverId: d1,
+				stage: "dropoff",
+				status: "completed",
+			},
 			random,
 		);
-		const { outputs } = decideDriverShard(
+		const { outputs } = runTicks(told.state, 14, 14, random);
+		expect(outputs).toEqual([
+			{ type: "driver.moved", tick: tick(14), driverId: d1, cell: cell(6, 6) },
+		]);
+	});
+
+	test("driver at the pickup told its trip is released goes back to wandering from the pickup", () => {
+		const random = scriptedRandom([5, 4, 5, 9]);
+		const told = decideDriverShard(
+			arrivedOnTick1(random),
+			{
+				type: "trip_status",
+				tripId: t1,
+				driverId: d1,
+				stage: "pickup",
+				status: "released",
+			},
+			random,
+		);
+		const { outputs } = runTicks(told.state, 12, 12, random);
+		expect(outputs).toEqual([
+			{ type: "driver.moved", tick: tick(12), driverId: d1, cell: cell(5, 6) },
+		]);
+	});
+
+	test("driver at the dropoff told its trip is released goes back to wandering from the dropoff", () => {
+		const random = scriptedRandom([5, 4, 6, 9]);
+		const told = decideDriverShard(
+			arrivedAtDropoffOnTick3(random),
+			{
+				type: "trip_status",
+				tripId: t1,
+				driverId: d1,
+				stage: "dropoff",
+				status: "released",
+			},
+			random,
+		);
+		const { outputs } = runTicks(told.state, 14, 14, random);
+		expect(outputs).toEqual([
+			{ type: "driver.moved", tick: tick(14), driverId: d1, cell: cell(6, 6) },
+		]);
+	});
+
+	// The reply's outputs, then tick n's: a driver still waiting since tick
+	// n - 10 confirms again.
+	function replyThenTick(
+		state: DriverShardState,
+		status: Omit<TripStatus, "type">,
+		n: number,
+		random: Random,
+	) {
+		const told = decideDriverShard(
+			state,
+			{ type: "trip_status", ...status },
+			random,
+		);
+		const next = decideDriverShard(
+			told.state,
+			{ type: "clock.ticked", tick: tick(n) },
+			random,
+		);
+		return [...told.outputs, ...next.outputs];
+	}
+
+	const pickupConfirm = {
+		type: "confirm_trip",
+		tripId: t1,
+		driverId: d1,
+		stage: "pickup",
+		cell: cell(5, 5),
+	} as const;
+
+	test("driver at the pickup keeps waiting when another trip is released", () => {
+		const random = scriptedRandom([5, 4]);
+		const outputs = replyThenTick(
+			arrivedOnTick1(random),
+			{ tripId: t2, driverId: d1, stage: "pickup", status: "released" },
+			11,
+			random,
+		);
+		expect(outputs).toEqual([pickupConfirm]);
+	});
+
+	test("driver at the pickup keeps waiting when its trip is released at the dropoff stage", () => {
+		const random = scriptedRandom([5, 4]);
+		const outputs = replyThenTick(
+			arrivedOnTick1(random),
+			{ tripId: t1, driverId: d1, stage: "dropoff", status: "released" },
+			11,
+			random,
+		);
+		expect(outputs).toEqual([pickupConfirm]);
+	});
+
+	test("driver at the dropoff keeps waiting on a late picked up reply to its pickup confirm", () => {
+		const random = scriptedRandom([5, 4]);
+		const pickedUp = decideDriverShard(
+			arrivedOnTick1(random, cell(6, 5)),
+			{ type: "trip.picked_up", tick: tick(2), tripId: t1, driverId: d1 },
+			random,
+		);
+		const arrived = decideDriverShard(
 			pickedUp.state,
-			{ type: "clock.ticked", tick: tick(361) },
+			{ type: "clock.ticked", tick: tick(3) },
+			random,
+		);
+		const outputs = replyThenTick(
+			arrived.state,
+			{ tripId: t1, driverId: d1, stage: "pickup", status: "picked_up" },
+			13,
 			random,
 		);
 		expect(outputs).toEqual([
-			{ type: "driver.moved", tick: tick(361), driverId: d1, cell: cell(6, 5) },
+			{ ...pickupConfirm, stage: "dropoff", cell: cell(6, 5) },
 		]);
+	});
+
+	test("driver carrying the rider keeps heading to the dropoff when its trip is released", () => {
+		const random = scriptedRandom([5, 4]);
+		const pickedUp = decideDriverShard(
+			arrivedOnTick1(random),
+			{ type: "trip.picked_up", tick: tick(2), tripId: t1, driverId: d1 },
+			random,
+		);
+		const outputs = replyThenTick(
+			pickedUp.state,
+			{ tripId: t1, driverId: d1, stage: "pickup", status: "released" },
+			11,
+			random,
+		);
+		expect(outputs).toEqual([
+			{ type: "driver.moved", tick: tick(11), driverId: d1, cell: cell(6, 5) },
+		]);
+	});
+
+	test("trip status for a driver outside the shard is ignored", () => {
+		const random = scriptedRandom([5, 4]);
+		const { outputs } = decideDriverShard(
+			arrivedOnTick1(random),
+			{
+				type: "trip_status",
+				tripId: t1,
+				driverId: d2,
+				stage: "pickup",
+				status: "released",
+			},
+			random,
+		);
+		expect(outputs).toEqual([]);
 	});
 });
 

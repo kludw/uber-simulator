@@ -229,7 +229,6 @@ function onTick(
 			id: `r-${state.spawned}` as RiderId,
 			tripId: `t-${state.spawned}` as TripId,
 			requestedAt: input.tick,
-			// Max stays below the driver's pickup wait timeout (ADR 0040).
 			patience: patience.int(120, 300),
 		};
 		state.riders.set(rider.tripId, rider);
