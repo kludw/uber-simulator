@@ -13,6 +13,7 @@ import { Tick } from "../shared/messages.ts";
 import { simEventSubjects, subjectFor } from "../shared/subjects.ts";
 import { parsePersisterConfig, parseServiceConfig } from "../sim/config.ts";
 import { parseLoadtestArgs } from "./args.ts";
+import { createInfraReader, type InfraReading } from "./infra.ts";
 import { readPendingBytes, readSlowConsumers } from "./monitoring.ts";
 import { type LoadtestMeasurement, loadtestReport } from "./report.ts";
 import { createSettleTracker } from "./settle.ts";
@@ -56,6 +57,13 @@ console.error(`[loadtest] run id: ${serviceConfig.value.runId}`);
 
 // slow_consumers counts since the server started: the run's are the rise.
 const slowConsumersBefore = orFail(await readSlowConsumers(natsMonitoringUrl));
+const infra = orFail(
+	await createInfraReader({
+		natsUrl: serviceConfig.value.natsUrl,
+		clickhouse: persisterConfig.value.clickhouse,
+	}),
+);
+const infraReadings: InfraReading[] = [orFail(await infra.read())];
 
 let observer: NatsConnection;
 try {
@@ -234,6 +242,13 @@ const sampling = (async () => {
 				persisterAckPendingMax,
 				consumer.num_ack_pending,
 			);
+			// With the backlog sample only, so the report lines them up.
+			const reading = await infra.read();
+			if (!reading.ok) {
+				await abort(`infra read failed: ${JSON.stringify(reading.error)}`);
+			} else {
+				infraReadings.push(reading.value);
+			}
 		}
 		const bytes = await readPendingBytes(natsMonitoringUrl, observerName);
 		if (bytes.ok) {
@@ -278,6 +293,10 @@ for (;;) {
 	await Bun.sleep(drainPollMs);
 }
 await stopChildren(() => true);
+infraReadings.push(orFail(await infra.read()));
+await infra.close();
+// Documented in microseconds (nodejs.org/api/process.html#processcpuusagepreviousvalue).
+const loadtestCpu = process.cpuUsage();
 const slowConsumersAfter = orFail(await readSlowConsumers(natsMonitoringUrl));
 await observer.drain();
 
@@ -305,6 +324,11 @@ console.log(
 			// Documented in bytes (bun.com/docs/runtime/child-process).
 			bytes: child.subprocess.resourceUsage()?.maxRSS ?? 0,
 		})),
+		infraReadings,
+		loadtestCpu: {
+			userMicros: loadtestCpu.user,
+			systemMicros: loadtestCpu.system,
+		},
 		cpuTime: children.map((child) => {
 			// Documented in microseconds (bun.com/docs/runtime/child-process).
 			// Typed number, but bigint at runtime in Bun 1.4.2 (checked on Linux
