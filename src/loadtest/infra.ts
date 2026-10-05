@@ -113,7 +113,13 @@ const defaultPorts: Record<string, string> = {
 	"https:": "443",
 };
 
-// The running container publishing the URL's port on this host.
+// The running container publishing the URL's port on this host. Assumes the
+// host port equals the container port (compose.yaml and the workflow map
+// 4222:4222 and 8123:8123): `docker ps --filter publish=80` matches a
+// container run with `--publish=80`, i.e. the container side of a mapping
+// (https://docs.docker.com/reference/cli/docker/container/ls/#publish-and-expose),
+// so with a remapped port (e.g. 14222:4222) the lookup misses or finds the
+// wrong container.
 async function findContainer(
 	url: string,
 ): Promise<Result<string, InfraReadFailed>> {
