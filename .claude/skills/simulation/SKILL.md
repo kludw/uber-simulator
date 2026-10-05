@@ -38,3 +38,4 @@ Goal: each service's decision logic ("brain") is exact and replayable from a see
 1. Brain unit tests: hand-built state + fixed seed, call `decide` directly, assert exact literal outputs (not recomputed, see `tdd` anti-patterns).
 2. Brain determinism: same seed + same inputs twice -> equal outputs.
 3. System tests (in-memory bus or NATS): run N ticks, assert invariants from `docs/spec.md` over the event log, never exact event sequences.
+4. Recovery from lost messages: `runInProcess` with `lossShare` drops a seeded share of deliveries to services (never `clock.ticked`, never the event log); assert bounded waits and invariants (0041).

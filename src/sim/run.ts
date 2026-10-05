@@ -5,6 +5,7 @@ import {
 	type NatsConnectError,
 } from "../bus/nats.ts";
 import { type Message, RunId, Tick } from "../shared/messages.ts";
+import { createRandom } from "../shared/random.ts";
 import type { Result } from "../shared/result.ts";
 import {
 	dispatchService,
@@ -16,6 +17,8 @@ import {
 } from "./services.ts";
 
 export type RunConfig = SimConfig & { ticks: number };
+
+type InProcessConfig = RunConfig & { lossShare?: number };
 
 export type RunResult = {
 	messageCount: number;
@@ -33,30 +36,35 @@ export type RunObservers = {
 // Runs every service over one in-memory bus, the runner acting as clock
 // (ADR 0027). Same config gives the same messages. The event log is kept
 // only with keepEventLog (ADR 0033: memory would grow with every message);
-// other callers observe messages as they come.
+// other callers observe messages as they come. lossShare (tests only) drops
+// that share of deliveries to services, seeded by config.seed, to show
+// recovery from lost messages (ADR 0041); the event log still has every
+// message.
 export function runInProcess(
-	config: RunConfig & { keepEventLog: true },
+	config: InProcessConfig & { keepEventLog: true },
 	observers?: RunObservers,
 ): RunResult & { eventLog: Message[] };
 export function runInProcess(
-	config: RunConfig & { keepEventLog?: false },
+	config: InProcessConfig & { keepEventLog?: false },
 	observers?: RunObservers,
 ): RunResult;
 export function runInProcess(
-	config: RunConfig & { keepEventLog?: boolean },
+	config: InProcessConfig & { keepEventLog?: boolean },
 	{ onMessage = () => {}, onTickDone = () => {} }: RunObservers = {},
 ): RunResult & { eventLog?: Message[] } {
-	const bus = createInMemoryBus();
+	const bus = createInMemoryBus({
+		loss: {
+			share: config.lossShare ?? 0,
+			random: createRandom(config.seed).child("bus-loss"),
+		},
+	});
 	const result: RunResult = { messageCount: 0, rejected: [] };
 	const eventLog: Message[] = [];
-	bus.subscribe(
-		(message): message is Message => true,
-		(message) => {
-			result.messageCount++;
-			if (config.keepEventLog) eventLog.push(message);
-			onMessage(message);
-		},
-	);
+	bus.record((message) => {
+		result.messageCount++;
+		if (config.keepEventLog) eventLog.push(message);
+		onMessage(message);
+	});
 	for (const service of allServices(config)) {
 		service.start(bus, (rejected) =>
 			result.rejected.push({ service: service.name, rejected }),
