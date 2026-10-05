@@ -740,16 +740,16 @@ Next (proposal, no ADR; [#199](https://github.com/kludw/uber-simulator/issues/19
 
 The persister after [ADR 0044](adr/0044-persister-pipelining.md) (next fetch runs while the current batch is decoded, inserted and acked; max ack pending 20,000), [#199](https://github.com/kludw/uber-simulator/issues/199). Measured 2026-10-05 on branch `199-persister-pipelining` at `0f02053` (master `8451d5d` plus the change), same method as [Infra CPU](#infra-cpu): greedy, 2 driver shards, 600 ticks, drain bound 5 min, one `ubuntu-latest` runner (4 CPUs) per case. Runs: [37383732053](https://github.com/kludw/uber-simulator/actions/runs/37383732053), [37383743954](https://github.com/kludw/uber-simulator/actions/runs/37383743954), each 35k and 40k. Sample indices are 0-based within each report.
 
-| Drivers | Run | CPU model | Large merge (samples, rows) | Backlog before merge -> max (limit) | Settle p95 ms | Persister CPU s | Failed |
-| ---: | --- | --- | --- | --- | ---: | ---: | --- |
-| 35,000 | [37383732053](https://github.com/kludw/uber-simulator/actions/runs/37383732053) | AMD EPYC 7763 | 111-114, 19.6M | 33,108 -> 66,535 (106,009) | 523.7 | 409.0 | none |
-| 35,000 | [37383743954](https://github.com/kludw/uber-simulator/actions/runs/37383743954) | AMD EPYC 7763 | 113-116, 20.6M | 15,904 -> 47,113 (106,009) | 486.6 | 383.5 | none |
-| 40,000 | [37383732053](https://github.com/kludw/uber-simulator/actions/runs/37383732053) | AMD EPYC 9V74 | 108-110, 21.5M | 41,699 -> 48,407 (121,153) | 404.3 | 372.0 | none |
-| 40,000 | [37383743954](https://github.com/kludw/uber-simulator/actions/runs/37383743954) | AMD EPYC 7763 | 97-100, 20.9M | 32,105 -> 200,660 (121,153) | 560.0 | 425.8 | backlog |
+| Drivers | Run | CPU model | Large merge (samples, rows) | Backlog before merge -> peak over the merge's samples | Backlog second-half max, sample (limit) | Settle p95 ms | Persister CPU s | Failed |
+| ---: | --- | --- | --- | --- | --- | ---: | ---: | --- |
+| 35,000 | [37383732053](https://github.com/kludw/uber-simulator/actions/runs/37383732053) | AMD EPYC 7763 | 111-114, 19.6M | 33,108 -> 66,535 | 66,535, 114 (106,009) | 523.7 | 409.0 | none |
+| 35,000 | [37383743954](https://github.com/kludw/uber-simulator/actions/runs/37383743954) | AMD EPYC 7763 | 113-116, 20.6M | 15,904 -> 47,113 | 47,113, 113 (106,009) | 486.6 | 383.5 | none |
+| 40,000 | [37383732053](https://github.com/kludw/uber-simulator/actions/runs/37383732053) | AMD EPYC 9V74 | 108-110, 21.5M | 41,699 -> 34,113 (falls to 27,439) | 48,407, 83 (121,153) | 404.3 | 372.0 | none |
+| 40,000 | [37383743954](https://github.com/kludw/uber-simulator/actions/runs/37383743954) | AMD EPYC 7763 | 97-100, 20.9M | 32,105 -> 191,307 | 200,660, 104 (121,153) | 560.0 | 425.8 | backlog |
 
 0 overruns, 0 slow consumers, drain 2.0-5.1 s, ack pending max 20,000 in every case.
 
 - **35k keeps up with the large merge inside the run**, on the EPYC 7763 where it failed in [Infra CPU](#infra-cpu) (42k -> 130k): both runs had the ~20M-row merge before tick 600 (at 1.1-1.3 cores), and the backlog peaked at 47-67k, 44-63% of the limit. In 37383743954 the merge ends at the last samples, so its tail is only partly seen.
-- **40k depends on the CPU model**: on the 9V74 the merge barely moves the backlog; on the 7763 it climbs from 32k to 201k, and after the merge the persister recovers at only about 41-42k events/s against 40.4k published.
+- **40k depends on the CPU model**: on the 9V74 the backlog falls during the merge (41,699 -> 27,439), and its second-half max (48,407) is at sample 83, before the merge; on the 7763 it climbs from 32k to 201k, and after the merge the persister recovers at only about 41-42k events/s against 40.4k published.
 - **Rounds (per 10,000 events, `rounds_timed`)**: during the run, fetch wait 82-92 ms at 35k (49-82 at 40k; keeping up, so mostly waiting), decode 83-89, insert 99-102, ack 9-10. In the merge (35k, about 579-598 s) the fetch wait drops to 18-27 ms, decode rises to 116-137 and insert to 109-122, so a round is 266-294 ms: 34-37k events/s. Before the change the same window had rounds of 259-336 ms and 31-34 rounds per 10 s; now 34-38.
 - **Smaller gain than projected**: ADR 0044 projected 170-200 ms rounds while behind. Fetch is hidden, but decode and insert each grew by about 20 ms on average (decode 63-81 -> 83-89, insert 72-86 -> 99-102), consistent with the NATS client parsing the next batch on the same thread during the insert's await and between decodes (inferred, not profiled). Persister CPU 372-426 s (62-70% of a core), up from 332-391 s.
