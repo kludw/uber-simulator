@@ -1,6 +1,7 @@
 // Persister shell (ADR 0029): JetStream stream -> ClickHouse events table,
-// at-least-once. Owns the stream and consumer setup, batching, ack-after-
-// insert, and the insert retry policy.
+// at-least-once. Owns the stream and consumer setup, batching, fetching the
+// next batch while the current one is persisted (ADR 0044), ack-after-insert,
+// and the insert retry policy.
 import {
 	AckPolicy,
 	type Consumer,
@@ -36,7 +37,9 @@ export type EventSource = {
 	consumer: string;
 	// Above the batch wait plus the ClickHouse client's 30 s request timeout,
 	// so no message is redelivered while its batch is still being fetched or
-	// inserted.
+	// inserted. A batch fetched while the previous one is inserted also waits
+	// out that insert, so two slow inserts in a row can outlive it; harmless,
+	// as for retries below.
 	ackWaitMs: number;
 };
 
@@ -87,8 +90,10 @@ export type PersisterLogEntry =
 	| { type: "fetch_failed"; attempt: number; cause: unknown }
 	// Every 10 s and on stop: rounds (fetches that returned messages) since
 	// the last entry, events inserted and acked, and ms spent in each phase of
-	// those rounds, rounded. Fetches that returned nothing are idle time, left
-	// out; intervalMs minus the phases is idle time plus that bookkeeping.
+	// those rounds, rounded. fetchMs is only the wait for a batch once the
+	// previous round is done: the fetch itself runs during that round (ADR
+	// 0044). Fetches that returned nothing are idle time, left out; intervalMs
+	// minus the phases is idle time plus that bookkeeping.
 	// insertMs includes failed attempts and the waits between them.
 	| ({ type: "rounds_timed"; intervalMs: number } & RoundsTiming);
 
@@ -107,7 +112,8 @@ export type PersisterError =
 	| { type: "fetch_failed"; cause: unknown };
 
 export type Persister = {
-	// Stops after the batch in hand is inserted and acked (or given up).
+	// Stops after the batch in hand and the one being fetched meanwhile are
+	// inserted and acked (or given up).
 	stop(): void;
 	// Resolves once stopped, or on a failure that ends the loop.
 	stopped: Promise<Result<void, PersisterError>>;
@@ -156,21 +162,16 @@ export async function startPersister(options: {
 		};
 		const retryDelaysMs = options.retryDelaysMs ?? defaultRetryDelaysMs;
 		let failedFetches = 0;
-		while (!stop.signal.aborted) {
+		let fetching = fetchBatch(consumer);
+		for (;;) {
 			const fetchStart = now();
-			let batch: JsMsg[];
-			try {
-				batch = await Array.fromAsync(
-					await consumer.fetch({
-						max_messages: batchSize,
-						expires: batchWaitMs,
-					}),
-				);
-			} catch (cause) {
+			const fetched = await fetching;
+			if (!fetched.ok) {
 				// A closed connection never recovers; anything else (heartbeats
 				// missed under load, consumer briefly gone) may, so it is retried
 				// after the same waits as an insert. The last failure is returned,
 				// not logged.
+				const cause = fetched.error;
 				const delay = retryDelaysMs[failedFetches];
 				if (options.nats.isClosed() || delay === undefined) {
 					return { ok: false, error: { type: "fetch_failed", cause } };
@@ -179,9 +180,16 @@ export async function startPersister(options: {
 				options.log({ type: "fetch_failed", attempt: failedFetches, cause });
 				if (stop.signal.aborted) break;
 				await Bun.sleep(delay);
+				fetching = fetchBatch(consumer);
 				continue;
 			}
 			failedFetches = 0;
+			// The next batch arrives while this one is decoded, inserted and
+			// acked (ADR 0044). Once stopping, none is fetched, so every batch
+			// fetched is persisted before the loop ends.
+			const stopping = stop.signal.aborted;
+			if (!stopping) fetching = fetchBatch(consumer);
+			const batch = fetched.value;
 			if (batch.length > 0) {
 				const fetchMs = now() - fetchStart;
 				const round = await persist(
@@ -198,6 +206,7 @@ export async function startPersister(options: {
 			}
 			const at = now();
 			if (at - intervalStart >= timingIntervalMs) logTiming(at);
+			if (stopping) break;
 		}
 		logTiming(now());
 		return { ok: true, value: undefined };
@@ -225,7 +234,8 @@ async function ensureConsumer(
 	const consumer = {
 		durable_name: source.consumer,
 		ack_policy: AckPolicy.Explicit,
-		max_ack_pending: batchSize,
+		// The batch being persisted plus the next one, fetched meanwhile.
+		max_ack_pending: 2 * batchSize,
 		ack_wait: nanos(source.ackWaitMs),
 	};
 	await jsm.consumers.add(source.stream, consumer).catch((error: unknown) => {
@@ -233,6 +243,21 @@ async function ensureConsumer(
 		return jsm.consumers.update(source.stream, source.consumer, consumer);
 	});
 	return jetstream(nats).consumers.get(source.stream, source.consumer);
+}
+
+// Never rejects, so a fetch running in the background can't go unhandled.
+async function fetchBatch(
+	consumer: Consumer,
+): Promise<Result<JsMsg[], unknown>> {
+	try {
+		const messages = await consumer.fetch({
+			max_messages: batchSize,
+			expires: batchWaitMs,
+		});
+		return { ok: true, value: await Array.fromAsync(messages) };
+	} catch (cause) {
+		return { ok: false, error: cause };
+	}
 }
 
 function noRounds(): RoundsTiming {

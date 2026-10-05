@@ -37,9 +37,9 @@ Snapshot verified against nats.js READMEs/migration.md + docs.nats.io on 2026-10
 1. `jetstreamManager(nc)` -> `jsm.streams.add({ name, subjects })`, `jsm.consumers.add(stream, { durable_name, ack_policy: AckPolicy.Explicit })`.
 2. `jetstream(nc)` -> `js.publish(subject, data, { msgID })` (msgID = dedupe), `js.consumers.get(stream, consumer)` -> `consume()` -> `for await (const m of messages) { m.ack() }`.
 3. `nc.jetstream()`, `JetStreamClient#subscribe()/fetch()` removed. Use the above.
-4. Which flow uses what (0028): core NATS publish for every message; no request/reply. JetStream only for the persister (`src/persister/persister.ts`: stream `SIM_EVENTS` on `sim.events.>`, durable pull consumer `persister`, batches via `consumer.fetch({ max_messages, expires })`, ADR 0029).
+4. Which flow uses what (0028): core NATS publish for every message; no request/reply. JetStream only for the persister (`src/persister/persister.ts`: stream `SIM_EVENTS` on `sim.events.>`, durable pull consumer `persister`, batches via `consumer.fetch({ max_messages, expires })`, the next fetch running while the current batch is persisted, `max_ack_pending` 2x batch, ADR 0029, 0044).
 5. Durations in stream/consumer config (`max_age`, `ack_wait`) are nanoseconds: `nanos(ms)` from `@nats-io/transport-node`. `streams.add` / `consumers.add` with an identical config are no-ops; a changed config is a `JetStreamApiError`, then `update`.
-6. `ack_wait` must exceed the longest a message waits for its ack (fetch wait + processing), or the server redelivers it mid-batch.
+6. `ack_wait` must exceed the longest a message waits for its ack (fetch wait + the previous batch's processing + its own), or the server redelivers it mid-batch.
 
 ## Subjects
 

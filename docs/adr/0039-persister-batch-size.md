@@ -1,6 +1,6 @@
 # 0039. Persist up to 10,000 events per round
 
-- Status: Accepted
+- Status: Accepted (one-round-at-a-time loop and max ack pending superseded by 0044)
 - Supersedes 0029's batch size and max ack pending
 - Date: 2026-10-04
 
