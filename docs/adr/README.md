@@ -43,4 +43,5 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0037 | [End-to-end load test](0037-end-to-end-load-test.md)                    | Accepted (persister trend criterion superseded by 0038) |
 | 0038 | [Persister backlog criterion](0038-persister-backlog-criterion.md)      | Accepted |
 | 0039 | [Persister batch size](0039-persister-batch-size.md)                    | Accepted |
-| 0040 | [Pickup wait timeout](0040-pickup-wait-timeout.md)                      | Accepted |
+| 0040 | [Pickup wait timeout](0040-pickup-wait-timeout.md)                      | Superseded by 0041 |
+| 0041 | [Confirm trip while waiting](0041-confirm-trip-while-waiting.md)        | Accepted |
