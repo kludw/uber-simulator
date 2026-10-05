@@ -4,6 +4,8 @@ import * as z from "zod";
 import {
 	type CancelTrip,
 	type Message,
+	type MessageType,
+	type RequestTripAccepted,
 	RunId,
 	TripId,
 } from "../shared/messages.ts";
@@ -26,6 +28,7 @@ describe("connectNatsBus", () => {
 			log: () => {},
 			logStatus: () => {},
 			logTiming: () => {},
+			inputs: ["cancel_trip"],
 		});
 
 		expect(result).toMatchObject({
@@ -55,6 +58,7 @@ describe("connectNatsBus", () => {
 			log: () => {},
 			logStatus: () => {},
 			logTiming: () => {},
+			inputs: ["cancel_trip"],
 		});
 		// A client left behind reconnects after its 2 s reconnect wait.
 		await Bun.sleep(2500);
@@ -140,7 +144,7 @@ describe("connectNatsBus", () => {
 		let client: FakeSocket | undefined;
 		let sid = "";
 		const server = fakeNatsServer((socket, text) => {
-			const subscribed = text.match(/SUB sim\.> (\S+)\r\n/);
+			const subscribed = text.match(/SUB sim\.commands\.cancel_trip (\S+)\r\n/);
 			if (subscribed?.[1]) {
 				client = socket;
 				sid = subscribed[1];
@@ -157,25 +161,23 @@ describe("connectNatsBus", () => {
 			logStatus: () => {},
 			logTiming: (timing) => timed.push(timing),
 			now: () => nowMs,
+			inputs: ["cancel_trip"],
 		});
 		if (!result.ok) throw new Error("fake server unreachable");
 		const bus = result.value;
 		const { promise: lastHandled, resolve: handledLast } =
 			Promise.withResolvers<void>();
-		bus.subscribe(
-			(message): message is CancelTrip => message.type === "cancel_trip",
-			(message) => {
-				nowMs += 6000;
-				if (message.tripId === "t-3") handledLast();
-			},
-		);
+		bus.subscribe(["cancel_trip"], (message) => {
+			nowMs += 6000;
+			if (message.tripId === "t-3") handledLast();
+		});
 		const push = (payload: string) =>
 			client?.write(
-				`MSG sim.test ${sid} ${Buffer.byteLength(payload)}\r\n${payload}\r\n`,
+				`MSG sim.commands.cancel_trip ${sid} ${Buffer.byteLength(payload)}\r\n${payload}\r\n`,
 			);
 
 		push(JSON.stringify({ type: "cancel_trip", tripId: "t-1" }));
-		// Accepted by no subscriber, then not a message at all.
+		// A type no subscriber takes, then not a message at all.
 		push(JSON.stringify({ type: "request_trip_accepted", tripId: "t-9" }));
 		push("{not json");
 		push(JSON.stringify({ type: "cancel_trip", tripId: "t-2" }));
@@ -257,6 +259,7 @@ async function connectFake(
 		log: () => {},
 		logStatus,
 		logTiming: () => {},
+		inputs: ["cancel_trip"],
 	});
 	if (!result.ok) throw new Error("fake server unreachable", { cause: result });
 	return result.value;
@@ -279,13 +282,20 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		await Promise.all(open.splice(0).map((bus) => bus.close()));
 	});
 
-	async function connectBus(log: (dropped: DroppedMessage) => void = () => {}) {
+	async function connectBus(
+		options: {
+			inputs?: readonly MessageType[];
+			log?: (dropped: DroppedMessage) => void;
+			logTiming?: (timing: MessagesTimed) => void;
+		} = {},
+	) {
 		const result = await connectNatsBus({
 			url: natsUrl ?? "",
 			runId: testRunId,
-			log,
+			log: options.log ?? (() => {}),
 			logStatus: () => {},
-			logTiming: () => {},
+			logTiming: options.logTiming ?? (() => {}),
+			inputs: options.inputs ?? ["cancel_trip"],
 		});
 		if (!result.ok) throw new Error("NATS unavailable", { cause: result });
 		open.push(result.value);
@@ -296,10 +306,15 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		return { type: "cancel_trip", tripId: TripId.parse(`${tripIdSalt}-${n}`) };
 	}
 
-	function isOwnCancelTrip(message: Message): message is CancelTrip {
-		return (
-			message.type === "cancel_trip" && message.tripId.startsWith(tripIdSalt)
-		);
+	function isOwn(message: { tripId: string }): boolean {
+		return message.tripId.startsWith(tripIdSalt);
+	}
+
+	function requestTripAccepted(n: number): RequestTripAccepted {
+		return {
+			type: "request_trip_accepted",
+			tripId: TripId.parse(`${tripIdSalt}-${n}`),
+		};
 	}
 
 	async function waitFor(condition: () => boolean): Promise<void> {
@@ -313,7 +328,9 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		const publisher = await connectBus();
 		const subscriber = await connectBus();
 		const received: Message[] = [];
-		subscriber.subscribe(isOwnCancelTrip, (message) => received.push(message));
+		subscriber.subscribe(["cancel_trip"], (message) => {
+			if (isOwn(message)) received.push(message);
+		});
 		const sent = Array.from({ length: 50 }, (_, n) => cancelTrip(n));
 
 		for (const message of sent) publisher.publish(message);
@@ -322,30 +339,83 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		expect(received).toEqual(sent);
 	});
 
-	test("each message reaches only subscribers that accept it", async () => {
-		const bus = await connectBus();
-		const received: [string, Message][] = [];
-		const isCancelTrip =
-			(n: number) =>
-			(message: Message): message is CancelTrip =>
-				isOwnCancelTrip(message) && message.tripId === cancelTrip(n).tripId;
-		bus.subscribe(isCancelTrip(1), (message) =>
-			received.push(["one", message]),
+	// ADR 0042: one NATS subscription per type, delivered from one callback,
+	// so a publisher's order holds across subscriptions (e.g. dispatch's offer
+	// before its trip.cancelled, at a driver shard).
+	test("a subscriber to several types receives them in publish order", async () => {
+		const publisher = await connectBus();
+		const subscriber = await connectBus({
+			inputs: ["cancel_trip", "request_trip_accepted"],
+		});
+		const received: Message[] = [];
+		subscriber.subscribe(
+			["cancel_trip", "request_trip_accepted"],
+			(message) => {
+				if (isOwn(message)) received.push(message);
+			},
 		);
-		bus.subscribe(isCancelTrip(2), (message) =>
-			received.push(["two", message]),
+		const sent = Array.from({ length: 50 }, (_, n) =>
+			n % 2 === 0 ? cancelTrip(n) : requestTripAccepted(n),
 		);
 
-		// Trip 1 last: once it arrives, trips 2 and 3 were handled (one publisher).
+		for (const message of sent) publisher.publish(message);
+		await waitFor(() => received.length >= sent.length);
+
+		expect(received).toEqual(sent);
+	});
+
+	test("each message reaches only subscribers to its type, in subscription order", async () => {
+		const bus = await connectBus({
+			inputs: ["cancel_trip", "request_trip_accepted"],
+		});
+		const received: [string, Message][] = [];
+		bus.subscribe(["cancel_trip"], (message) => {
+			if (isOwn(message)) received.push(["a", message]);
+		});
+		bus.subscribe(["request_trip_accepted"], (message) => {
+			if (isOwn(message)) received.push(["b", message]);
+		});
+		bus.subscribe(["cancel_trip"], (message) => {
+			if (isOwn(message)) received.push(["c", message]);
+		});
+
+		bus.publish(requestTripAccepted(1));
 		bus.publish(cancelTrip(2));
-		bus.publish(cancelTrip(3));
-		bus.publish(cancelTrip(1));
-		await waitFor(() => received.length >= 2);
+		await waitFor(() => received.length >= 3);
 
 		expect(received).toEqual([
-			["two", cancelTrip(2)],
-			["one", cancelTrip(1)],
+			["b", requestTripAccepted(1)],
+			["a", cancelTrip(2)],
+			["c", cancelTrip(2)],
 		]);
+	});
+
+	test("a bus never receives types outside its inputs", async () => {
+		const publisher = await connectBus({
+			inputs: [],
+		});
+		const timed: MessagesTimed[] = [];
+		const subscriber = await connectBus({
+			logTiming: (timing) => timed.push(timing),
+		});
+		const received: Message[] = [];
+		subscriber.subscribe(["cancel_trip"], (message) => {
+			if (isOwn(message)) received.push(message);
+		});
+
+		// One publisher: once the cancel_trip arrives, the reply before it would have.
+		publisher.publish(requestTripAccepted(1));
+		publisher.publish(cancelTrip(2));
+		await waitFor(() => received.length >= 1);
+		await subscriber.close();
+
+		expect(timed.reduce((sum, timing) => sum + timing.received, 0)).toBe(1);
+	});
+
+	test("subscribing to a type outside the bus's inputs is a bug", async () => {
+		const bus = await connectBus();
+
+		expect(() => bus.subscribe(["trip_status"], () => {})).toThrow();
 	});
 
 	test("every published message carries the bus's run id as a Run-Id header", async () => {
@@ -382,7 +452,8 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 	test("handlers run one at a time, even when a handler publishes", async () => {
 		const bus = await connectBus();
 		const trace: string[] = [];
-		bus.subscribe(isOwnCancelTrip, (message) => {
+		bus.subscribe(["cancel_trip"], (message) => {
+			if (!isOwn(message)) return;
 			trace.push(`start ${message.tripId}`);
 			if (message.tripId === cancelTrip(1).tripId) bus.publish(cancelTrip(2));
 			trace.push(`end ${message.tripId}`);
@@ -400,15 +471,17 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		]);
 	});
 
-	test("invalid payloads on sim.> are logged and dropped", async () => {
+	test("invalid payloads on a subscribed subject are logged and dropped", async () => {
 		const logged: DroppedMessage[] = [];
-		const bus = await connectBus((dropped) => logged.push(dropped));
+		const bus = await connectBus({ log: (dropped) => logged.push(dropped) });
 		const received: Message[] = [];
-		bus.subscribe(isOwnCancelTrip, (message) => received.push(message));
+		bus.subscribe(["cancel_trip"], (message) => {
+			if (isOwn(message)) received.push(message);
+		});
 		// A raw connection can publish what the bus never would; one publisher
 		// keeps the valid message last.
 		const raw = await connect({ servers: natsUrl });
-		const subject = `sim.test.${tripIdSalt}`;
+		const subject = "sim.commands.cancel_trip";
 
 		raw.publish(subject, "{not json");
 		raw.publish(subject, JSON.stringify({ type: "no_such_message" }));
@@ -417,7 +490,7 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		await waitFor(() => received.length >= 1);
 
 		expect({
-			logged: logged.filter((dropped) => dropped.subject === subject),
+			logged,
 			received,
 		}).toMatchObject({
 			logged: [

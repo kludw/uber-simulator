@@ -12,8 +12,8 @@ import {
 	replaySubject,
 	replaySubjects,
 	simEventSubjects,
-	simSubjects,
 	subjectFor,
+	subscriptionSubject,
 } from "./subjects.ts";
 
 const tick = Tick.parse(1);
@@ -149,10 +149,17 @@ describe("subjectFor", () => {
 	test.each(cases)("%p goes on %s", (message, subject) => {
 		expect(subjectFor(message)).toBe(subject);
 	});
-});
 
-test("simSubjects is the wildcard over every service subject", () => {
-	expect(simSubjects).toBe("sim.>");
+	// ADR 0042: one subscription per type a service takes; offers for any
+	// driver, so a shard needs one subscription, not one per driver.
+	test.each(cases)(
+		"%p is received on the subscription to its type",
+		(message, subject) => {
+			expect(subscriptionSubject(message.type)).toBe(
+				message.type === "offer" ? "sim.offers.*" : subject,
+			);
+		},
+	);
 });
 
 test("simEventSubjects is the wildcard over every event subject", () => {

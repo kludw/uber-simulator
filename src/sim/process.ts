@@ -3,6 +3,7 @@
 // SIGINT/SIGTERM, 1 NATS connection failed or lost, 2 invalid config.
 import type { Bus } from "../bus/bus.ts";
 import { connectNatsBus } from "../bus/nats.ts";
+import type { MessageType } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
 import {
 	type InvalidConfig,
@@ -40,14 +41,17 @@ export function readServiceConfig(service: string): ServiceConfig {
 
 // Connects the process to NATS and closes the bus on SIGINT/SIGTERM.
 // `stopping` aborts before the bus closes, so loops stop publishing first.
+// inputs: every message type the process subscribes to (ADR 0042).
 export async function connectProcess(
 	service: string,
 	config: ServiceConfig,
+	inputs: readonly MessageType[],
 ): Promise<{ bus: Bus; stopping: AbortSignal }> {
 	const stop = new AbortController();
 	const connected = await connectNatsBus({
 		url: config.natsUrl,
 		runId: config.runId,
+		inputs,
 		log: (dropped) => log(service, { type: "message_dropped", ...dropped }),
 		logStatus: (status) => {
 			log(service, status);
@@ -84,6 +88,6 @@ export async function runService(
 	service: SimService,
 	config: ServiceConfig,
 ): Promise<void> {
-	const { bus } = await connectProcess(service.name, config);
+	const { bus } = await connectProcess(service.name, config, service.inputs);
 	service.start(bus, (rejected) => log(service.name, rejected));
 }

@@ -6,7 +6,8 @@ import { connectProcess, readServiceConfig } from "../sim/process.ts";
 import { tickDueAt } from "./schedule.ts";
 
 const config = readServiceConfig("clock");
-const { bus, stopping } = await connectProcess("clock", config);
+// Publishes only: subscribes to nothing (ADR 0042).
+const { bus, stopping } = await connectProcess("clock", config, []);
 const schedule = {
 	firstTickAt: Date.now() + config.clockStartDelayMs,
 	speed: config.speed,

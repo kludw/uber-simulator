@@ -1,19 +1,28 @@
 // NATS subject names, in one place for the services, the persister, replay,
 // and the browser UI. Pure, no NATS imports, so the UI bundle can use it.
-import type { Message, RunId, SimEvent } from "./messages.ts";
+import type { Message, MessageType, RunId, SimEvent } from "./messages.ts";
 
 const simEventsPrefix = "sim.events";
-
-// Every service subject: each service's one subscription (ADR 0028).
-export const simSubjects = "sim.>";
 
 // Every event subject (ADR 0028), e.g. for the persister's stream.
 export const simEventSubjects = `${simEventsPrefix}.>`;
 
-// Subject scheme (ADR 0028). Subscribers read sim.> and filter by predicate,
-// so subjects serve wildcard taps (sim.events.>) and readability.
+// Subject scheme (ADR 0028): subjects serve wildcard taps (sim.events.>),
+// readability, and each service's subscriptions (ADR 0042).
 export function subjectFor(message: Message): string {
-	switch (message.type) {
+	if (message.type === "offer") return `sim.offers.${message.driverId}`;
+	return `${kindPrefix(message.type)}.${message.type}`;
+}
+
+// What a service subscribes to for one message type it takes (ADR 0042):
+// every subject that type goes on, so offers to any driver.
+export function subscriptionSubject(type: MessageType): string {
+	if (type === "offer") return "sim.offers.*";
+	return `${kindPrefix(type)}.${type}`;
+}
+
+function kindPrefix(type: Exclude<MessageType, "offer">): string {
+	switch (type) {
 		case "clock.ticked":
 		case "driver.went_online":
 		case "driver.went_offline":
@@ -28,13 +37,11 @@ export function subjectFor(message: Message): string {
 		case "trip.picked_up":
 		case "trip.completed":
 		case "trip.cancelled":
-			return `${simEventsPrefix}.${message.type}`;
+			return simEventsPrefix;
 		case "request_trip":
 		case "cancel_trip":
 		case "confirm_trip":
-			return `sim.commands.${message.type}`;
-		case "offer":
-			return `sim.offers.${message.driverId}`;
+			return "sim.commands";
 		case "offer_accepted":
 		case "offer_declined":
 		case "request_trip_accepted":
@@ -42,10 +49,10 @@ export function subjectFor(message: Message): string {
 		case "cancel_trip_accepted":
 		case "cancel_trip_rejected":
 		case "trip_status":
-			return `sim.replies.${message.type}`;
+			return "sim.replies";
 		default: {
-			const unhandled: never = message;
-			throw new Error(`no subject for ${JSON.stringify(unhandled)}`);
+			const unhandled: never = type;
+			throw new Error(`no subject for ${unhandled}`);
 		}
 	}
 }

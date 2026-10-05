@@ -273,6 +273,27 @@ const Message = z.discriminatedUnion("type", [
 ]);
 export type Message = z.infer<typeof Message>;
 
+export type MessageType = Message["type"];
+
+// The message of one type, e.g. what a subscription to that type delivers.
+export type MessageOf<Type extends MessageType> = Extract<
+	Message,
+	{ type: Type }
+>;
+
+// Every message type, for a subscriber taking everything (a run's recorder).
+export const messageTypes: readonly MessageType[] = Message.options.map(
+	(option) => option.shape.type.value,
+);
+
+export function isOneOf<Type extends MessageType>(
+	types: ReadonlySet<Type>,
+	message: Message,
+): message is MessageOf<Type> {
+	const anyTypes: ReadonlySet<MessageType> = types;
+	return anyTypes.has(message.type);
+}
+
 // What sim.events.> carries (ADR 0028): events, never offers, offer replies,
 // commands, or command replies.
 export type SimEvent = Extract<
