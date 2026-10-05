@@ -4,6 +4,7 @@ import type {
 	CancelTripAccepted,
 	CancelTripRejected,
 	ClockTicked,
+	ConfirmTrip,
 	DriverArrivedAtDropoff,
 	DriverArrivedAtPickup,
 	DriverId,
@@ -27,6 +28,7 @@ import type {
 	TripOffered,
 	TripPickedUp,
 	TripRequested,
+	TripStatus,
 } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 import {
@@ -82,7 +84,8 @@ export type DispatchInput =
 	| OfferAccepted
 	| OfferDeclined
 	| DriverArrivedAtPickup
-	| DriverArrivedAtDropoff;
+	| DriverArrivedAtDropoff
+	| ConfirmTrip;
 
 type DispatchOutput =
 	| RequestTripAccepted
@@ -98,9 +101,10 @@ type DispatchOutput =
 	| TripPickedUp
 	| TripCompleted
 	| TripCancelled
+	| TripStatus
 	| InputRejected<OfferAccepted | OfferDeclined, NoPendingOffer["type"]>
 	| InputRejected<
-			DriverArrivedAtPickup | DriverArrivedAtDropoff,
+			DriverArrivedAtPickup | DriverArrivedAtDropoff | ConfirmTrip,
 			ArrivalRejected["type"]
 	  >;
 
@@ -157,6 +161,8 @@ export function decideDispatch(
 		case "driver.arrived_at_pickup":
 		case "driver.arrived_at_dropoff":
 			return onArrival(state, input);
+		case "confirm_trip":
+			return onConfirmTrip(state, input);
 		default: {
 			const unhandled: never = input;
 			throw new Error(`unhandled dispatch input: ${unhandled}`);
@@ -410,16 +416,29 @@ function onArrival(
 	if (trip.state === "cancelled") return { state, outputs: [] };
 	// Its offer expired before its accept arrived; trip.offer_expired frees it.
 	if (trip.excludedDrivers.has(arrival.driverId)) return { state, outputs: [] };
-	const atPickup = arrival.type === "driver.arrived_at_pickup";
+	return arrive(
+		state,
+		trip,
+		arrival,
+		arrival.type === "driver.arrived_at_pickup",
+	);
+}
+
+// The arrival transition and its checks, for driver.arrived_at_* and a
+// confirm_trip standing in for one (ADR 0041).
+function arrive(
+	state: DispatchState,
+	trip: Trip,
+	input: DriverArrivedAtPickup | DriverArrivedAtDropoff | ConfirmTrip,
+	atPickup: boolean,
+): Decision {
 	const next = atPickup
-		? pickUp(trip, arrival.driverId, arrival.cell)
-		: complete(trip, arrival.driverId, arrival.cell);
+		? pickUp(trip, input.driverId, input.cell)
+		: complete(trip, input.driverId, input.cell);
 	if (!next.ok) {
 		return {
 			state,
-			outputs: [
-				{ type: "input_rejected", reason: next.error.type, input: arrival },
-			],
+			outputs: [{ type: "input_rejected", reason: next.error.type, input }],
 		};
 	}
 	storeTrip(state, next.value);
@@ -430,7 +449,58 @@ function onArrival(
 				type: atPickup ? "trip.picked_up" : "trip.completed",
 				tick: state.tick,
 				tripId: trip.id,
-				driverId: arrival.driverId,
+				driverId: input.driverId,
+			},
+		],
+	};
+}
+
+// ADR 0041's table: a trip that is not this driver's releases it.
+function onConfirmTrip(state: DispatchState, confirm: ConfirmTrip): Decision {
+	const trip = knownTrip(state, confirm.tripId);
+	if (trip === undefined) return replyStatus(state, confirm, "released");
+	const atPickup = confirm.stage === "pickup";
+	switch (trip.state) {
+		case "requested":
+			if (trip.offer?.driverId !== confirm.driverId) break;
+			// The offer's accept or trip.offer_expired resolves it; a dropoff
+			// confirm fails the arrival checks.
+			if (atPickup) return { state, outputs: [] };
+			return arrive(state, trip, confirm, false);
+		case "matched":
+			if (trip.driverId !== confirm.driverId) break;
+			return arrive(state, trip, confirm, atPickup);
+		case "picked_up":
+			if (trip.driverId !== confirm.driverId) break;
+			if (atPickup) return replyStatus(state, confirm, "picked_up");
+			return arrive(state, trip, confirm, false);
+		case "completed":
+			if (trip.driverId !== confirm.driverId) break;
+			return replyStatus(state, confirm, "completed");
+		case "cancelled":
+			break;
+		default: {
+			const unhandled: never = trip;
+			throw new Error(`unhandled trip state: ${unhandled}`);
+		}
+	}
+	return replyStatus(state, confirm, "released");
+}
+
+function replyStatus(
+	state: DispatchState,
+	confirm: ConfirmTrip,
+	status: TripStatus["status"],
+): Decision {
+	return {
+		state,
+		outputs: [
+			{
+				type: "trip_status",
+				tripId: confirm.tripId,
+				driverId: confirm.driverId,
+				stage: confirm.stage,
+				status,
 			},
 		],
 	};

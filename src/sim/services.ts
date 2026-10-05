@@ -135,6 +135,7 @@ export function dispatchService(config: SimConfig): SimService {
 						case "driver.arrived_at_dropoff":
 						case "offer_accepted":
 						case "offer_declined":
+						case "confirm_trip":
 							return true;
 						default:
 							return false;

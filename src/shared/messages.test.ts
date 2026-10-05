@@ -89,6 +89,29 @@ const samples: Message[] = [
 		tripId,
 		error: { type: "invalid_transition", from: "picked_up" },
 	},
+	{ type: "confirm_trip", tripId, driverId, stage: "pickup", cell: pickup },
+	{ type: "confirm_trip", tripId, driverId, stage: "dropoff", cell: dropoff },
+	{
+		type: "trip_status",
+		tripId,
+		driverId,
+		stage: "pickup",
+		status: "picked_up",
+	},
+	{
+		type: "trip_status",
+		tripId,
+		driverId,
+		stage: "dropoff",
+		status: "completed",
+	},
+	{
+		type: "trip_status",
+		tripId,
+		driverId,
+		stage: "pickup",
+		status: "released",
+	},
 ];
 
 test.each(samples.map((message) => [message.type, message]))(
@@ -120,6 +143,26 @@ const invalidInputs: [string, unknown][] = [
 			riderId: "r 1",
 			pickup: { x: 0, y: 0 },
 			dropoff: { x: 0, y: 0 },
+		},
+	],
+	[
+		"confirm with an unknown stage",
+		{
+			type: "confirm_trip",
+			tripId: "t-1",
+			driverId: "d-1",
+			stage: "en_route",
+			cell: { x: 0, y: 0 },
+		},
+	],
+	[
+		"trip status with an unknown status",
+		{
+			type: "trip_status",
+			tripId: "t-1",
+			driverId: "d-1",
+			stage: "pickup",
+			status: "cancelled",
 		},
 	],
 	[

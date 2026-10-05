@@ -100,7 +100,7 @@ The UI only subscribes; it builds its view from events alone and joins mid-run (
 
 The start delay is what orders tick 1 after the other services subscribed; nothing waits for them explicitly. A lost `driver.went_online` costs nothing lasting: dispatch also learns drivers from `driver.moved`.
 
-Services never call each other: commands (`request_trip`, `cancel_trip`), offers, replies, and events are all bus messages. Dispatch is the only source of `trip.*` events ([0018](adr/0018-dispatch-matching-via-offers.md)). Offers reach only the shard owning the driver via the shard's subscription predicate.
+Services never call each other: commands (`request_trip`, `cancel_trip` from riders; `confirm_trip` from drivers waiting at a pickup or dropoff, [0041](adr/0041-confirm-trip-while-waiting.md)), offers, replies (incl. `trip_status` to `confirm_trip`), and events are all bus messages. Dispatch is the only source of `trip.*` events ([0018](adr/0018-dispatch-matching-via-offers.md)). Offers reach only the shard owning the driver via the shard's subscription predicate.
 
 ## Local infra
 

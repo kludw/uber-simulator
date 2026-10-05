@@ -31,6 +31,7 @@ export function subjectFor(message: Message): string {
 			return `${simEventsPrefix}.${message.type}`;
 		case "request_trip":
 		case "cancel_trip":
+		case "confirm_trip":
 			return `sim.commands.${message.type}`;
 		case "offer":
 			return `sim.offers.${message.driverId}`;
@@ -40,6 +41,7 @@ export function subjectFor(message: Message): string {
 		case "request_trip_rejected":
 		case "cancel_trip_accepted":
 		case "cancel_trip_rejected":
+		case "trip_status":
 			return `sim.replies.${message.type}`;
 		default: {
 			const unhandled: never = message;

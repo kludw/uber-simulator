@@ -209,6 +209,29 @@ export const CancelTripRejected = z.object({
 });
 export type CancelTripRejected = z.infer<typeof CancelTripRejected>;
 
+// Command from a driver waiting at its pickup or dropoff (ADR 0041); dispatch
+// answers with trip_status, runs the arrival, stays silent, or rejects it.
+const Stage = z.enum(["pickup", "dropoff"]);
+
+export const ConfirmTrip = z.object({
+	type: z.literal("confirm_trip"),
+	tripId: TripId,
+	driverId: DriverId,
+	stage: Stage,
+	cell: Cell,
+});
+export type ConfirmTrip = z.infer<typeof ConfirmTrip>;
+
+// Reply to confirm_trip, echoing its stage (ADR 0041).
+export const TripStatus = z.object({
+	type: z.literal("trip_status"),
+	tripId: TripId,
+	driverId: DriverId,
+	stage: Stage,
+	status: z.enum(["picked_up", "completed", "released"]),
+});
+export type TripStatus = z.infer<typeof TripStatus>;
+
 export const TripRequested = z.object({
 	type: z.literal("trip.requested"),
 	tick: Tick,
@@ -245,6 +268,8 @@ const Message = z.discriminatedUnion("type", [
 	CancelTrip,
 	CancelTripAccepted,
 	CancelTripRejected,
+	ConfirmTrip,
+	TripStatus,
 ]);
 export type Message = z.infer<typeof Message>;
 
