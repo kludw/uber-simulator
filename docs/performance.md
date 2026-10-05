@@ -1,6 +1,6 @@
 # Performance
 
-Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12), 76k-500k in [Ceiling](#ceiling), and the distributed stack over NATS in [Live limits](#live-limits).
+Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12), 76k-500k in [Ceiling](#ceiling), and the distributed stack over NATS in [Live limits](#live-limits) (latest: [Subscriptions per service](#subscriptions-per-service)).
 
 ## Method
 
@@ -588,3 +588,31 @@ Messages received per service: 15.25-15.27M at 25k, 16.77-16.80M at 27.5k, every
 - **Which publisher closes ticks**: `trip.matched` is the last event of 99.8% of observed ticks in all four cases, `driver.moved` of 0.2%. Only dispatch publishes `trip.*`.
 
 Next (proposal, no ADR, #190): these numbers locate the tick's last event at dispatch's `trip.matched`, which follows the shards' offer replies, and show dispatch and the shards each decoding the whole tick's traffic. Whether cutting decode shortens settle is the change ticket's measurement.
+
+## Subscriptions per service
+
+The change [Service timing](#service-timing) pointed to, [#190](https://github.com/kludw/uber-simulator/issues/190), [ADR 0042](adr/0042-subscribe-to-taken-types.md): each service's NATS bus subscribes only to the message types its brain takes (the clock to none), instead of one `sim.>` subscription each. Messages, subjects, and in-process runs are unchanged. Measured 2026-10-05 on branch `190-cut-service-work` (master `541b69c` plus this change).
+
+### Method
+
+- `loadtest` workflow as in [Service timing](#service-timing): greedy, 2 driver shards, 600 ticks, drain bound 5 min, one `ubuntu-latest` runner (4 CPUs) per case.
+- Runs [37338720013](https://github.com/kludw/uber-simulator/actions/runs/37338720013) and [37338746533](https://github.com/kludw/uber-simulator/actions/runs/37338746533), each greedy 27.5k and 30k.
+- Decode / handle ms per tick as in [Service timing](#service-timing). `received` now counts only subscribed messages.
+- Before choosing, locally (M1 Pro, 10 cores, 27.5k greedy, 120 ticks, same NATS and ClickHouse): JSON.parse plus Zod of one `driver.moved` costs ~0.45 µs in a tight loop (0.22 + 0.22), against 5-11 µs per message timed on CI, so CI's decode was mostly waiting for a CPU. Master vs this change: settle p95 242.9 -> 108.7 ms; CPU s clock 10.3 -> 0.4, riders 10.6 -> 0.9, each shard 12.8-13.2 -> 3.9, dispatch 12.8 -> 10.5.
+
+### Results
+
+| Drivers | Run | CPU model | Settle p95 ms | Dispatch | Shard 0 | Shard 1 | Riders | CPU s dispatch / each shard / riders / clock |
+| ---: | --- | --- | ---: | --- | --- | --- | --- | --- |
+| 27,500 | [37338720013](https://github.com/kludw/uber-simulator/actions/runs/37338720013) | AMD EPYC 9V74 | 313.1 | 117 / 42 | 1 / 84 | 1 / 83 | 1 / 2 | 114.9 / 36.3-37.6 / 4.1 / 1.3 |
+| 27,500 | [37338746533](https://github.com/kludw/uber-simulator/actions/runs/37338746533) | AMD EPYC 7763 | 321.8 | 125 / 41 | 1 / 91 | 1 / 92 | 2 / 2 | 121.8 / 37.1-37.9 / 4.1 / 1.2 |
+| 30,000 | [37338720013](https://github.com/kludw/uber-simulator/actions/runs/37338720013) | AMD EPYC 9V45 | 197.7 | 78 / 30 | 1 / 56 | 1 / 56 | 1 / 1 | 81.1 / 29.6-29.8 / 3.6 / 1.1 |
+| 30,000 | [37338746533](https://github.com/kludw/uber-simulator/actions/runs/37338746533) | AMD EPYC 7763 | 381.0 | 143 / 51 | 2 / 105 | 2 / 101 | 2 / 2 | 134.8 / 40.8-41.9 / 4.4 / 1.2 |
+
+All four cases pass every criterion: 600 of 600 ticks, 0 overruns, 0 slow consumers, persister backlog second-half max 17-40k (limit 83-91k), drain 2.0-2.3 s. Messages received per 600-tick run: dispatch 16.62M at 27.5k and 18.13M at 30k, each shard 67-73k, riders 40-43k, the clock none.
+
+- **Settle**: 27.5k p95 313.1-321.8 ms, against 595.0-645.3 ms in [Service timing](#service-timing) (both EPYC 7763, one failing) and 420.0-432.0 ms in [CPU time per service](#cpu-time-per-service) (both EPYC 9V74). 30k keeps up in both runs (197.7-381.0 ms). Greedy's live limit is now at least 30k.
+- **Work cut where unused**: the clock's CPU fell from 76-114 s per run to 1.1-1.3 s, the riders' from 86-106 s to 3.6-4.4 s, each shard's from 105-130 s to 30-42 s.
+- **Dispatch decodes faster without the contention**: 4.2-4.7 µs per message on the 9V74 and 7763 (7.3-10.9 µs before), 2.6 µs on the 9V45; 117-143 ms per tick at 27.5-30k, against 242-248 ms at 27.5k on the 7763 before. Decode is still 72-75% of dispatch's timed ms, and `trip.matched` still closes 99.7-99.8% of ticks: dispatch, receiving ~N `driver.moved` per tick, is what remains on settle's path.
+
+Next (proposal, no ADR): dispatch's own per-message cost is the next limit, alongside the persister (41-58% of a core here). Fewer, larger messages (one positions message per shard per tick) would cut it, at the cost of an event shape change for every consumer (ADR 0042's alternatives).

@@ -24,7 +24,7 @@ We will:
 ## Rationale
 
 - Cuts the work no brain uses: locally (M1 Pro, 27.5k greedy, 120 ticks) CPU per service fell from 10.3-13.2 s to 0.4 s (clock), 0.9 s (riders), 3.9 s (each shard); dispatch 12.8 -> 10.5 s. On a 4-CPU runner that frees most of the contention inflating every decode.
-- Takes the shards' decode off the settle path: a shard now receives ~70 messages per tick instead of ~N, so its offers wait only on its own moves. Locally, settle p95 fell from 242.9 to 108.7 ms. CI numbers: [Subscriptions per service](../performance.md#subscriptions-per-service).
+- Takes the shards' decode off the settle path: a shard now receives ~70 messages per tick instead of ~N, so its offers wait only on its own moves. Locally, settle p95 fell from 242.9 to 108.7 ms. On CI (two runs each), greedy 27.5k settles at p95 313.1-321.8 ms (595.0-645.3 before, one failing) and 30k at 197.7-381.0 ms, every criterion passing; dispatch decodes at 4.2-4.7 µs per message instead of 7.3-10.9 on the same CPU models ([Subscriptions per service](../performance.md#subscriptions-per-service)).
 - Small change: no message, subject, or consumer changes; the predicates were already a type list in a switch.
 
 ## Alternatives considered
