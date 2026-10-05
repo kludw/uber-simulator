@@ -370,7 +370,7 @@ All single 300-tick runs. "finished" means all 300 ticks ran, not that the run k
 
 ## Live limits
 
-The distributed stack at real time (`bun run loadtest`, [ADR 0037](adr/0037-end-to-end-load-test.md)): every service its own process over NATS, the persister writing to ClickHouse via JetStream. Measured 2026-10-04 at `47d91a0` (master after [#160](https://github.com/kludw/uber-simulator/pull/160)), [#158](https://github.com/kludw/uber-simulator/issues/158). Current limits, after the persister change: [After milestone 14](#after-milestone-14).
+The distributed stack at real time (`bun run loadtest`, [ADR 0037](adr/0037-end-to-end-load-test.md)): every service its own process over NATS, the persister writing to ClickHouse via JetStream. Measured 2026-10-04 at `47d91a0` (master after [#160](https://github.com/kludw/uber-simulator/pull/160)), [#158](https://github.com/kludw/uber-simulator/issues/158). Current limits: [After milestone 16](#after-milestone-16).
 
 ### Method
 
@@ -616,3 +616,70 @@ All four cases pass every criterion: 600 of 600 ticks, 0 overruns, 0 slow consum
 - **Dispatch decodes faster without the contention**: 4.2-4.7 µs per message on the 9V74 and 7763 (7.3-10.9 µs before), 2.6 µs on the 9V45; 117-143 ms per tick at 27.5-30k, against 242-248 ms at 27.5k on the 7763 before. Decode is still 72-75% of dispatch's timed ms, and `trip.matched` still closes 99.7-99.8% of ticks: dispatch, receiving ~N `driver.moved` per tick, is what remains on settle's path.
 
 Next (proposal, no ADR): dispatch's own per-message cost is the next limit, alongside the persister (41-58% of a core here). Fewer, larger messages (one positions message per shard per tick) would cut it, at the cost of an event shape change for every consumer (ADR 0042's alternatives).
+
+## After milestone 16
+
+Live limits after [ADR 0042](adr/0042-subscribe-to-taken-types.md)'s per-service subscriptions, judged by ADR 0037 with [ADR 0038](adr/0038-persister-backlog-criterion.md)'s backlog bound, [#191](https://github.com/kludw/uber-simulator/issues/191). Measured 2026-10-05 at `22a1029` (master after [#193](https://github.com/kludw/uber-simulator/pull/193)).
+
+### Method
+
+- Same as [After milestone 14](#after-milestone-14): `loadtest` workflow, one `ubuntu-latest` job per case, 2 driver shards, demand at the spec ratio, seed 1, 5-tick batch window, 600 ticks, drain bound 5 min. 4 CPUs, 15,989-15,993 MiB, 1-minute load average 0.30-1.81 at start. CPU model per run from the report's `host` line.
+- Greedy bracketed upward from 25k at 30k / 35k / 40k / 50k, then 32.5k and 45k. 35k and 40k ran four times each, since their first runs split by CPU model. Batched at the largest greedy-passing size (32.5k), one step below (30k), and 27.5k. Two runs per size otherwise.
+- Every case is its own workflow run:
+  - Greedy 30k: [37342300444](https://github.com/kludw/uber-simulator/actions/runs/37342300444), [37342478784](https://github.com/kludw/uber-simulator/actions/runs/37342478784).
+  - Greedy 32.5k: [37345911132](https://github.com/kludw/uber-simulator/actions/runs/37345911132), [37345947642](https://github.com/kludw/uber-simulator/actions/runs/37345947642).
+  - Greedy 35k: [37342309509](https://github.com/kludw/uber-simulator/actions/runs/37342309509), [37342488300](https://github.com/kludw/uber-simulator/actions/runs/37342488300), [37344034284](https://github.com/kludw/uber-simulator/actions/runs/37344034284), [37344065652](https://github.com/kludw/uber-simulator/actions/runs/37344065652).
+  - Greedy 40k: [37342317815](https://github.com/kludw/uber-simulator/actions/runs/37342317815), [37342498844](https://github.com/kludw/uber-simulator/actions/runs/37342498844), [37344044949](https://github.com/kludw/uber-simulator/actions/runs/37344044949), [37344075889](https://github.com/kludw/uber-simulator/actions/runs/37344075889).
+  - Greedy 45k: [37344055305](https://github.com/kludw/uber-simulator/actions/runs/37344055305), [37344085772](https://github.com/kludw/uber-simulator/actions/runs/37344085772). Greedy 50k: [37342326038](https://github.com/kludw/uber-simulator/actions/runs/37342326038) (one run: it fails two criteria, and 45k already fails).
+  - Batched 27.5k: [37345935290](https://github.com/kludw/uber-simulator/actions/runs/37345935290), [37345970001](https://github.com/kludw/uber-simulator/actions/runs/37345970001). Batched 30k: [37345923121](https://github.com/kludw/uber-simulator/actions/runs/37345923121), [37345958731](https://github.com/kludw/uber-simulator/actions/runs/37345958731). Batched 32.5k: [37347458247](https://github.com/kludw/uber-simulator/actions/runs/37347458247), [37347474168](https://github.com/kludw/uber-simulator/actions/runs/37347474168).
+- Backlog slope: least-squares slope of the backlog over the second half of its 5 s samples, events per second, as in [Live limits](#live-limits). Dispatch decode / handle: ms per tick from its `messages_timed` entries, as in [Service timing](#service-timing). Persister write rate and round phases: from its `rounds_timed` entries, split into the run (entries up to 600 s) and after it (the drain, with every other service stopped).
+
+### Results
+
+| Drivers | Matching | Run | CPU model | Settle ms mean / p95 / max | Overruns | Events per tick | Backlog second-half max (limit) | Backlog slope /s | Drain | Dispatch decode / handle ms per tick | CPU s persister / dispatch | Failed |
+| ---: | --- | --- | --- | --- | ---: | ---: | --- | ---: | --- | --- | --- | --- |
+| 30,000 | greedy | [37342300444](https://github.com/kludw/uber-simulator/actions/runs/37342300444) | EPYC 9V74 | 251.8 / 341.3 / 409.5 | 0 | 30,290 | 38,794 (90,871) | 7 | 2.4 s | 127 / 46 | 330.6 / 121.3 | none |
+| 30,000 | greedy | [37342478784](https://github.com/kludw/uber-simulator/actions/runs/37342478784) | EPYC 7763 | 259.9 / 339.6 / 498.4 | 0 | 30,290 | 39,810 (90,871) | 89 | 2.0 s | 136 / 43 | 321.1 / 125.6 | none |
+| 32,500 | greedy | [37345911132](https://github.com/kludw/uber-simulator/actions/runs/37345911132) | EPYC 9V74 | 285.5 / 385.8 / 513.4 | 0 | 32,814 | 41,822 (98,441) | -25 | 2.0 s | 143 / 56 | 377.9 / 135.8 | none |
+| 32,500 | greedy | [37345947642](https://github.com/kludw/uber-simulator/actions/runs/37345947642) | EPYC 7763 | 302.1 / 409.7 / 578.6 | 0 | 32,814 | 45,957 (98,441) | 88 | 3.0 s | 157 / 52 | 361.1 / 141.0 | none |
+| 35,000 | greedy | [37342309509](https://github.com/kludw/uber-simulator/actions/runs/37342309509) | EPYC 7763 | 352.8 / 479.8 / 644.3 | 0 | 35,336 | 150,433 (106,009) | 168 | 5.5 s | 177 / 70 | 398.6 / 154.9 | backlog |
+| 35,000 | greedy | [37342488300](https://github.com/kludw/uber-simulator/actions/runs/37342488300) | EPYC 7763 | 328.0 / 442.6 / 591.8 | 0 | 35,336 | 120,433 (106,009) | 92 | 3.0 s | 167 / 62 | 375.1 / 147.7 | backlog |
+| 35,000 | greedy | [37344034284](https://github.com/kludw/uber-simulator/actions/runs/37344034284) | EPYC 7763 | 350.9 / 482.6 / 617.2 | 0 | 35,336 | 140,433 (106,009) | 143 | 4.4 s | 172 / 72 | 397.6 / 156.1 | backlog |
+| 35,000 | greedy | [37344065652](https://github.com/kludw/uber-simulator/actions/runs/37344065652) | EPYC 7763 | 342.5 / 449.0 / 571.4 | 0 | 35,336 | 130,433 (106,009) | 115 | 4.1 s | 174 / 65 | 386.7 / 153.0 | backlog |
+| 40,000 | greedy | [37342317815](https://github.com/kludw/uber-simulator/actions/runs/37342317815) | EPYC 9V45 | 212.1 / 296.2 / 451.4 | 0 | 40,384 | 50,396 (121,153) | 139 | 2.0 s | 104 / 47 | 320.0 / 107.1 | none |
+| 40,000 | greedy | [37342498844](https://github.com/kludw/uber-simulator/actions/runs/37342498844) | EPYC 9V74 | 290.5 / 383.8 / 537.9 | 0 | 40,384 | 61,733 (121,153) | -38 | 3.0 s | 139 / 68 | 390.0 / 136.8 | none |
+| 40,000 | greedy | [37344044949](https://github.com/kludw/uber-simulator/actions/runs/37344044949) | EPYC 7763 | 402.4 / 540.2 / 672.8 | 0 | 40,384 | 3,980,231 (121,153) | 7,083 | 83.3 s | 199 / 88 | 457.6 / 177.3 | backlog |
+| 40,000 | greedy | [37344075889](https://github.com/kludw/uber-simulator/actions/runs/37344075889) | EPYC 9V74 | 391.7 / 524.7 / 744.9 | 0 | 40,384 | 1,870,231 (121,153) | 3,368 | 39.1 s | 187 / 86 | 454.7 / 164.6 | backlog |
+| 45,000 | greedy | [37344055305](https://github.com/kludw/uber-simulator/actions/runs/37344055305) | EPYC 7763 | 440.3 / 572.3 / 717.9 | 0 | 45,431 | 8,438,142 (136,293) | 14,288 | 172.6 s | 219 / 99 | 510.5 / 198.3 | backlog |
+| 45,000 | greedy | [37344085772](https://github.com/kludw/uber-simulator/actions/runs/37344085772) | EPYC 9V74 | 457.4 / 609.7 / 790.2 | 0 | 45,431 | 8,258,142 (136,293) | 13,443 | 176.6 s | 220 / 108 | 592.4 / 207.0 | backlog |
+| 50,000 | greedy | [37342326038](https://github.com/kludw/uber-simulator/actions/runs/37342326038) | EPYC 7763 | 466.1 / 615.7 / 790.9 | 0 | 50,478 | 11,816,398 (151,435) | 19,891 | 232.8 s | 230 / 101 | 548.0 / 211.2 | settle, backlog |
+| 27,500 | batched | [37345935290](https://github.com/kludw/uber-simulator/actions/runs/37345935290) | EPYC 7763 | 259.2 / 432.4 / 768.9 | 0 | 27,766 | 37,518 (83,297) | 126 | 2.1 s | 108 / 81 | 297.1 / 140.1 | none |
+| 27,500 | batched | [37345970001](https://github.com/kludw/uber-simulator/actions/runs/37345970001) | EPYC 9V74 | 192.6 / 331.6 / 785.1 | 0 | 27,766 | 36,862 (83,297) | -41 | 2.1 s | 77 / 64 | 247.9 / 109.2 | none |
+| 30,000 | batched | [37345923121](https://github.com/kludw/uber-simulator/actions/runs/37345923121) | EPYC 9V45 | 174.7 / 307.5 / 423.8 | 0 | 30,290 | 40,066 (90,869) | -24 | 2.0 s | 70 / 61 | 248.8 / 100.9 | none |
+| 30,000 | batched | [37345958731](https://github.com/kludw/uber-simulator/actions/runs/37345958731) | EPYC 9V74 | 229.7 / 419.1 / 555.0 | 0 | 30,290 | 39,849 (90,869) | -39 | 2.4 s | 89 / 81 | 298.3 / 129.0 | none |
+| 32,500 | batched | [37347458247](https://github.com/kludw/uber-simulator/actions/runs/37347458247) | EPYC 7763 | 346.8 / 591.5 / 1,297.0 | 4 (0.7%) | 32,813 | 42,039 (98,439) | 121 | 2.3 s | 139 / 112 | 370.2 / 179.1 | none |
+| 32,500 | batched | [37347474168](https://github.com/kludw/uber-simulator/actions/runs/37347474168) | EPYC 9V74 | 255.6 / 453.8 / 999.0 | 0 | 32,813 | 41,604 (98,439) | -42 | 3.0 s | 97 / 89 | 324.7 / 140.7 | none |
+
+Every run printed a report, finished 600 of 600 ticks with 0 slow consumers; no infra failure, no rerun. `clock.ticked` max deviation 9.0-118.8 ms. Peak RSS per service 56.8-226.0 MiB, except batched dispatch: 326-403 MiB.
+
+- **Greedy, live: 32.5k** (two runs, EPYC 9V74 and 7763, both pass every criterion). 35k fails the backlog bound in 4 of 4 runs, all on EPYC 7763. 40k splits by runner: it passes on EPYC 9V45 (37342317815) and 9V74 (37342498844) and fails the backlog bound on 7763 (37344044949) and on another 9V74 (37344075889). 45k fails the backlog bound in both runs (7763, 9V74), 50k fails settle and the backlog bound (7763). **The milestone 16 target (40k, two runs) is not met**: 2 of 4 runs pass.
+- **Batched, live: 32.5k** (two runs pass; above not measured). The 7763 run is close to two bounds: settle p95 591.5 ms and 4 overruns (0.7%). 27.5k and 30k pass twice each. Batched ticks are closed by `trip.picked_up` (58-60% of ticks), `trip.completed` (19-22%), and `trip.matched` (20%, the batch ticks), not by `trip.matched` alone as in greedy.
+- **What fails first now: the persister's backlog.** Every failing greedy size (35k-50k) fails the backlog bound; settle passes every greedy run up to 45k (p95 at most 609.7 ms, 45k on 9V74, 0.3 ms inside the bound) and fails first at 50k (615.7 ms). Overruns are 0 in every greedy run. `trip.matched` still closes 99.8% of greedy ticks; dispatch's decode is 104-230 ms per tick (3.5-5.0 µs per message on the 9V74 and 7763, 2.6 µs on the 9V45).
+- **35k: the persister keeps up, then falls behind in the last 25 s.** In all four 35k runs the backlog stays at or under 53k (1.5 ticks of events) up to sample 112 of 121, then climbs about 27k per 5 s from sample 113 (about 565 s) to 120-150k at sample 117 (3.4-4.3 ticks), then falls again; second-half slope 92-168 events/s. In those last intervals the persister's rounds per 10 s drop from 35-36 to 30-33 for one or two of its 10 s entries; ack per round about doubles in all four runs, decode or insert per round rises in some. The four runs reach backlog values ending in the same digits at the same samples (peaks 120,433 / 130,433 / 140,433 / 150,433), so the rise is tied to the run's content (same tick, same data volume), not to the runner alone. What costs the persister CPU there is not separated (a ClickHouse background merge at that data volume is one candidate, not verified). 30k and 32.5k show no such rise.
+- **The persister writes about a third less while the stack runs.** Falling behind, during the run it wrote 33.8k (40k, 7763), 37.4k (40k, 9V74), 31.3-31.8k (45k), and 30.7k events/s (50k). After the last tick, with every other service stopped, the same persister drained at 47.0-50.8k events/s. Per 10,000-event round: 268-325 ms during the run (fetch 90-151 ms, decode 77-92, insert 80-84, ack 11-16) against 196-211 ms while draining (fetch 53-59, decode 63-76, insert 70-74, ack 8-9). Every phase slows, fetch the most (1.5-2.7x). So the limit is the persister sharing the runner's 4 CPUs with the rest of the stack, not its own insert. Its CPU is 66-76% of its wall time in those runs, so the persister's process isn't saturated; the NATS server's and ClickHouse's CPU aren't in the report.
+- **Runner speed decides near the limit, also within one CPU model.** The two 40k runs on 9V74 differ: dispatch decode / handle 139 / 68 vs 187 / 86 ms per tick, the persister level with the 40.4k events/s published vs falling behind at 37.4k.
+
+### Against milestone 14
+
+| | Milestone 14 ([After milestone 14](#after-milestone-14)) | Milestone 16 (this section) |
+| --- | --- | --- |
+| Greedy, live | 25k | 32.5k |
+| Batched, live | 20k | 32.5k (above not measured) |
+| Fails first | settle (greedy 27.5k, batched 25k) | persister backlog (greedy 35k on 7763; 40k on 7763 and one 9V74) |
+| Settle first fails (greedy) | 27.5k (p95 616.5-681.8 ms) | 50k (p95 615.7 ms); passes up to 45k |
+| Settle p95 at the largest greedy pass | 289.8-516.2 ms (25k) | 385.8-409.7 ms (32.5k) |
+| Persister write rate while falling behind | 27-40k events/s (run average, including the drain) | 30.7-37.4k events/s during the run; 47.0-50.8k alone (drain) |
+
+Against the in-process run ([After milestone 12](#after-milestone-12)): greedy reliably keeps real time at 50k there; live greedy at 32.5k is now 1.5× below it, down from 2× (milestone 14) and 5× (milestone 13). Settle alone would put live greedy at 45k: ADR 0042 moved the first limit from the services back to the persister.
+
+Next (proposal, no ADR): the persister writes about 1.5× faster alone than beside the rest of the stack on the same 4 CPUs, and fetch slows most. Before changing it, record the NATS server's and ClickHouse's CPU in the load test report (the services' CPU is already there): that shows where the persister's lost CPU goes and may explain the 35k rise. If other processes' work dominates, cutting per-message work across the stack (one positions message per shard per tick; an event shape change and an ADR, as in [Subscriptions per service](#subscriptions-per-service)) is the candidate; if fetch is mostly waiting for delivery, overlapping the next fetch with the current round's decode and insert in the persister is.
