@@ -265,7 +265,10 @@ describe("runInProcess", () => {
 	// arriving and every 10 ticks after, so each lost arrival or trip event
 	// costs one 10-tick round. A round fails only if its confirm or the reply
 	// is lost too (about 2% at 1% loss), so 3 rounds cover every wait here.
-	// Trips: at most the longest drive on the grid plus that wait. Every spec
+	// Trips: a stage spans at most two waits and the longest drive on the
+	// grid. Matched: drive to the pickup, then the pickup wait. Picked up: the
+	// driver may miss trip.picked_up and leave the pickup up to a wait later,
+	// then drive to the dropoff and wait there. Every spec
 	// invariant still holds: the event log keeps every message, and loss only
 	// delays the facts dispatch and drivers publish. Riders are not recovered
 	// (lost trip events leave them waiting or riding), so they go unchecked.
@@ -283,7 +286,7 @@ describe("runInProcess", () => {
 		});
 
 		const waitBound = 3 * 10 + 1;
-		const tripBound = grid.width - 1 + (grid.height - 1) + waitBound;
+		const tripBound = grid.width - 1 + (grid.height - 1) + 2 * waitBound;
 		expect({
 			confirmed: eventLog.some((message) => message.type === "confirm_trip"),
 			stuckDrivers: longWaits(eventLog, ticks, waitBound),
@@ -413,22 +416,22 @@ describe("runInProcess", () => {
 
 type Overdue = { id: string; since: number; stage: string };
 
-// Arrivals whose driver neither reported again (moved, arrived, went offline)
-// nor got its trip picked up or completed within bound ticks. Arrivals too
-// close to the run's end to tell are skipped.
+// Arrivals whose driver did not report again (moved, arrived, went offline)
+// within bound ticks. Only the driver's own reports count: a trip event it
+// missed would otherwise end a wait the driver never left. Arrivals too close
+// to the run's end to tell are skipped.
 function longWaits(
 	eventLog: readonly Message[],
 	ticks: number,
 	bound: number,
 ): Overdue[] {
-	const waiting = new Map<string, Overdue & { tripId: string }>();
+	const waiting = new Map<string, Overdue>();
 	const overdue: Overdue[] = [];
 	const resolve = (driverId: string, tick: number) => {
 		const wait = waiting.get(driverId);
 		if (wait === undefined) return;
 		waiting.delete(driverId);
-		const { id, since, stage } = wait;
-		if (tick - since > bound) overdue.push({ id, since, stage });
+		if (tick - wait.since > bound) overdue.push(wait);
 	};
 	for (const message of eventLog) {
 		switch (message.type) {
@@ -439,23 +442,16 @@ function longWaits(
 					id: message.driverId,
 					since: message.tick,
 					stage: message.type,
-					tripId: message.tripId,
 				});
 				break;
 			case "driver.moved":
 			case "driver.went_offline":
 				resolve(message.driverId, message.tick);
 				break;
-			case "trip.picked_up":
-			case "trip.completed":
-				if (waiting.get(message.driverId)?.tripId === message.tripId) {
-					resolve(message.driverId, message.tick);
-				}
-				break;
 		}
 	}
-	for (const { id, since, stage } of waiting.values()) {
-		if (ticks - since > bound) overdue.push({ id, since, stage });
+	for (const wait of waiting.values()) {
+		if (ticks - wait.since > bound) overdue.push(wait);
 	}
 	return overdue;
 }
