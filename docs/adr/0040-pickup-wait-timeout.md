@@ -1,6 +1,6 @@
 # 0040. Free a driver waiting at the pickup after a timeout
 
-- Status: Accepted
+- Status: Superseded by 0041
 - Date: 2026-10-05
 - Extends the driver states of 0025 (new `at_pickup -> idle` transition; nothing superseded)
 

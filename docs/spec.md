@@ -74,6 +74,7 @@ Watch-only: a live run, or a stored run's replay with `?replay=<runId>` (0034). 
 12. **Scale to 50k drivers** (0036): indexed brain state, spatial driver lookup in dispatch, exact results; target unprofiled p95 < 1 s per tick at 50k (two CI runs each). Done.
 13. **Live limits** (0037): `bun run loadtest` runs the distributed stack at real time and reports settle latency, persister backlog, and NATS slow consumers; find the largest live fleet that keeps up. Done: 10k greedy, at least 10k batched, limited by the persister ([Live limits](performance.md#live-limits)).
 14. **Persister throughput** (0038): `bun run loadtest` judges the persister by its backlog in ticks of events; time the persister's rounds, raise its write throughput where the timing points, re-measure live limits. Target: live greedy 20k keeps up (two CI runs), or the new first limit identified. Done: 25k greedy, 20k batched; settle fails first now, the persister next ([After milestone 14](performance.md#after-milestone-14)).
+15. **Lost-message recovery** (0041): drivers waiting at the pickup or dropoff confirm their trip with dispatch (`confirm_trip` / `trip_status`), replacing the pickup wait timeout; a lossy in-memory bus shows trips still end when messages are dropped.
 
 ## Later (not v1)
 
