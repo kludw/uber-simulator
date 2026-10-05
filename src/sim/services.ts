@@ -95,6 +95,7 @@ export function driverShardService(
 						case "trip.completed":
 						case "trip.cancelled":
 						case "trip.offer_expired":
+						case "trip_status":
 							return true;
 						default:
 							return false;
