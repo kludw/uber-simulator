@@ -399,22 +399,116 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 		});
 	}, 20_000);
 
-	test("inserts a backlog in batches of up to 10,000 events", async () => {
-		const source = testSource();
-		const nc = await natsConnection();
+	// Leaves `count` ticks waiting in the source's stream, nothing consumed.
+	async function backlog(
+		nc: NatsConnection,
+		source: EventSource,
+		count: number,
+		runId: string,
+	): Promise<void> {
 		// A first start creates the stream, so the backlog can wait in it.
 		const creating = await succeeded(
 			startPersister({ nats: nc, clickhouse, source, log: () => {} }),
 		);
 		creating.stop();
 		await creating.stopped;
-		for (let tick = 1; tick <= 12_000; tick++) {
-			publish(nc, source, { type: "clock.ticked", tick }, "run-f");
+		for (let tick = 1; tick <= count; tick++) {
+			publish(nc, source, { type: "clock.ticked", tick }, runId);
 		}
 		const jsm = await jetstreamManager(nc);
-		while ((await jsm.streams.info(source.stream)).state.messages < 12_000) {
+		while ((await jsm.streams.info(source.stream)).state.messages < count) {
 			await Bun.sleep(50);
 		}
+	}
+
+	// Waits until the consumer holds `count` messages unacked, or 10 s;
+	// returns the last count seen.
+	async function ackPendingReaches(
+		nc: NatsConnection,
+		source: EventSource,
+		count: number,
+	): Promise<number> {
+		const jsm = await jetstreamManager(nc);
+		const deadline = Date.now() + 10_000;
+		for (;;) {
+			const info = await jsm.consumers.info(source.stream, source.consumer);
+			if (info.num_ack_pending >= count || Date.now() > deadline) {
+				return info.num_ack_pending;
+			}
+			await Bun.sleep(50);
+		}
+	}
+
+	// Inserts nothing until released; records each insert's row count.
+	function heldInserts() {
+		const { promise: released, resolve: release } =
+			Promise.withResolvers<void>();
+		const batchSizes: number[] = [];
+		const held: Pick<ClickHouse, "insertEvents" | "command"> = {
+			command: clickhouse.command,
+			async insertEvents(rows: EventRow[]) {
+				batchSizes.push(rows.length);
+				await released;
+				return { ok: true, value: undefined };
+			},
+		};
+		return { clickhouse: held, release, batchSizes };
+	}
+
+	test("fetches the next batch while the current one is inserted, acking neither early", async () => {
+		const source = testSource();
+		const nc = await natsConnection();
+		await backlog(nc, source, 12_000, "run-h");
+		const held = heldInserts();
+		const persister = await succeeded(
+			startPersister({
+				nats: nc,
+				clickhouse: held.clickhouse,
+				source,
+				log: () => {},
+			}),
+		);
+
+		const ackPending = await ackPendingReaches(nc, source, 12_000);
+		held.release();
+		await drained(nc, source);
+		persister.stop();
+		await persister.stopped;
+
+		expect(ackPending).toBe(12_000);
+	}, 30_000);
+
+	test("stopping persists the batch fetched in the background before resolving", async () => {
+		const source = testSource();
+		const nc = await natsConnection();
+		await backlog(nc, source, 12_000, "run-i");
+		const held = heldInserts();
+		const persister = await succeeded(
+			startPersister({
+				nats: nc,
+				clickhouse: held.clickhouse,
+				source,
+				log: () => {},
+			}),
+		);
+
+		await ackPendingReaches(nc, source, 12_000);
+		persister.stop();
+		held.release();
+		await persister.stopped;
+		const jsm = await jetstreamManager(nc);
+		const consumer = await jsm.consumers.info(source.stream, source.consumer);
+
+		expect({
+			batchSizes: held.batchSizes,
+			unacked: consumer.num_ack_pending,
+		}).toEqual({ batchSizes: [10_000, 2000], unacked: 0 });
+	}, 30_000);
+
+	test("inserts a backlog in batches of up to 10,000 events", async () => {
+		const source = testSource();
+		const nc = await natsConnection();
+		await backlog(nc, source, 12_000, "run-f");
 		const batchSizes: number[] = [];
 		const recording: Pick<ClickHouse, "insertEvents" | "command"> = {
 			command: clickhouse.command,
