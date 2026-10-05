@@ -130,6 +130,20 @@ describe("subjectFor", () => {
 			},
 			"sim.replies.cancel_trip_rejected",
 		],
+		[
+			{ type: "confirm_trip", tripId, driverId, stage: "pickup", cell },
+			"sim.commands.confirm_trip",
+		],
+		[
+			{
+				type: "trip_status",
+				tripId,
+				driverId,
+				stage: "pickup",
+				status: "released",
+			},
+			"sim.replies.trip_status",
+		],
 	];
 
 	test.each(cases)("%p goes on %s", (message, subject) => {

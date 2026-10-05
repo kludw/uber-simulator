@@ -1305,3 +1305,209 @@ describe("decideDispatch ended trips", () => {
 		expect(outputs).toEqual([]);
 	});
 });
+
+function confirmTrip(
+	tripId: TripId,
+	driverId: DriverId,
+	stage: "pickup" | "dropoff",
+	at: Cell,
+): DispatchInput {
+	return { type: "confirm_trip", tripId, driverId, stage, cell: at };
+}
+
+function tripStatus(
+	tripId: TripId,
+	driverId: DriverId,
+	stage: "pickup" | "dropoff",
+	status: "picked_up" | "completed" | "released",
+) {
+	return { type: "trip_status", tripId, driverId, stage, status };
+}
+
+// ADR 0041's table, row by row.
+describe("decideDispatch confirm_trip", () => {
+	test("releases a driver confirming an unknown trip", () => {
+		const { outputs } = run([confirmTrip(t1, d1, "pickup", cell(1, 2))]);
+
+		expect(outputs).toEqual([tripStatus(t1, d1, "pickup", "released")]);
+	});
+
+	const matchedT1: DispatchInput[] = [
+		requestTrip(t1, 1),
+		wentOnline(d1, cell(3, 3)),
+		ticked(2),
+		accepted(t1, d1),
+		ticked(4),
+	];
+
+	test("picks up a trip matched to the driver confirming at its pickup", () => {
+		const { outputs } = run([
+			...matchedT1,
+			confirmTrip(t1, d1, "pickup", cell(1, 2)),
+		]);
+
+		expect(outputs).toEqual([
+			{ type: "trip.picked_up", tick: tick(4), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("rejects a pickup confirm away from the matched trip's pickup cell", () => {
+		const { outputs } = run([
+			...matchedT1,
+			confirmTrip(t1, d1, "pickup", cell(2, 2)),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "wrong_cell",
+				input: confirmTrip(t1, d1, "pickup", cell(2, 2)),
+			},
+		]);
+	});
+
+	test("rejects a dropoff confirm for a trip matched to the driver", () => {
+		const { outputs } = run([
+			...matchedT1,
+			confirmTrip(t1, d1, "dropoff", cell(7, 8)),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "invalid_transition",
+				input: confirmTrip(t1, d1, "dropoff", cell(7, 8)),
+			},
+		]);
+	});
+
+	const pickedUpT1: DispatchInput[] = [
+		...matchedT1,
+		arrivedAtPickup(t1, d1, cell(1, 2)),
+		ticked(5),
+	];
+
+	test("tells the driver carrying the trip it was picked up when it confirms the pickup", () => {
+		const { outputs } = run([
+			...pickedUpT1,
+			confirmTrip(t1, d1, "pickup", cell(1, 2)),
+		]);
+
+		expect(outputs).toEqual([tripStatus(t1, d1, "pickup", "picked_up")]);
+	});
+
+	test("completes a picked-up trip when its driver confirms at the dropoff", () => {
+		const { outputs } = run([
+			...pickedUpT1,
+			confirmTrip(t1, d1, "dropoff", cell(7, 8)),
+		]);
+
+		expect(outputs).toEqual([
+			{ type: "trip.completed", tick: tick(5), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	const completedT1: DispatchInput[] = [
+		...pickedUpT1,
+		arrivedAtDropoff(t1, d1, cell(7, 8)),
+		ticked(6),
+	];
+
+	test("tells the driver who completed the trip it was completed when it confirms the dropoff", () => {
+		const { outputs } = run([
+			...completedT1,
+			confirmTrip(t1, d1, "dropoff", cell(7, 8)),
+		]);
+
+		expect(outputs).toEqual([tripStatus(t1, d1, "dropoff", "completed")]);
+	});
+
+	test("tells the driver who completed the trip it was completed when it confirms the pickup", () => {
+		const { outputs } = run([
+			...completedT1,
+			confirmTrip(t1, d1, "pickup", cell(1, 2)),
+		]);
+
+		expect(outputs).toEqual([tripStatus(t1, d1, "pickup", "completed")]);
+	});
+
+	const offeredT1: DispatchInput[] = [
+		requestTrip(t1, 1),
+		wentOnline(d1, cell(3, 3)),
+		ticked(2),
+	];
+
+	// The offer's accept or trip.offer_expired resolves it.
+	test("stays silent to a pickup confirm from the driver holding the trip's offer", () => {
+		const { outputs } = run([
+			...offeredT1,
+			confirmTrip(t1, d1, "pickup", cell(1, 2)),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("rejects a dropoff confirm from the driver holding the trip's offer", () => {
+		const { outputs } = run([
+			...offeredT1,
+			confirmTrip(t1, d1, "dropoff", cell(7, 8)),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "invalid_transition",
+				input: confirmTrip(t1, d1, "dropoff", cell(7, 8)),
+			},
+		]);
+	});
+
+	// d1's offer expires at tick 5; d2 is offered t1 at tick 6.
+	const matchedToD2: DispatchInput[] = [
+		...offeredT1,
+		ticked(5),
+		wentOnline(d2, cell(9, 9)),
+		ticked(6),
+		accepted(t1, d2),
+	];
+
+	// What t1 is to d1 after each history.
+	const releasedCases: [string, DispatchInput[]][] = [
+		["is waiting without an offer", [requestTrip(t1, 1)]],
+		[
+			"is offered to another driver",
+			[requestTrip(t1, 1), wentOnline(d2, cell(1, 1)), ticked(2)],
+		],
+		["was cancelled", [requestTrip(t1, 1), cancelTrip(t1)]],
+		["was cancelled while matched to it", [...matchedT1, cancelTrip(t1)]],
+		["expired its offer to it", [...offeredT1, ticked(5)]],
+		["was declined by it", [...offeredT1, declined(t1, d1)]],
+		["is matched to another driver", matchedToD2],
+		[
+			"is picked up by another driver",
+			[...matchedToD2, arrivedAtPickup(t1, d2, cell(1, 2))],
+		],
+		[
+			"is completed by another driver",
+			[
+				...matchedToD2,
+				arrivedAtPickup(t1, d2, cell(1, 2)),
+				arrivedAtDropoff(t1, d2, cell(7, 8)),
+			],
+		],
+	];
+
+	describe.each(["pickup", "dropoff"] as const)("at stage %s", (stage) => {
+		test.each(releasedCases)(
+			"releases the driver when the trip %s",
+			(_case, history) => {
+				const { outputs } = run([
+					...history,
+					confirmTrip(t1, d1, stage, cell(1, 2)),
+				]);
+
+				expect(outputs).toEqual([tripStatus(t1, d1, stage, "released")]);
+			},
+		);
+	});
+});
