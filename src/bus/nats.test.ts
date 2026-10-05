@@ -11,6 +11,7 @@ import {
 	type ConnectionStatus,
 	connectNatsBus,
 	type DroppedMessage,
+	type MessagesTimed,
 	type NatsBus,
 } from "./nats.ts";
 
@@ -24,6 +25,7 @@ describe("connectNatsBus", () => {
 			runId: testRunId,
 			log: () => {},
 			logStatus: () => {},
+			logTiming: () => {},
 		});
 
 		expect(result).toMatchObject({
@@ -52,6 +54,7 @@ describe("connectNatsBus", () => {
 			runId: testRunId,
 			log: () => {},
 			logStatus: () => {},
+			logTiming: () => {},
 		});
 		// A client left behind reconnects after its 2 s reconnect wait.
 		await Bun.sleep(2500);
@@ -130,6 +133,76 @@ describe("connectNatsBus", () => {
 			{ type: "nats_closed" },
 		]);
 	}, 10_000);
+
+	test("logs messages received and delivered, and ms decoding and handling, every 10 s and on close", async () => {
+		// A fake server, so no other publisher adds messages: it pushes the
+		// test's payloads on the bus's subscription.
+		let client: FakeSocket | undefined;
+		let sid = "";
+		const server = fakeNatsServer((socket, text) => {
+			const subscribed = text.match(/SUB sim\.> (\S+)\r\n/);
+			if (subscribed?.[1]) {
+				client = socket;
+				sid = subscribed[1];
+			}
+			pong(socket, text);
+		});
+		// Controlled time: only handling takes any, 6 s per message.
+		let nowMs = 0;
+		const timed: MessagesTimed[] = [];
+		const result = await connectNatsBus({
+			url: server.url,
+			runId: testRunId,
+			log: () => {},
+			logStatus: () => {},
+			logTiming: (timing) => timed.push(timing),
+			now: () => nowMs,
+		});
+		if (!result.ok) throw new Error("fake server unreachable");
+		const bus = result.value;
+		const { promise: lastHandled, resolve: handledLast } =
+			Promise.withResolvers<void>();
+		bus.subscribe(
+			(message): message is CancelTrip => message.type === "cancel_trip",
+			(message) => {
+				nowMs += 6000;
+				if (message.tripId === "t-3") handledLast();
+			},
+		);
+		const push = (payload: string) =>
+			client?.write(
+				`MSG sim.test ${sid} ${Buffer.byteLength(payload)}\r\n${payload}\r\n`,
+			);
+
+		push(JSON.stringify({ type: "cancel_trip", tripId: "t-1" }));
+		// Accepted by no subscriber, then not a message at all.
+		push(JSON.stringify({ type: "request_trip_accepted", tripId: "t-9" }));
+		push("{not json");
+		push(JSON.stringify({ type: "cancel_trip", tripId: "t-2" }));
+		push(JSON.stringify({ type: "cancel_trip", tripId: "t-3" }));
+		await lastHandled;
+		await bus.close();
+		server.stop();
+
+		expect(timed).toEqual([
+			{
+				type: "messages_timed",
+				intervalMs: 12_000,
+				received: 4,
+				decodeMs: 0,
+				delivered: 2,
+				handleMs: 12_000,
+			},
+			{
+				type: "messages_timed",
+				intervalMs: 6000,
+				received: 1,
+				decodeMs: 0,
+				delivered: 1,
+				handleMs: 6000,
+			},
+		]);
+	}, 10_000);
 });
 
 type FakeSocket = Bun.Socket<{ connection: number }>;
@@ -183,6 +256,7 @@ async function connectFake(
 		runId: testRunId,
 		log: () => {},
 		logStatus,
+		logTiming: () => {},
 	});
 	if (!result.ok) throw new Error("fake server unreachable", { cause: result });
 	return result.value;
@@ -211,6 +285,7 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 			runId: testRunId,
 			log,
 			logStatus: () => {},
+			logTiming: () => {},
 		});
 		if (!result.ok) throw new Error("NATS unavailable", { cause: result });
 		open.push(result.value);

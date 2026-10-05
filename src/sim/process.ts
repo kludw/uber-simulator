@@ -56,6 +56,7 @@ export async function connectProcess(
 				process.exit(1);
 			}
 		},
+		logTiming: (timing) => log(service, timing),
 	});
 	if (!connected.ok) {
 		log(service, connected.error);

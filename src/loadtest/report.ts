@@ -81,6 +81,7 @@ export function loadtestReport(
 		`last tick: events after the ${measurement.settleGraceMs / 1000} s grace window not observed, so its settle may be understated`,
 		`message rate: ${eventsPerTick.toFixed(1)} per tick (${settle.messages} events of ticks 1..${args.ticks})`,
 		`observer: clock.ticked max deviation ${settle.clockMaxDeviationMs.toFixed(1)} ms, pending bytes max ${measurement.pendingBytes.observerMax}`,
+		`last event of a tick (share of observed ticks, by subject): ${settle.lastEventSubjects.map(({ subject, ticks }) => `${subject} ${((ticks / settle.ticksObserved) * 100).toFixed(1)}%`).join(", ")}`,
 		`nats: slow consumers ${measurement.slowConsumers}, pending bytes max ${measurement.pendingBytes.anyMax} (any connection)`,
 		`persister backlog (pending + ack pending, every ${measurement.sampleIntervalMs / 1000} s): ${measurement.persisterBacklog.join(" ")}`,
 		`persister ack pending max: ${measurement.persisterAckPendingMax}`,

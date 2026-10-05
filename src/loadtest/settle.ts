@@ -5,7 +5,7 @@
 export type SettleTracker = {
 	clockTicked(tick: number, atMs: number): void;
 	// Any other event; ticks outside 1..T are ignored.
-	eventReceived(tick: number, atMs: number): void;
+	eventReceived(tick: number, atMs: number, subject: string): void;
 	summary(): SettleSummary;
 };
 
@@ -22,12 +22,16 @@ export type SettleSummary = {
 	// clock keeps an absolute schedule, so a large one means the observer
 	// itself lagged.
 	clockMaxDeviationMs: number;
+	// Per subject, the observed ticks whose last event had it, most first
+	// (ties by subject): which publisher closes ticks.
+	lastEventSubjects: { subject: string; ticks: number }[];
 };
 
 export function createSettleTracker(ticks: number): SettleTracker {
 	// Index = tick; NaN = nothing received.
 	const clockAt = new Float64Array(ticks + 1).fill(Number.NaN);
 	const lastEventAt = new Float64Array(ticks + 1).fill(Number.NaN);
+	const lastEventSubject: (string | undefined)[] = [];
 	const inRun = (tick: number) => tick >= 1 && tick <= ticks;
 	let messages = 0;
 	return {
@@ -36,22 +40,29 @@ export function createSettleTracker(ticks: number): SettleTracker {
 			messages++;
 			clockAt[tick] = atMs;
 		},
-		eventReceived(tick, atMs) {
+		eventReceived(tick, atMs, subject) {
 			if (!inRun(tick)) return;
 			messages++;
 			const last = lastEventAt[tick] ?? Number.NaN;
-			if (Number.isNaN(last) || atMs > last) lastEventAt[tick] = atMs;
+			if (!Number.isNaN(last) && atMs <= last) return;
+			lastEventAt[tick] = atMs;
+			lastEventSubject[tick] = subject;
 		},
 		summary() {
 			const settleMs: number[] = [];
 			let overruns = 0;
 			let clockMaxDeviationMs = 0;
+			const ticksClosed = new Map<string, number>();
 			for (let tick = 1; tick <= ticks; tick++) {
 				const clock = clockAt[tick] ?? Number.NaN;
 				if (Number.isNaN(clock)) continue;
 				const last = lastEventAt[tick] ?? Number.NaN;
 				const settle = Number.isNaN(last) ? 0 : Math.max(0, last - clock);
 				settleMs.push(settle);
+				const subject = lastEventSubject[tick];
+				if (subject !== undefined) {
+					ticksClosed.set(subject, (ticksClosed.get(subject) ?? 0) + 1);
+				}
 				const nextClock = clockAt[tick + 1] ?? Number.NaN;
 				const overran = Number.isNaN(nextClock)
 					? settle >= 1000
@@ -75,6 +86,11 @@ export function createSettleTracker(ticks: number): SettleTracker {
 				ticksObserved: settleMs.length,
 				messages,
 				clockMaxDeviationMs,
+				lastEventSubjects: [...ticksClosed]
+					.map(([subject, ticks]) => ({ subject, ticks }))
+					.toSorted(
+						(a, b) => b.ticks - a.ticks || (a.subject < b.subject ? -1 : 1),
+					),
 			};
 		},
 	};
