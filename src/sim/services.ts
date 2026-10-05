@@ -88,6 +88,20 @@ const ridersInputs = [
 	"cancel_trip_rejected",
 ] as const satisfies readonly RidersInput["type"][];
 
+// Compile-time completeness: true only when the list names every type of the
+// brain's Input; a missed type would never reach the brain.
+type Complete<Input extends Message, Listed extends MessageType> = [
+	Exclude<Input["type"], Listed>,
+] extends [never]
+	? true
+	: false;
+const inputsComplete: [
+	Complete<DriverShardInput, (typeof driverShardInputs)[number]>,
+	Complete<DispatchInput, (typeof dispatchInputs)[number]>,
+	Complete<RidersInput, (typeof ridersInputs)[number]>,
+] = [true, true, true];
+void inputsComplete;
+
 // Services start before the clock's first tick (tick 1).
 const startTick = Tick.parse(0);
 

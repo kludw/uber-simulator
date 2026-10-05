@@ -36,7 +36,7 @@ We will:
 
 ## Consequences
 
-- 0028's subject scheme, core NATS, and no request/reply stand; its single `sim.>` subscription per service does not. A service's types are listed once, in `src/sim/services.ts`; a missing type means its brain never sees those messages (in-process tests catch it).
+- 0028's subject scheme, core NATS, and no request/reply stand; its single `sim.>` subscription per service does not. A service's types are listed once, in `src/sim/services.ts`; a missing type would mean its brain never sees those messages, so a compile-time check there fails unless each list names every type of its brain's `Input`.
 - Ordering now also relies on the client calling callbacks in socket order and on one server; a cluster would need this revisited.
 - A throw in a handler must not escape into the client (it would only stop the client's reader): the bus stops delivering and rethrows it as an uncaught error, as the iterator loop's rejection did before.
 - `messages_timed.received` counts only subscribed messages.

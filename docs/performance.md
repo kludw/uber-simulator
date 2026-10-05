@@ -591,7 +591,7 @@ Next (proposal, no ADR, #190): these numbers locate the tick's last event at dis
 
 ## Subscriptions per service
 
-The change [Service timing](#service-timing) pointed to, [#190](https://github.com/kludw/uber-simulator/issues/190), [ADR 0042](adr/0042-subscribe-to-taken-types.md): each service's NATS bus subscribes only to the message types its brain takes (the clock to none), instead of one `sim.>` subscription each. Messages, subjects, and in-process runs are unchanged. Measured 2026-10-05 on branch `190-cut-service-work` (master `541b69c` plus this change).
+The change [Service timing](#service-timing) pointed to, [#190](https://github.com/kludw/uber-simulator/issues/190), [ADR 0042](adr/0042-subscribe-to-taken-types.md): each service's NATS bus subscribes only to the message types its brain takes (the clock to none), instead of one `sim.>` subscription each. Messages, subjects, and in-process runs are unchanged. Measured 2026-10-05 on branch `190-cut-service-work` at `a75a25b` (master `541b69c` plus this change).
 
 ### Method
 

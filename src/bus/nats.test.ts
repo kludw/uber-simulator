@@ -441,6 +441,31 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		expect(received).toEqual([testRunId, testRunId]);
 	});
 
+	// bun test intercepts uncaught errors, so the bus runs in its own process.
+	test("a handler's throw surfaces outside the client: the process exits non-zero", async () => {
+		const child = Bun.spawn(
+			[
+				"bun",
+				`${import.meta.dir}/handler-throws.fixture.ts`,
+				cancelTrip(1).tripId,
+			],
+			{
+				env: { ...Bun.env, NATS_URL: natsUrl },
+				stdout: "ignore",
+				stderr: "pipe",
+			},
+		);
+		const [exitCode, stderr] = await Promise.all([
+			child.exited,
+			new Response(child.stderr).text(),
+		]);
+
+		expect({ failed: exitCode !== 0, stderr }).toMatchObject({
+			failed: true,
+			stderr: expect.stringContaining("handler bug"),
+		});
+	}, 10_000);
+
 	test("closing an already closed bus resolves", async () => {
 		const bus = await connectBus();
 
