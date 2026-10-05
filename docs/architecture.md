@@ -98,7 +98,7 @@ view --> startRenderer.show (canvas, each animation frame) + panelRows (side pan
 
 The UI only subscribes; it builds its view from events alone and joins mid-run (ADR 0020). Live and replayed events take the same path after the subscription, so the view and renderer can't tell them apart (ADR 0034).
 
-The start delay is what orders tick 1 after the other services subscribed; nothing waits for them explicitly. A lost `driver.went_online` costs nothing lasting: dispatch also learns drivers from `driver.moved`.
+The start delay is what orders tick 1 after the other services subscribed; nothing waits for them explicitly. Nothing orders dispatch's subscriptions before the shards' start-up `driver.went_online` either: dispatch can miss some or all of them and learns those drivers from their tick-1 `driver.moved`, before it can match the first requests on tick 2 ([0043](adr/0043-learn-drivers-from-moves.md), [Start-up race](performance.md#start-up-race)).
 
 Services never call each other: commands (`request_trip`, `cancel_trip` from riders; `confirm_trip` from drivers waiting at a pickup or dropoff, [0041](adr/0041-confirm-trip-while-waiting.md)), offers, replies (incl. `trip_status` to `confirm_trip`), and events are all bus messages. Dispatch is the only source of `trip.*` events ([0018](adr/0018-dispatch-matching-via-offers.md)). Offers reach every shard (`sim.offers.*`); only the shard owning the driver passes them to its brain (its `accepts`).
 

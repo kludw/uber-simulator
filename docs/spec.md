@@ -26,7 +26,7 @@ Independent processes, each owning its state, talking over NATS. Each service's 
 | persister | stream position (JetStream consumer) | writes all events to ClickHouse, at-least-once |
 | UI (browser) | — | renders a view built from events |
 
-Nobody owns "the world". Views (dispatch's driver positions, UI) are built from events.
+Nobody owns "the world". Views (dispatch's driver positions, UI) are built from events. Dispatch learns a driver from its `driver.went_online` or, if it missed that (it subscribed after the shard started, 0043), from its first `driver.moved`.
 
 ## Trip lifecycle (0018)
 

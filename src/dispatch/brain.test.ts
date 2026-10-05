@@ -263,6 +263,27 @@ describe("decideDispatch clock.ticked", () => {
 		]);
 	});
 
+	// Over NATS, dispatch can subscribe after a shard published its start-up
+	// driver.went_online (ADR 0043).
+	test("offers a trip to a driver first seen moving", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			{ type: "driver.moved", tick: tick(1), driverId: d1, cell: cell(1, 3) },
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d1 },
+		]);
+	});
+
 	test("rejects a duplicate request for a trip already offered", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
