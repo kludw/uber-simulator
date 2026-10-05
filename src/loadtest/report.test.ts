@@ -52,6 +52,28 @@ const healthy: LoadtestMeasurement = {
 			wallMs: 610_000,
 		},
 	],
+	// Start, one per backlog sample, stop.
+	infraReadings: [
+		[0, 1_000_000, 500_000, 10_000_000, 2_000_000, 1_000_000],
+		[2000, 1_500_000, 800_000, 10_400_000, 2_100_000, 1_000_000],
+		[7000, 2_700_000, 1_600_000, 11_400_000, 2_350_000, 1_000_000],
+		[12_000, 3_900_000, 2_400_000, 16_400_000, 3_350_000, 5_500_000],
+		[17_000, 6_900_000, 3_900_000, 17_400_000, 3_600_000, 5_500_000],
+		[22_000, 8_100_000, 4_700_000, 18_400_000, 3_850_000, 5_500_000],
+		[27_000, 9_300_000, 5_500_000, 19_400_000, 4_100_000, 5_520_000],
+		[700_000, 61_000_000, 40_500_000, 110_000_000, 22_000_000, 9_000_000],
+	].map(
+		([atMs, natsUser, natsSystem, clickhouseUser, clickhouseSystem, rows]) => ({
+			atMs: atMs ?? 0,
+			natsServer: { userMicros: natsUser ?? 0, systemMicros: natsSystem ?? 0 },
+			clickhouse: {
+				userMicros: clickhouseUser ?? 0,
+				systemMicros: clickhouseSystem ?? 0,
+			},
+			mergedRows: rows ?? 0,
+		}),
+	),
+	loadtestCpu: { userMicros: 8_000_000, systemMicros: 2_600_000 },
 };
 
 describe("loadtestReport", () => {
@@ -71,11 +93,15 @@ describe("loadtestReport", () => {
 				"last event of a tick (share of observed ticks, by subject): sim.events.trip.matched 75.0%, sim.events.driver.moved 24.5%",
 				"nats: slow consumers 0, pending bytes max 2048 (any connection)",
 				"persister backlog (pending + ack pending, every 5 s): 0 1200 800 1000 900 400",
+				"nats server cpu per backlog sample (cores, since the previous reading): 0.40 0.40 0.40 0.90 0.40 0.40",
+				"clickhouse cpu per backlog sample (cores, since the previous reading): 0.25 0.25 1.20 0.25 0.25 0.25",
+				"clickhouse merged rows per backlog sample (thousands, every table, since the previous reading): 0 0 4500 0 0 20",
 				"persister ack pending max: 1000",
 				"persister backlog second-half max: 1000, limit 3150 (3 ticks of 1050.0 events)",
 				"persister drain: 2.5 s",
 				"peak rss MiB: persister 120.0, dispatch 80.0",
 				"cpu s (user + system, share of the service's wall time): persister 90.0 + 30.5 (17%), dispatch 540.3 + 9.8 (90%)",
+				"runner cpu s (user + system, share of 4 CPUs over the 700.0 s from start to stop): services 670.5 (23.9%), nats server 60.0 + 40.0 (3.6%), clickhouse 100.0 + 20.0 (4.3%), load test 8.0 + 2.6 (0.4%), total 901.1 (32.2%)",
 				"criteria (ADRs 0037, 0038; supported live = the slower of two runs passes all):",
 				"  pass: ticks >= 600",
 				"  pass: settle p95 <= 610 ms",
@@ -104,12 +130,12 @@ describe("loadtestReport", () => {
 			},
 		);
 		expect(report.split("\n").slice(-13)).toEqual([
-			"persister backlog (pending + ack pending, every 5 s): 5",
 			"persister ack pending max: 1000",
 			"persister backlog second-half max: too few samples",
 			"persister drain: did not drain in 5 min (pending 4321)",
 			"peak rss MiB: persister 120.0, dispatch 80.0",
 			"cpu s (user + system, share of the service's wall time): persister 90.0 + 30.5 (17%), dispatch 540.3 + 9.8 (90%)",
+			"runner cpu s (user + system, share of 4 CPUs over the 700.0 s from start to stop): services 670.5 (23.9%), nats server 60.0 + 40.0 (3.6%), clickhouse 100.0 + 20.0 (4.3%), load test 8.0 + 2.6 (0.4%), total 901.1 (32.2%)",
 			"criteria (ADRs 0037, 0038; supported live = the slower of two runs passes all):",
 			"  FAIL: ticks >= 600",
 			"  FAIL: settle p95 <= 610 ms",

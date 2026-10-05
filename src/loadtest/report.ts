@@ -2,6 +2,7 @@
 // run, and that run's verdict on each criterion for a supported fleet size.
 import type { LoadtestArgs } from "./args.ts";
 import { maxTicksBehind, persisterBacklog } from "./backlog.ts";
+import type { CpuTime, InfraReading } from "./infra.ts";
 import type { SettleSummary } from "./settle.ts";
 
 export type LoadtestMeasurement = {
@@ -33,6 +34,11 @@ export type LoadtestMeasurement = {
 		systemMicros: number;
 		wallMs: number;
 	}[];
+	// At the start (before the persister spawns), with each backlog sample,
+	// and at the stop (every service exited).
+	infraReadings: InfraReading[];
+	// The load test's own process: observer and sampler.
+	loadtestCpu: CpuTime;
 };
 
 // ADR 0037's criteria; ADR 0036's band for settle p95; ADR 0038's persister
@@ -70,6 +76,43 @@ export function loadtestReport(
 		[measurement.slowConsumers === 0, "no slow consumers"],
 	];
 	const [load1, load5, load15] = measurement.host.loadAverage;
+	const { cpus } = measurement.host;
+	const { infraReadings, loadtestCpu } = measurement;
+	const start = infraReadings[0];
+	const stop = infraReadings.at(-1);
+	if (start === undefined || stop === undefined) {
+		throw new Error("infra readings must include the start and the stop");
+	}
+	const runSeconds = (stop.atMs - start.atMs) / 1000;
+	const runnerShare = (cpuSeconds: number) =>
+		`${((cpuSeconds / (cpus * runSeconds)) * 100).toFixed(1)}%`;
+	const userPlusSystem = (cpu: CpuTime) =>
+		`${(cpu.userMicros / 1e6).toFixed(1)} + ${(cpu.systemMicros / 1e6).toFixed(1)} (${runnerShare(seconds(cpu))})`;
+	const servicesSeconds = measurement.cpuTime.reduce(
+		(sum, cpu) => sum + seconds(cpu),
+		0,
+	);
+	const natsServerCpu = cpuBetween(start.natsServer, stop.natsServer);
+	const clickhouseCpu = cpuBetween(start.clickhouse, stop.clickhouse);
+	const totalSeconds =
+		servicesSeconds +
+		seconds(natsServerCpu) +
+		seconds(clickhouseCpu) +
+		seconds(loadtestCpu);
+	// Reading i + 1 is taken with backlog sample i, so each sample's interval
+	// starts at the reading before it. The stop ends no sample.
+	const sampleIntervals = infraReadings
+		.slice(1, -1)
+		.map((to, i) => ({ from: infraReadings[i] ?? start, to }));
+	const coresPerSample = (cpu: (reading: InfraReading) => CpuTime) =>
+		sampleIntervals
+			.map(({ from, to }) =>
+				(
+					seconds(cpuBetween(cpu(from), cpu(to))) /
+					((to.atMs - from.atMs) / 1000)
+				).toFixed(2),
+			)
+			.join(" ");
 	return [
 		`drivers: ${count * driversPerShard} (${count} shards x ${driversPerShard})`,
 		`requests per minute: ${args.requestsPerMinute}`,
@@ -84,14 +127,29 @@ export function loadtestReport(
 		`last event of a tick (share of observed ticks, by subject): ${settle.lastEventSubjects.map(({ subject, ticks }) => `${subject} ${((ticks / settle.ticksObserved) * 100).toFixed(1)}%`).join(", ")}`,
 		`nats: slow consumers ${measurement.slowConsumers}, pending bytes max ${measurement.pendingBytes.anyMax} (any connection)`,
 		`persister backlog (pending + ack pending, every ${measurement.sampleIntervalMs / 1000} s): ${measurement.persisterBacklog.join(" ")}`,
+		`nats server cpu per backlog sample (cores, since the previous reading): ${coresPerSample((reading) => reading.natsServer)}`,
+		`clickhouse cpu per backlog sample (cores, since the previous reading): ${coresPerSample((reading) => reading.clickhouse)}`,
+		`clickhouse merged rows per backlog sample (thousands, every table, since the previous reading): ${sampleIntervals.map(({ from, to }) => ((to.mergedRows - from.mergedRows) / 1000).toFixed(0)).join(" ")}`,
 		`persister ack pending max: ${measurement.persisterAckPendingMax}`,
 		`persister backlog second-half max: ${backlog === undefined ? "too few samples" : `${backlog.secondHalfMax}, limit ${backlog.limit.toFixed(0)} (${maxTicksBehind} ticks of ${eventsPerTick.toFixed(1)} events)`}`,
 		`persister drain: ${drain.type === "drained" ? `${(drain.ms / 1000).toFixed(1)} s` : `did not drain in ${drainMinutes} min (pending ${drain.pending})`}`,
 		`peak rss MiB: ${measurement.peakRssBytes.map(({ service, bytes }) => `${service} ${(bytes / 2 ** 20).toFixed(1)}`).join(", ")}`,
 		`cpu s (user + system, share of the service's wall time): ${measurement.cpuTime.map(({ service, userMicros, systemMicros, wallMs }) => `${service} ${(userMicros / 1e6).toFixed(1)} + ${(systemMicros / 1e6).toFixed(1)} (${(((userMicros + systemMicros) / 1000 / wallMs) * 100).toFixed(0)}%)`).join(", ")}`,
+		`runner cpu s (user + system, share of ${cpus} CPUs over the ${runSeconds.toFixed(1)} s from start to stop): services ${servicesSeconds.toFixed(1)} (${runnerShare(servicesSeconds)}), nats server ${userPlusSystem(natsServerCpu)}, clickhouse ${userPlusSystem(clickhouseCpu)}, load test ${userPlusSystem(loadtestCpu)}, total ${totalSeconds.toFixed(1)} (${runnerShare(totalSeconds)})`,
 		"criteria (ADRs 0037, 0038; supported live = the slower of two runs passes all):",
 		...criteria.map(
 			([passed, criterion]) => `  ${passed ? "pass" : "FAIL"}: ${criterion}`,
 		),
 	].join("\n");
+}
+
+function seconds({ userMicros, systemMicros }: CpuTime): number {
+	return (userMicros + systemMicros) / 1e6;
+}
+
+function cpuBetween(from: CpuTime, to: CpuTime): CpuTime {
+	return {
+		userMicros: to.userMicros - from.userMicros,
+		systemMicros: to.systemMicros - from.systemMicros,
+	};
 }
