@@ -7,6 +7,7 @@ import {
 	DriverId,
 	type InputRejected,
 	type Message,
+	messageTypes,
 	type Offer,
 	Tick,
 	TripId,
@@ -42,7 +43,7 @@ const rejectedTick: InputRejected<Message, string> = {
 // Test brain: answers every tick with a rejection between two commands.
 const rejectingService = {
 	start: { state: null, outputs: [] },
-	accepts: isClockTicked,
+	inputs: ["clock.ticked" as const],
 	decide: (state: null) => ({
 		state,
 		outputs: [cancelTrip("t-1"), rejectedTick, cancelTrip("t-2")],
@@ -50,20 +51,9 @@ const rejectingService = {
 	random: createRandom(1),
 };
 
-function isClockTicked(message: Message): message is ClockTicked {
-	return message.type === "clock.ticked";
-}
-
-function isDriverInput(message: Message): message is Offer | TripPickedUp {
-	return message.type === "offer" || message.type === "trip.picked_up";
-}
-
 function recordAll(bus: ReturnType<typeof createInMemoryBus>): Message[] {
 	const published: Message[] = [];
-	bus.subscribe(
-		(message): message is Message => true,
-		(message) => published.push(message),
-	);
+	bus.subscribe(messageTypes, (message) => published.push(message));
 	return published;
 }
 
@@ -78,7 +68,7 @@ describe("startService", () => {
 				{ grid, driverIds: [d1], tick: Tick.parse(0) },
 				random,
 			),
-			accepts: (message): message is never => false,
+			inputs: [],
 			decide: (state) => ({ state, outputs: [] }),
 			random,
 			log: () => {},
@@ -101,7 +91,7 @@ describe("startService", () => {
 
 		startService(bus, {
 			start: { state: 0, outputs: [] },
-			accepts: isClockTicked,
+			inputs: ["clock.ticked"],
 			decide: (state: number, input) => {
 				decided.push([state, input]);
 				return { state: state + 1, outputs: [] };
@@ -150,13 +140,13 @@ describe("startService", () => {
 		]);
 	});
 
-	test("messages the service doesn't accept never reach decide", () => {
+	test("messages of types the service doesn't take never reach decide", () => {
 		const bus = createInMemoryBus();
 		const decided: Message[] = [];
 
 		startService(bus, {
 			start: { state: null, outputs: [] },
-			accepts: isClockTicked,
+			inputs: ["clock.ticked"],
 			decide: (state: null, input) => {
 				decided.push(input);
 				return { state, outputs: [] };
@@ -169,6 +159,28 @@ describe("startService", () => {
 		bus.drain();
 
 		expect(decided).toEqual([ticked(1)]);
+	});
+
+	test("inputs the service doesn't accept never reach decide", () => {
+		const bus = createInMemoryBus();
+		const decided: Message[] = [];
+
+		startService(bus, {
+			start: { state: null, outputs: [] },
+			inputs: ["cancel_trip"],
+			accepts: (input) => input.tripId === "t-2",
+			decide: (state: null, input) => {
+				decided.push(input);
+				return { state, outputs: [] };
+			},
+			random: createRandom(1),
+			log: () => {},
+		});
+		bus.publish(cancelTrip("t-1"));
+		bus.publish(cancelTrip("t-2"));
+		bus.drain();
+
+		expect(decided).toEqual([cancelTrip("t-2")]);
 	});
 
 	test("runs the driver brain: accepts an offer, logs a stale pickup", () => {
@@ -196,7 +208,7 @@ describe("startService", () => {
 				{ grid, driverIds: [d1], tick: Tick.parse(0) },
 				random,
 			),
-			accepts: isDriverInput,
+			inputs: ["offer", "trip.picked_up"],
 			decide: decideDriverShard,
 			random,
 			log: (rejected) => logged.push(rejected),

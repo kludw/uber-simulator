@@ -4,7 +4,7 @@ import {
 	type NatsBus,
 	type NatsConnectError,
 } from "../bus/nats.ts";
-import { type Message, RunId, Tick } from "../shared/messages.ts";
+import { type Message, messageTypes, RunId, Tick } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
 import type { Result } from "../shared/result.ts";
 import {
@@ -82,10 +82,10 @@ export function runInProcess(
 }
 
 // Same services, each on its own NATS connection (the real network path),
-// recorded by one more connection on sim.> that also acts as clock. Only
-// per-publisher order holds (ADR 0028), so the event log differs between
-// runs of one config: assert invariants, not exact logs. Every connection
-// stamps one fresh run id (ADR 0029), returned with the result.
+// recorded by one more connection taking every type, which also acts as
+// clock. Only per-publisher order holds (ADR 0028), so the event log differs
+// between runs of one config: assert invariants, not exact logs. Every
+// connection stamps one fresh run id (ADR 0029), returned with the result.
 export async function runOverNats(
 	config: RunConfig & { url: string },
 ): Promise<
@@ -94,11 +94,14 @@ export async function runOverNats(
 	const runId = RunId.parse(crypto.randomUUID());
 	const services = allServices(config);
 	const buses: NatsBus[] = [];
-	// Runner first, so it is subscribed before any service publishes.
-	for (const name of ["runner", ...services.map((service) => service.name)]) {
+	// Runner first, so it is subscribed before any service publishes. It
+	// records every message type.
+	const connections = [{ name: "runner", inputs: messageTypes }, ...services];
+	for (const { name, inputs } of connections) {
 		const connected = await connectNatsBus({
 			url: config.url,
 			runId,
+			inputs,
 			log: (dropped) =>
 				console.warn(
 					JSON.stringify({
@@ -130,13 +133,10 @@ export async function runOverNats(
 		eventLog: [],
 	};
 	const received = () => result.messageCount;
-	runnerBus.subscribe(
-		(message): message is Message => true,
-		(message) => {
-			result.messageCount++;
-			result.eventLog.push(message);
-		},
-	);
+	runnerBus.subscribe(messageTypes, (message) => {
+		result.messageCount++;
+		result.eventLog.push(message);
+	});
 	// Every service is subscribed (connect flushes) before any starts, so
 	// dispatch sees every driver.went_online.
 	services.forEach((service, i) => {

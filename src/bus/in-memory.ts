@@ -1,4 +1,4 @@
-import type { Message } from "../shared/messages.ts";
+import { isOneOf, type Message } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 import type { Bus } from "./bus.ts";
 
@@ -34,11 +34,12 @@ export function createInMemoryBus({ loss }: InMemoryBusOptions = {}): Bus & {
 		publish(message) {
 			queue.push(message);
 		},
-		subscribe(accepts, handle) {
+		subscribe(types, handle) {
+			const taken = new Set(types);
 			subscriptions.push({
 				lossy: true,
 				deliver: (message) => {
-					if (accepts(message)) handle(message);
+					if (isOneOf(taken, message)) handle(message);
 				},
 			});
 		},

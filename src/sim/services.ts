@@ -20,6 +20,7 @@ import {
 	DriverId,
 	type InputRejected,
 	type Message,
+	type MessageType,
 	Tick,
 } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
@@ -44,10 +45,62 @@ export type SimConfig = {
 export type Rejected = InputRejected<Message, string>;
 
 // One service wired for the bus. The name labels its seed stream and its logs.
+// inputs: every message type it subscribes to, known before it starts so a
+// NATS bus subscribes before anyone publishes (ADR 0042).
 export type SimService = {
 	name: string;
+	inputs: readonly MessageType[];
 	start(bus: Bus, logRejected: (rejected: Rejected) => void): void;
 };
+
+// What each brain takes (its Input type); the bus delivers nothing else.
+const driverShardInputs = [
+	"clock.ticked",
+	"offer",
+	"trip.picked_up",
+	"trip.completed",
+	"trip.cancelled",
+	"trip.offer_expired",
+	"trip_status",
+] as const satisfies readonly DriverShardInput["type"][];
+
+const dispatchInputs = [
+	"clock.ticked",
+	"request_trip",
+	"cancel_trip",
+	"driver.went_online",
+	"driver.went_offline",
+	"driver.moved",
+	"driver.arrived_at_pickup",
+	"driver.arrived_at_dropoff",
+	"offer_accepted",
+	"offer_declined",
+	"confirm_trip",
+] as const satisfies readonly DispatchInput["type"][];
+
+// Not request_trip_accepted / cancel_trip_accepted: no service takes them.
+const ridersInputs = [
+	"clock.ticked",
+	"trip.picked_up",
+	"trip.completed",
+	"trip.cancelled",
+	"request_trip_rejected",
+	"cancel_trip_rejected",
+] as const satisfies readonly RidersInput["type"][];
+
+// Compile-time completeness: true only when the list names every type of the
+// brain's Input; a missed type would never reach the brain.
+type Complete<Input extends Message, Listed extends MessageType> = [
+	Exclude<Input["type"], Listed>,
+] extends [never]
+	? true
+	: false;
+const inputsComplete: [
+	Complete<DriverShardInput, (typeof driverShardInputs)[number]>,
+	Complete<DispatchInput, (typeof dispatchInputs)[number]>,
+	Complete<RidersInput, (typeof ridersInputs)[number]>,
+] = [true, true, true];
+void inputsComplete;
 
 // Services start before the clock's first tick (tick 1).
 const startTick = Tick.parse(0);
@@ -72,6 +125,7 @@ export function driverShardService(
 	const owned = new Set<string>(driverIds);
 	return {
 		name,
+		inputs: driverShardInputs,
 		start(bus, logRejected) {
 			const random = createRandom(config.seed).child(name);
 			startService(bus, {
@@ -85,22 +139,9 @@ export function driverShardService(
 					},
 					random,
 				),
-				accepts: (message): message is DriverShardInput => {
-					switch (message.type) {
-						// The brain throws on offers for drivers it doesn't own.
-						case "offer":
-							return owned.has(message.driverId);
-						case "clock.ticked":
-						case "trip.picked_up":
-						case "trip.completed":
-						case "trip.cancelled":
-						case "trip.offer_expired":
-						case "trip_status":
-							return true;
-						default:
-							return false;
-					}
-				},
+				inputs: driverShardInputs,
+				// The brain throws on offers for drivers it doesn't own.
+				accepts: (input) => input.type !== "offer" || owned.has(input.driverId),
 				decide: decideDriverShard,
 				random,
 				log: logRejected,
@@ -113,6 +154,7 @@ export function dispatchService(config: SimConfig): SimService {
 	const name = "dispatch";
 	return {
 		name,
+		inputs: dispatchInputs,
 		start(bus, logRejected) {
 			startService(bus, {
 				// Bare-state start: dispatch publishes nothing when it starts.
@@ -124,24 +166,7 @@ export function dispatchService(config: SimConfig): SimService {
 					}),
 					outputs: [],
 				},
-				accepts: (message): message is DispatchInput => {
-					switch (message.type) {
-						case "clock.ticked":
-						case "request_trip":
-						case "cancel_trip":
-						case "driver.went_online":
-						case "driver.went_offline":
-						case "driver.moved":
-						case "driver.arrived_at_pickup":
-						case "driver.arrived_at_dropoff":
-						case "offer_accepted":
-						case "offer_declined":
-						case "confirm_trip":
-							return true;
-						default:
-							return false;
-					}
-				},
+				inputs: dispatchInputs,
 				decide: decideDispatch,
 				random: createRandom(config.seed).child(name),
 				log: logRejected,
@@ -154,6 +179,7 @@ export function ridersService(config: SimConfig): SimService {
 	const name = "riders";
 	return {
 		name,
+		inputs: ridersInputs,
 		start(bus, logRejected) {
 			startService(bus, {
 				start: {
@@ -164,20 +190,7 @@ export function ridersService(config: SimConfig): SimService {
 					}),
 					outputs: [],
 				},
-				// request_trip_accepted / cancel_trip_accepted: no subscriber, dropped.
-				accepts: (message): message is RidersInput => {
-					switch (message.type) {
-						case "clock.ticked":
-						case "trip.picked_up":
-						case "trip.completed":
-						case "trip.cancelled":
-						case "request_trip_rejected":
-						case "cancel_trip_rejected":
-							return true;
-						default:
-							return false;
-					}
-				},
+				inputs: ridersInputs,
 				decide: decideRiders,
 				random: createRandom(config.seed).child(name),
 				log: logRejected,

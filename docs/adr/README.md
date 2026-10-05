@@ -31,7 +31,7 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0025 | [Add `at_dropoff` driver state](0025-driver-at-dropoff-state.md)         | Accepted |
 | 0026 | [Brains reject invalid inputs with `input_rejected` outputs](0026-brains-reject-invalid-inputs.md) | Accepted |
 | 0027 | [In-process bus, service shell, runner](0027-in-process-bus-and-runner.md) | Accepted |
-| 0028 | [NATS bus: subjects and delivery](0028-nats-bus-subjects-and-delivery.md) | Accepted |
+| 0028 | [NATS bus: subjects and delivery](0028-nats-bus-subjects-and-delivery.md) | Accepted (one `sim.>` subscription per service superseded by 0042) |
 | 0029 | [Event persistence](0029-event-persistence.md)                           | Accepted (batch size superseded by 0039) |
 | 0030 | [Batched matching](0030-batched-matching.md)                            | Accepted |
 | 0031 | [Hotspot demand](0031-hotspot-demand.md)                                | Accepted |
@@ -45,3 +45,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0039 | [Persister batch size](0039-persister-batch-size.md)                    | Accepted |
 | 0040 | [Pickup wait timeout](0040-pickup-wait-timeout.md)                      | Superseded by 0041 |
 | 0041 | [Confirm trip while waiting](0041-confirm-trip-while-waiting.md)        | Accepted |
+| 0042 | [Subscribe to taken types](0042-subscribe-to-taken-types.md)            | Accepted |
