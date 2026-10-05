@@ -557,3 +557,34 @@ All four runs pass every criterion: 600 of 600 ticks, 0 overruns, 0 slow consume
 - **The CPU model splits the runners.** Both 25k runs landed on EPYC 7763 and both 27.5k runs on EPYC 9V74, so fleet size and CPU model are confounded here: the 9V74 runs used 21-24% less CPU per event (45-46 vs 58-59 µs) and settled faster at the larger fleet (p95 420-432 vs 552-557 ms), but that alone doesn't separate the model's effect from the fleet's. What carries the attribution to the CPU model is the persister's decode per 10,000-event round, the same work at any fleet size: 109 ms on the 7763 (the slow group in [After milestone 14](#after-milestone-14)), 85-87 ms on the 9V74. So the two 27.5k passes here, after two fails in [After milestone 14](#after-milestone-14), don't change the live limit (greedy 25k): 27.5k passes on the faster CPU.
 
 Next (proposal, no ADR): the decode floor is paid once per service, five times over, and is most of each service's CPU, so ADR 0028's per-service subject subscriptions (each service receives only what its brain consumes; the clock nothing) is the candidate to raise settle's limit. It needs an ADR superseding 0028's `sim.>` subscription. Before that, a per-tick timing of decode vs brain in dispatch and the shards (like the persister's `rounds_timed`) would show whether decode sits on settle's critical path, which these totals can't.
+
+## Service timing
+
+Where each service's time on the bus goes, and which publisher closes each tick, [#189](https://github.com/kludw/uber-simulator/issues/189) (milestone 16). Each service's NATS bus logs `messages_timed` every 10 s and on close (`src/bus/nats.ts`): messages received on `sim.>`, messages delivered to at least one subscriber, ms decoding (JSON parse + Zod) and ms in subscribers (predicates, brain, and the brain's publishes). Both are wall time (`performance.now()`), so they include time the process waited for a CPU. The load test report gives, per event subject, the share of observed ticks whose last event (the one that sets that tick's settle) had it. Measured 2026-10-05 on branch `189-service-timing` (master `46d4b2b` plus this change).
+
+### Method
+
+- `loadtest` workflow as in [CPU time per service](#cpu-time-per-service): greedy, 2 driver shards, 600 ticks, drain bound 5 min, one `ubuntu-latest` runner (4 CPUs) per case.
+- Runs [37334746999](https://github.com/kludw/uber-simulator/actions/runs/37334746999) and [37334762772](https://github.com/kludw/uber-simulator/actions/runs/37334762772), each greedy 25k and 27.5k.
+- ms per tick: the sum over every `messages_timed` entry of a service (601-604 s, start to stop) over 600 ticks, so startup and stop are included. Run averages: per-tick bursts aren't shown.
+
+### Results
+
+Decode / handle ms per tick (share of received messages delivered to a subscriber):
+
+| Drivers | Run | CPU model | Settle p95 ms | Dispatch | Shard 0 | Shard 1 | Riders | Clock |
+| ---: | --- | --- | ---: | --- | --- | --- | --- | --- |
+| 25,000 | [37334746999](https://github.com/kludw/uber-simulator/actions/runs/37334746999) | Intel Xeon Platinum 8573C | 382.1 | 151 / 44 (98.9%) | 131 / 98 (0.3%) | 131 / 98 (0.3%) | 175 / 5 (0.2%) | 178 / 3 (0.0%) |
+| 25,000 | [37334762772](https://github.com/kludw/uber-simulator/actions/runs/37334762772) | AMD EPYC 9V74 | 528.2 | 207 / 65 (98.9%) | 185 / 138 (0.3%) | 188 / 137 (0.3%) | 251 / 7 (0.2%) | 255 / 4 (0.0%) |
+| 27,500 | [37334746999](https://github.com/kludw/uber-simulator/actions/runs/37334746999) | AMD EPYC 7763 | 645.3 | 248 / 79 (98.9%) | 222 / 166 (0.3%) | 222 / 163 (0.3%) | 302 / 8 (0.2%) | 305 / 5 (0.0%) |
+| 27,500 | [37334762772](https://github.com/kludw/uber-simulator/actions/runs/37334762772) | AMD EPYC 7763 | 595.0 | 242 / 69 (98.9%) | 211 / 153 (0.3%) | 216 / 150 (0.3%) | 289 / 7 (0.2%) | 288 / 4 (0.0%) |
+
+Messages received per service: 15.25-15.27M at 25k, 16.77-16.80M at 27.5k, every service within 0.2% of the others (the clock, spawned last, about 25k fewer: it misses the shards' start-up `driver.went_online`). Settle passed in three cases and failed in one (27.5k on run 37334746999, p95 645.3 ms); every other criterion passed in all four, 0 overruns. Three CPU models in four cases, and fleet size differs with them, so rows compare across models only with that caveat.
+
+- **Every service decodes all `sim.>` traffic; only dispatch uses most of it.** Dispatch delivers 98.9% of what it receives, the shards 0.3%, the riders 0.2%, the clock none (it subscribes to nothing).
+- **Decode vs handle**: decode is 97-99% of the riders' and the clock's timed ms, 76-78% of dispatch's, 57-59% of each shard's. The shards' handle (98-166 ms per tick) is the largest handle cost: on 0.3% of their messages, it includes moving every driver and publishing their `driver.moved` each tick.
+- **Decode per message by CPU model**: 5.1-7.0 µs on the Xeon 8573C, 7.3-10.0 µs on the EPYC 9V74, 7.5-10.9 µs on the EPYC 7763 (range over services within a run). Within each run, the riders and the clock decode slowest per message, the shards fastest.
+- **No service is busy on average**: decode + handle is 18-23% of the logged interval per service on the Xeon, 26-32% on the 9V74, 29-39% on the 7763. Timed ms exceed CPU time: the clock's decode + handle is 109-186 s per run against 76-114 s CPU (report), 1.4-1.6x.
+- **Which publisher closes ticks**: `trip.matched` is the last event of 99.8% of observed ticks in all four cases, `driver.moved` of 0.2%. Only dispatch publishes `trip.*`.
+
+Next (proposal, no ADR, #190): these numbers locate the tick's last event at dispatch's `trip.matched`, which follows the shards' offer replies, and show dispatch and the shards each decoding the whole tick's traffic. Whether cutting decode shortens settle is the change ticket's measurement.

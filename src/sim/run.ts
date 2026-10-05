@@ -112,6 +112,8 @@ export async function runOverNats(
 				if (status.type === "nats_closed") return;
 				console.warn(JSON.stringify({ service: name, ...status }));
 			},
+			// Timing is for the service processes' logs (bun run loadtest).
+			logTiming: () => {},
 		});
 		if (!connected.ok) {
 			await Promise.all(buses.map((bus) => bus.close()));

@@ -190,7 +190,7 @@ const observing = (async () => {
 		}
 		const { tick } = decoded.data;
 		if (message.subject !== clockSubject) {
-			settle.eventReceived(tick, atMs);
+			settle.eventReceived(tick, atMs, message.subject);
 			continue;
 		}
 		settle.clockTicked(tick, atMs);
