@@ -44,8 +44,8 @@ export const DriverWentOffline = z.object({
 });
 export type DriverWentOffline = z.infer<typeof DriverWentOffline>;
 
-// One step of one driver this tick. A shard publishes its moves of a tick in
-// chunks, before its other events of that tick (ADR 0045).
+// Each entry is one driver's step this tick. A shard publishes its moves of a
+// tick in chunks, before its other events of that tick (ADR 0045).
 export const DriversMoved = z.object({
 	type: z.literal("drivers.moved"),
 	tick: Tick,
