@@ -89,10 +89,10 @@ describe.skipIf(!natsUrl || !config)("bun run replay", () => {
 			exitCode: 0,
 			replayed: [
 				[`replay.${runId}.sim.events.clock.ticked`, run[0]],
-				[`replay.${runId}.sim.events.driver.moved`, run[1]],
+				[`replay.${runId}.sim.events.drivers.moved`, run[1]],
 				[`replay.${runId}.sim.events.trip.requested`, run[2]],
 				[`replay.${runId}.sim.events.clock.ticked`, run[3]],
-				[`replay.${runId}.sim.events.driver.moved`, run[4]],
+				[`replay.${runId}.sim.events.drivers.moved`, run[4]],
 				[`replay.${runId}.sim.events.clock.ticked`, run[5]],
 			],
 			live: [],
@@ -129,10 +129,9 @@ const d1 = DriverId.parse("d-1");
 
 function moved(tick: number, x: number): SimEvent {
 	return {
-		type: "driver.moved",
+		type: "drivers.moved",
 		tick: Tick.parse(tick),
-		driverId: d1,
-		cell: Cell.parse({ x, y: 0 }),
+		moves: [{ driverId: d1, cell: Cell.parse({ x, y: 0 }) }],
 	};
 }
 

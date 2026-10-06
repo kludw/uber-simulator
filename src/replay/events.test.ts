@@ -98,7 +98,7 @@ describe.skipIf(!config)("readRunEvents", () => {
 			clickhouse.insertEvents([
 				row(runId, moved(0), 1),
 				{ ...row(runId, moved(1), 2), payload: "not json" },
-				{ ...row(runId, moved(2), 3), payload: '{"type":"driver.moved"}' },
+				{ ...row(runId, moved(2), 3), payload: '{"type":"drivers.moved"}' },
 				row(runId, moved(3), 4),
 			]),
 		);
@@ -191,10 +191,9 @@ const ingestedAt = new Date("2026-10-03T12:00:00Z");
 
 function moved(tick: number): SimEvent {
 	return {
-		type: "driver.moved",
+		type: "drivers.moved",
 		tick: Tick.parse(tick),
-		driverId: d1,
-		cell: Cell.parse({ x: tick, y: 0 }),
+		moves: [{ driverId: d1, cell: Cell.parse({ x: tick, y: 0 }) }],
 	};
 }
 

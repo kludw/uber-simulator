@@ -61,7 +61,11 @@ function wentOffline(driverId: DriverId, at: Cell, when: number): Message {
 }
 
 function moved(driverId: DriverId, to: Cell, at: number): Message {
-	return { type: "driver.moved", tick: tick(at), driverId, cell: to };
+	return {
+		type: "drivers.moved",
+		tick: tick(at),
+		moves: [{ driverId, cell: to }],
+	};
 }
 
 // d1 starts at (0,0); t1 picks up at (1,0), drops off at (2,0).
@@ -328,6 +332,31 @@ describe("checkInvariants", () => {
 				driverId: d1,
 				from: cell(1, 0),
 				to: cell(2, 0),
+			},
+		]);
+	});
+
+	test("each move in one message is checked", () => {
+		const log: Message[] = [
+			wentOnline(d1, cell(0, 0)),
+			wentOnline(d2, cell(5, 5)),
+			{
+				type: "drivers.moved",
+				tick: tick(1),
+				moves: [
+					{ driverId: d1, cell: cell(1, 0) },
+					{ driverId: d2, cell: cell(7, 5) },
+				],
+			},
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([
+			{
+				type: "driver_moved_too_fast",
+				tick: tick(1),
+				driverId: d2,
+				from: cell(5, 5),
+				to: cell(7, 5),
 			},
 		]);
 	});

@@ -11,7 +11,8 @@ import type {
 	DriverArrivedAtDropoff,
 	DriverArrivedAtPickup,
 	DriverId,
-	DriverMoved,
+	DriverMove,
+	DriversMoved,
 	DriverWentOffline,
 	DriverWentOnline,
 	InputRejected,
@@ -241,7 +242,7 @@ function shiftStream(driverId: DriverId, n: number): string {
 type DriverShardOutput =
 	| DriverWentOnline
 	| DriverWentOffline
-	| DriverMoved
+	| DriversMoved
 	| DriverArrivedAtPickup
 	| DriverArrivedAtDropoff
 	| OfferAccepted
@@ -480,6 +481,7 @@ function onTick(
 	input: ClockTicked,
 	random: Random,
 ): Decision {
+	const moves: DriverMove[] = [];
 	const outputs: DriverShardOutput[] = [];
 	const { drivers, schedule } = state;
 	// Only existing keys are set while iterating: order stays by ID.
@@ -496,13 +498,13 @@ function onTick(
 		}
 		switch (driver.state) {
 			case "idle":
-				drivers.set(
-					driver.id,
-					wander(driver, state.grid, input.tick, random, outputs),
-				);
+				drivers.set(driver.id, wander(driver, state.grid, random, moves));
 				break;
 			case "en_route":
-				drivers.set(driver.id, driveToPickup(driver, input.tick, outputs));
+				drivers.set(
+					driver.id,
+					driveToPickup(driver, input.tick, moves, outputs),
+				);
 				break;
 			case "at_pickup":
 				if (!confirmDue(driver.arrivedAt, input.tick)) break;
@@ -527,7 +529,10 @@ function onTick(
 			case "offline":
 				break;
 			case "on_trip":
-				drivers.set(driver.id, driveToDropoff(driver, input.tick, outputs));
+				drivers.set(
+					driver.id,
+					driveToDropoff(driver, input.tick, moves, outputs),
+				);
 				break;
 			default: {
 				const unhandled: never = driver;
@@ -535,7 +540,24 @@ function onTick(
 			}
 		}
 	}
-	return { state, outputs };
+	return { state, outputs: [...movedChunks(input.tick, moves), ...outputs] };
+}
+
+// ADR 0045: keeps a message well under NATS's default 1 MB max_payload.
+const maxMovesPerMessage = 5000;
+
+// First in a tick's outputs, so a subscriber has a driver's cell before its
+// arrival or going offline (ADR 0045). None when no driver moved.
+function movedChunks(tick: Tick, moves: DriverMove[]): DriversMoved[] {
+	const chunks: DriversMoved[] = [];
+	for (let start = 0; start < moves.length; start += maxMovesPerMessage) {
+		chunks.push({
+			type: "drivers.moved",
+			tick,
+			moves: moves.slice(start, start + maxMovesPerMessage),
+		});
+	}
+	return chunks;
 }
 
 // Ends the driver's current period if it is over; the next one starts this
@@ -589,16 +611,15 @@ type OnTripDriver = Extract<Driver, { state: "on_trip" }>;
 function wander(
 	driver: IdleDriver,
 	grid: Grid,
-	tick: Tick,
 	random: Random,
-	outputs: DriverShardOutput[],
+	moves: DriverMove[],
 ): IdleDriver {
 	const wanderTarget = driver.wanderTarget ?? randomCell(grid, random);
 	if (distance(driver.cell, wanderTarget) === 0) {
 		return { ...driver, wanderTarget: null };
 	}
 	const cell = stepToward(driver.cell, wanderTarget);
-	outputs.push({ type: "driver.moved", tick, driverId: driver.id, cell });
+	moves.push({ driverId: driver.id, cell });
 	const arrived = distance(cell, wanderTarget) === 0;
 	return { ...driver, cell, wanderTarget: arrived ? null : wanderTarget };
 }
@@ -606,12 +627,13 @@ function wander(
 function driveToPickup(
 	driver: EnRouteDriver,
 	tick: Tick,
+	moves: DriverMove[],
 	outputs: DriverShardOutput[],
 ): Driver {
 	let cell = driver.cell;
 	if (distance(cell, driver.pickup) > 0) {
 		cell = stepToward(cell, driver.pickup);
-		outputs.push({ type: "driver.moved", tick, driverId: driver.id, cell });
+		moves.push({ driverId: driver.id, cell });
 	}
 	if (distance(cell, driver.pickup) > 0) {
 		return { ...driver, cell };
@@ -636,12 +658,13 @@ function driveToPickup(
 function driveToDropoff(
 	driver: OnTripDriver,
 	tick: Tick,
+	moves: DriverMove[],
 	outputs: DriverShardOutput[],
 ): Driver {
 	let cell = driver.cell;
 	if (distance(cell, driver.dropoff) > 0) {
 		cell = stepToward(cell, driver.dropoff);
-		outputs.push({ type: "driver.moved", tick, driverId: driver.id, cell });
+		moves.push({ driverId: driver.id, cell });
 	}
 	if (distance(cell, driver.dropoff) > 0) {
 		return { ...driver, cell };

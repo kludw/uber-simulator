@@ -8,7 +8,7 @@ import type {
 	DriverArrivedAtDropoff,
 	DriverArrivedAtPickup,
 	DriverId,
-	DriverMoved,
+	DriversMoved,
 	DriverWentOffline,
 	DriverWentOnline,
 	InputRejected,
@@ -80,7 +80,7 @@ export type DispatchInput =
 	| CancelTrip
 	| DriverWentOnline
 	| DriverWentOffline
-	| DriverMoved
+	| DriversMoved
 	| OfferAccepted
 	| OfferDeclined
 	| DriverArrivedAtPickup
@@ -151,8 +151,13 @@ export function decideDispatch(
 		case "cancel_trip":
 			return onCancelTrip(state, input);
 		case "driver.went_online":
-		case "driver.moved":
-			return onDriverReported(state, input);
+			state.driverCells.set(input.driverId, input.cell);
+			return { state, outputs: [] };
+		case "drivers.moved":
+			for (const move of input.moves) {
+				state.driverCells.set(move.driverId, move.cell);
+			}
+			return { state, outputs: [] };
 		case "driver.went_offline":
 			return onDriverWentOffline(state, input);
 		case "offer_accepted":
@@ -352,14 +357,6 @@ function onCancelTrip(state: DispatchState, command: CancelTrip): Decision {
 			},
 		],
 	};
-}
-
-function onDriverReported(
-	state: DispatchState,
-	report: DriverWentOnline | DriverMoved,
-): Decision {
-	state.driverCells.set(report.driverId, report.cell);
-	return { state, outputs: [] };
 }
 
 function onDriverWentOffline(

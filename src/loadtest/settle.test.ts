@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createSettleTracker } from "./settle.ts";
 
-const moved = "sim.events.driver.moved";
+const moved = "sim.events.drivers.moved";
 // Payload bytes, where a test doesn't count them.
 const bytes = 70;
 

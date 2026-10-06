@@ -44,13 +44,15 @@ export const DriverWentOffline = z.object({
 });
 export type DriverWentOffline = z.infer<typeof DriverWentOffline>;
 
-export const DriverMoved = z.object({
-	type: z.literal("driver.moved"),
+// Each entry is one driver's step this tick. A shard publishes its moves of a
+// tick in chunks, before its other events of that tick (ADR 0045).
+export const DriversMoved = z.object({
+	type: z.literal("drivers.moved"),
 	tick: Tick,
-	driverId: DriverId,
-	cell: Cell,
+	moves: z.array(z.object({ driverId: DriverId, cell: Cell })),
 });
-export type DriverMoved = z.infer<typeof DriverMoved>;
+export type DriversMoved = z.infer<typeof DriversMoved>;
+export type DriverMove = DriversMoved["moves"][number];
 
 export const DriverArrivedAtPickup = z.object({
 	type: z.literal("driver.arrived_at_pickup"),
@@ -248,7 +250,7 @@ const Message = z.discriminatedUnion("type", [
 	ClockTicked,
 	DriverWentOnline,
 	DriverWentOffline,
-	DriverMoved,
+	DriversMoved,
 	DriverArrivedAtPickup,
 	DriverArrivedAtDropoff,
 	TripRequested,
@@ -298,12 +300,12 @@ export function isOneOf<Type extends MessageType>(
 // commands, or command replies.
 export type SimEvent = Extract<
 	Message,
-	{ type: `${"clock" | "driver" | "trip"}.${string}` }
+	{ type: `${"clock" | "driver" | "drivers" | "trip"}.${string}` }
 >;
 
 // sim.events.> carries only events, but a payload is untrusted.
 export function isSimEvent(message: Message): message is SimEvent {
-	return /^(clock|driver|trip)\./.test(message.type);
+	return /^(clock|drivers?|trip)\./.test(message.type);
 }
 
 // Issues are Zod's plain data (code, path, message), fine to log; ZodError

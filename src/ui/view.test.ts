@@ -86,6 +86,42 @@ describe("drivers", () => {
 		});
 	});
 
+	test("each move in one message moves its driver", () => {
+		const d2 = DriverId.parse("d-2");
+		const view = viewOf([
+			...trip.slice(0, 3),
+			online(d2, 0, cell(5, 5)),
+			{
+				type: "drivers.moved",
+				tick: tick(3),
+				moves: [
+					{ driverId: d1, cell: cell(1, 0) },
+					{ driverId: d2, cell: cell(5, 6) },
+				],
+			},
+		]);
+		expect([...view.drivers]).toEqual([
+			[
+				d1,
+				{
+					state: "en_route",
+					cell: cell(1, 0),
+					previousCell: cell(0, 0),
+					movedAt: tick(3),
+				},
+			],
+			[
+				d2,
+				{
+					state: "idle",
+					cell: cell(5, 6),
+					previousCell: cell(5, 5),
+					movedAt: tick(3),
+				},
+			],
+		]);
+	});
+
 	test("a matched driver is en route", () => {
 		const view = viewOf(trip.slice(0, 3));
 		expect(view.drivers.get(d1)?.state).toBe("en_route");
@@ -351,7 +387,11 @@ function online(driverId: DriverId, at: number, to: Cell): SimEvent {
 }
 
 function moved(driverId: DriverId, at: number, to: Cell): SimEvent {
-	return { type: "driver.moved", tick: tick(at), driverId, cell: to };
+	return {
+		type: "drivers.moved",
+		tick: tick(at),
+		moves: [{ driverId, cell: to }],
+	};
 }
 
 function requested(

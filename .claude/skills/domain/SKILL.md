@@ -80,7 +80,8 @@ Living document. New concept in code = add term here in same change. Meaning shi
 1. Named `<entity>.<past-tense-verb>`:
    - `clock.ticked`
    - `trip.requested`, `trip.offered`, `trip.offer_declined`, `trip.offer_expired`, `trip.matched`, `trip.picked_up`, `trip.completed`, `trip.cancelled` (only dispatch emits `trip.*`)
-   - `driver.went_online`, `driver.went_offline`, `driver.moved`, `driver.arrived_at_pickup`, `driver.arrived_at_dropoff`
+   - `driver.went_online`, `driver.went_offline`, `driver.arrived_at_pickup`, `driver.arrived_at_dropoff`
+   - `drivers.moved` (tick, moves: `[{ driverId, cell }]`): one shard's moves of one tick, at most 5,000 per message, published before the shard's other events of that tick; none when no driver moved. Each entry is one **move** (0045).
 2. Same name used as event `type` in code, NATS subject suffix, ClickHouse event type value.
 3. Invalid state transition = domain error (see `errors` skill), never silently ignored.
 

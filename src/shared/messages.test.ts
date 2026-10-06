@@ -59,7 +59,14 @@ const samples: Message[] = [
 	{ type: "clock.ticked", tick },
 	{ type: "driver.went_online", tick, driverId, cell: pickup },
 	{ type: "driver.went_offline", tick, driverId, cell: pickup },
-	{ type: "driver.moved", tick, driverId, cell: pickup },
+	{
+		type: "drivers.moved",
+		tick,
+		moves: [
+			{ driverId, cell: pickup },
+			{ driverId: DriverId.parse("d-2"), cell: dropoff },
+		],
+	},
 	{ type: "driver.arrived_at_pickup", tick, driverId, tripId, cell: pickup },
 	{ type: "driver.arrived_at_dropoff", tick, driverId, tripId, cell: dropoff },
 	{ type: "trip.requested", tick, tripId, riderId, pickup, dropoff },
@@ -125,7 +132,7 @@ test.each(samples.map((message) => [message.type, message]))(
 const invalidInputs: [string, unknown][] = [
 	["not an object", "clock.ticked"],
 	["unknown type", { type: "clock.stopped", tick: 1 }],
-	["missing field", { type: "driver.moved", tick: 1, driverId: "d-1" }],
+	["missing field", { type: "driver.went_online", tick: 1, driverId: "d-1" }],
 	["wrong field type", { type: "clock.ticked", tick: "1" }],
 	["negative tick", { type: "clock.ticked", tick: -1 }],
 	// IDs must be valid NATS subject tokens (sim.offers.<driverId>, ADR 0028).
@@ -167,7 +174,11 @@ const invalidInputs: [string, unknown][] = [
 	],
 	[
 		"non-integer cell",
-		{ type: "driver.moved", tick: 1, driverId: "d-1", cell: { x: 1.5, y: 0 } },
+		{
+			type: "drivers.moved",
+			tick: 1,
+			moves: [{ driverId: "d-1", cell: { x: 1.5, y: 0 } }],
+		},
 	],
 ];
 
@@ -185,10 +196,18 @@ test("isSimEvent tells events from offers, replies, and commands", () => {
 	const messages: Message[] = [
 		{ type: "clock.ticked", tick: Tick.parse(1) },
 		{ type: "trip.matched", tick: Tick.parse(1), tripId, driverId },
+		{ type: "drivers.moved", tick: Tick.parse(1), moves: [] },
 		{ type: "offer_accepted", tripId, driverId },
 		{ type: "cancel_trip", tripId },
 		{ type: "cancel_trip_accepted", tripId },
 	];
 
-	expect(messages.map(isSimEvent)).toEqual([true, true, false, false, false]);
+	expect(messages.map(isSimEvent)).toEqual([
+		true,
+		true,
+		true,
+		false,
+		false,
+		false,
+	]);
 });

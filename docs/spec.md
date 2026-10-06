@@ -20,13 +20,13 @@ Independent processes, each owning its state, talking over NATS. Each service's 
 | Service | Owns | Does |
 | --- | --- | --- |
 | clock | tick counter | publishes `clock.ticked` every 1 s / speed |
-| driver (×2, 50 drivers each, fixed shard) | driver position, state | moves drivers each tick, answers offers, reports arrivals |
+| driver (×2, 50 drivers each, fixed shard) | driver position, state | moves drivers each tick (one `drivers.moved` per up to 5,000 moves, before its other events of the tick, 0045), answers offers, reports arrivals |
 | rider | riders, demand generator | spawns riders (Poisson; pickups uniform or around hotspots, 0031), requests trips, cancels on lost patience |
 | dispatch (single) | trips | queues requests, matches, owns every trip transition |
 | persister | stream position (JetStream consumer) | writes all events to ClickHouse, at-least-once |
 | UI (browser) | — | renders a view built from events |
 
-Nobody owns "the world". Views (dispatch's driver positions, UI) are built from events. Dispatch learns a driver from its `driver.went_online` or, if it missed that (it subscribed after the shard started, 0043), from its first `driver.moved`.
+Nobody owns "the world". Views (dispatch's driver positions, UI) are built from events. Dispatch learns a driver from its `driver.went_online` or, if it missed that (it subscribed after the shard started, 0043), from its first `drivers.moved` entry.
 
 ## Trip lifecycle (0018)
 
@@ -45,7 +45,7 @@ Idle drivers wander: pick a random target cell, drive there, repeat. By default 
 - A driver has at most one active trip.
 - Trip states only follow legal transitions.
 - `trip.picked_up` only when the driver is at the pickup cell; `trip.completed` only at dropoff.
-- A driver moves at most 1 cell per tick and stays inside the grid.
+- A driver moves at most 1 cell per tick and stays inside the grid (each entry of `drivers.moved` is one move).
 - Every completed trip was matched and picked up.
 - A `trip.cancelled` naming a driver comes after that trip's `trip.offered` to that driver (else the driver could get stuck).
 - A `trip.cancelled` names the driver to free: the matched driver, else the driver holding the pending offer, else null.
