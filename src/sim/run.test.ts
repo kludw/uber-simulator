@@ -5,6 +5,7 @@ import type { Matching } from "../dispatch/brain.ts";
 import { cityDemand } from "../rider/demand.ts";
 import { Cell, distance } from "../shared/grid.ts";
 import type { Message } from "../shared/messages.ts";
+import { forEachMove } from "../shared/messages.ts";
 import { preferencesNamed, shiftsNamed } from "./config.ts";
 import { checkInvariants } from "./invariants.ts";
 import {
@@ -445,9 +446,7 @@ function longWaits(
 				});
 				break;
 			case "drivers.moved":
-				for (const move of message.moves) {
-					resolve(move.driverId, message.tick);
-				}
+				forEachMove(message, (driverId) => resolve(driverId, message.tick));
 				break;
 			case "driver.went_offline":
 				resolve(message.driverId, message.tick);

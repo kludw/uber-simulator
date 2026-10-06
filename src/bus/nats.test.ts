@@ -253,7 +253,9 @@ describe("connectNatsBus", () => {
 			JSON.stringify({
 				type: "drivers.moved",
 				tick: 1,
-				moves: [{ driverId, cell: { x: 0, y: 0 } }],
+				driverIds: [driverId],
+				xs: [0],
+				ys: [0],
 			});
 
 		push("sim.events.drivers.moved", moved("d-1"));

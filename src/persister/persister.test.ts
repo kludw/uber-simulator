@@ -128,7 +128,9 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 		publish(nc, source, {
 			type: "drivers.moved",
 			tick: 3,
-			moves: [{ driverId: "d-1", cell: { x: 0, y: 1 } }],
+			driverIds: ["d-1"],
+			xs: [0],
+			ys: [1],
 		});
 		publish(nc, source, "not json", "run-a");
 		publish(nc, source, { type: "cancel_trip", tripId: "t-1" }, "run-a");

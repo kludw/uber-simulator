@@ -11,11 +11,21 @@ export const specGrid: Grid = { width: 500, height: 500 };
 // a message. A message can't know the grid, so the schema checks integer,
 // non-negative coordinates only; staying inside the grid is a spec invariant
 // checked over the event log (src/sim/invariants.ts).
+// A non-negative integer: Cell's rule for each of its coordinates.
+// drivers.moved carries its cells as arrays of them (ADR 0047).
+export const Coordinate = z.int().nonnegative().brand<"Coordinate">();
+export type Coordinate = z.infer<typeof Coordinate>;
+
 export const Cell = z
-	.object({ x: z.int().nonnegative(), y: z.int().nonnegative() })
+	.object({ x: Coordinate, y: Coordinate })
 	.readonly()
 	.brand<"Cell">();
 export type Cell = z.infer<typeof Cell>;
+
+// Any two coordinates make a Cell: Cell checks nothing more.
+export function cellAt(x: Coordinate, y: Coordinate): Cell {
+	return { x, y } as Cell;
+}
 
 export type CellOutsideGrid = {
 	type: "cell_outside_grid";
@@ -62,7 +72,7 @@ export function stepToward(from: Cell, target: Cell): Cell {
 	const dx = target.x - from.x;
 	const dy = target.y - from.y;
 	if (Math.abs(dy) > Math.abs(dx)) {
-		return { ...from, y: from.y + Math.sign(dy) };
+		return { ...from, y: from.y + Math.sign(dy) } as Cell;
 	}
-	return { ...from, x: from.x + Math.sign(dx) };
+	return { ...from, x: from.x + Math.sign(dx) } as Cell;
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Cell } from "../shared/grid.ts";
-import { DriverId, RunId, Tick } from "../shared/messages.ts";
+import { DriverId, driversMoved, RunId, Tick } from "../shared/messages.ts";
 import { replaySubject } from "../shared/subjects.ts";
 import { subscriptionFor } from "./subscription.ts";
 
@@ -37,13 +37,12 @@ describe("subscriptionFor", () => {
 	test("a replay subscription receives what the replay publishes for its run", () => {
 		const watched = subscriptionFor("?replay=run-42");
 		if (!watched.ok) throw new Error("expected a subscription");
-		const published = replaySubject(RunId.parse("run-42"), {
-			type: "drivers.moved",
-			tick: Tick.parse(3),
-			moves: [
+		const published = replaySubject(
+			RunId.parse("run-42"),
+			driversMoved(Tick.parse(3), [
 				{ driverId: DriverId.parse("d-1"), cell: Cell.parse({ x: 0, y: 0 }) },
-			],
-		});
+			]),
+		);
 		expect(covers(watched.value.subject, published)).toBe(true);
 	});
 

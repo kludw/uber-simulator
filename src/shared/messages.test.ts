@@ -10,6 +10,9 @@ import { type Cell, cellIn } from "./grid.ts";
 import {
 	type ClockTicked,
 	DriverId,
+	type DriverMove,
+	driversMoved,
+	forEachMove,
 	isSimEvent,
 	type Message,
 	parseMessage,
@@ -59,14 +62,10 @@ const samples: Message[] = [
 	{ type: "clock.ticked", tick },
 	{ type: "driver.went_online", tick, driverId, cell: pickup },
 	{ type: "driver.went_offline", tick, driverId, cell: pickup },
-	{
-		type: "drivers.moved",
-		tick,
-		moves: [
-			{ driverId, cell: pickup },
-			{ driverId: DriverId.parse("d-2"), cell: dropoff },
-		],
-	},
+	driversMoved(tick, [
+		{ driverId, cell: pickup },
+		{ driverId: DriverId.parse("d-2"), cell: dropoff },
+	]),
 	{ type: "driver.arrived_at_pickup", tick, driverId, tripId, cell: pickup },
 	{ type: "driver.arrived_at_dropoff", tick, driverId, tripId, cell: dropoff },
 	{ type: "trip.requested", tick, tripId, riderId, pickup, dropoff },
@@ -173,12 +172,40 @@ const invalidInputs: [string, unknown][] = [
 		},
 	],
 	[
-		"non-integer cell",
+		"moves with fewer x than driver IDs",
 		{
 			type: "drivers.moved",
 			tick: 1,
-			moves: [{ driverId: "d-1", cell: { x: 1.5, y: 0 } }],
+			driverIds: ["d-1", "d-2"],
+			xs: [0],
+			ys: [0, 0],
 		},
+	],
+	[
+		"moves with more y than driver IDs",
+		{
+			type: "drivers.moved",
+			tick: 1,
+			driverIds: ["d-1"],
+			xs: [0],
+			ys: [0, 0],
+		},
+	],
+	[
+		"move with a non-integer x",
+		{ type: "drivers.moved", tick: 1, driverIds: ["d-1"], xs: [1.5], ys: [0] },
+	],
+	[
+		"move with a negative y",
+		{ type: "drivers.moved", tick: 1, driverIds: ["d-1"], xs: [0], ys: [-1] },
+	],
+	[
+		"move with a string coordinate",
+		{ type: "drivers.moved", tick: 1, driverIds: ["d-1"], xs: ["0"], ys: [0] },
+	],
+	[
+		"move with a bad driver ID",
+		{ type: "drivers.moved", tick: 1, driverIds: ["d.1"], xs: [0], ys: [0] },
 	],
 ];
 
@@ -196,7 +223,7 @@ test("isSimEvent tells events from offers, replies, and commands", () => {
 	const messages: Message[] = [
 		{ type: "clock.ticked", tick: Tick.parse(1) },
 		{ type: "trip.matched", tick: Tick.parse(1), tripId, driverId },
-		{ type: "drivers.moved", tick: Tick.parse(1), moves: [] },
+		driversMoved(Tick.parse(1), []),
 		{ type: "offer_accepted", tripId, driverId },
 		{ type: "cancel_trip", tripId },
 		{ type: "cancel_trip_accepted", tripId },
@@ -210,4 +237,18 @@ test("isSimEvent tells events from offers, replies, and commands", () => {
 		false,
 		false,
 	]);
+});
+
+test("forEachMove visits a message's moves in order", () => {
+	const moves: DriverMove[] = [
+		{ driverId: DriverId.parse("d-2"), cell: cell(1, 2) },
+		{ driverId: DriverId.parse("d-1"), cell: cell(3, 4) },
+	];
+	const visited: DriverMove[] = [];
+
+	forEachMove(driversMoved(tick, moves), (driverId, cell) => {
+		visited.push({ driverId, cell });
+	});
+
+	expect(visited).toEqual(moves);
 });

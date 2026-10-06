@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
 import {
 	DriverId,
+	driversMoved,
 	type Message,
 	RiderId,
 	Tick,
@@ -61,11 +62,7 @@ function wentOffline(driverId: DriverId, at: Cell, when: number): Message {
 }
 
 function moved(driverId: DriverId, to: Cell, at: number): Message {
-	return {
-		type: "drivers.moved",
-		tick: tick(at),
-		moves: [{ driverId, cell: to }],
-	};
+	return driversMoved(tick(at), [{ driverId, cell: to }]);
 }
 
 // d1 starts at (0,0); t1 picks up at (1,0), drops off at (2,0).
@@ -340,14 +337,10 @@ describe("checkInvariants", () => {
 		const log: Message[] = [
 			wentOnline(d1, cell(0, 0)),
 			wentOnline(d2, cell(5, 5)),
-			{
-				type: "drivers.moved",
-				tick: tick(1),
-				moves: [
-					{ driverId: d1, cell: cell(1, 0) },
-					{ driverId: d2, cell: cell(7, 5) },
-				],
-			},
+			driversMoved(tick(1), [
+				{ driverId: d1, cell: cell(1, 0) },
+				{ driverId: d2, cell: cell(7, 5) },
+			]),
 		];
 
 		expect(checkInvariants(log, grid)).toEqual([

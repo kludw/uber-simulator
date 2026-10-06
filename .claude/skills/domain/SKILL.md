@@ -13,7 +13,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 
 - **World**: the simulated city. No single owner; each service owns its part, views built from events (0017).
 - **Grid**: synthetic square grid, `width × height` cells (v1: 500 × 500, 1 cell = 10 m). No real maps for now.
-- **Cell**: one grid square, integer `x`, `y`. Origin top-left, `0 ≤ x < width`, `0 ≤ y < height`. The `Cell` type guarantees well-formed non-negative integer coordinates only; grid bounds are checked by `cellIn` where a grid is known and by the invariant checker.
+- **Cell**: one grid square, integer `x`, `y`. Origin top-left, `0 ≤ x < width`, `0 ≤ y < height`. The `Cell` type guarantees well-formed non-negative integer coordinates only; grid bounds are checked by `cellIn` where a grid is known and by the invariant checker. Each coordinate is a **Coordinate** (branded non-negative integer); `cellAt(x, y)` makes a Cell from two.
 - **Position**: an entity's current cell.
 - **Distance**: Manhattan distance between cells, `|x1 - x2| + |y1 - y2|`.
 - **Move**: one step to a 4-neighbor cell (no diagonals). Max one move per tick per driver. Toward a target: larger remaining axis first.
@@ -81,7 +81,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
    - `clock.ticked`
    - `trip.requested`, `trip.offered`, `trip.offer_declined`, `trip.offer_expired`, `trip.matched`, `trip.picked_up`, `trip.completed`, `trip.cancelled` (only dispatch emits `trip.*`)
    - `driver.went_online`, `driver.went_offline`, `driver.arrived_at_pickup`, `driver.arrived_at_dropoff`
-   - `drivers.moved` (tick, moves: `[{ driverId, cell }]`): one shard's moves of one tick, at most 5,000 per message, published before the shard's other events of that tick; none when no driver moved. Each entry is one **move** (0045).
+   - `drivers.moved` (tick, `driverIds`, `xs`, `ys`: move i is driver `driverIds[i]` to cell `(xs[i], ys[i])`): one shard's moves of one tick, at most 5,000 per message, published before the shard's other events of that tick; none when no driver moved (0045, shape 0047). Built with `driversMoved`, read with `forEachMove` (`src/shared/messages.ts`), each visit one **move**.
 2. Same name used as event `type` in code, NATS subject suffix, ClickHouse event type value.
 3. Invalid state transition = domain error (see `errors` skill), never silently ignored.
 

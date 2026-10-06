@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Cell } from "../shared/grid.ts";
 import {
 	DriverId,
+	driversMoved,
 	RiderId,
 	type SimEvent,
 	Tick,
@@ -91,14 +92,10 @@ describe("drivers", () => {
 		const view = viewOf([
 			...trip.slice(0, 3),
 			online(d2, 0, cell(5, 5)),
-			{
-				type: "drivers.moved",
-				tick: tick(3),
-				moves: [
-					{ driverId: d1, cell: cell(1, 0) },
-					{ driverId: d2, cell: cell(5, 6) },
-				],
-			},
+			driversMoved(tick(3), [
+				{ driverId: d1, cell: cell(1, 0) },
+				{ driverId: d2, cell: cell(5, 6) },
+			]),
 		]);
 		expect([...view.drivers]).toEqual([
 			[
@@ -387,11 +384,7 @@ function online(driverId: DriverId, at: number, to: Cell): SimEvent {
 }
 
 function moved(driverId: DriverId, at: number, to: Cell): SimEvent {
-	return {
-		type: "drivers.moved",
-		tick: tick(at),
-		moves: [{ driverId, cell: to }],
-	};
+	return driversMoved(tick(at), [{ driverId, cell: to }]);
 }
 
 function requested(

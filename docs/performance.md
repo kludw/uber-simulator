@@ -1,6 +1,6 @@
 # Performance
 
-Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12), 76k-500k in [Ceiling](#ceiling), and the distributed stack over NATS in [Live limits](#live-limits) (latest: [After milestone 18](#after-milestone-18)); batched dispatch memory in [Batched dispatch memory](#batched-dispatch-memory); the observer's `clock.ticked` deviations in [Clock deviation](#clock-deviation); dispatch's work per tick at greedy 200k, by function, in [Dispatch profile](#dispatch-profile).
+Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12), 76k-500k in [Ceiling](#ceiling), and the distributed stack over NATS in [Live limits](#live-limits) (latest: [After milestone 18](#after-milestone-18)); batched dispatch memory in [Batched dispatch memory](#batched-dispatch-memory); the observer's `clock.ticked` deviations in [Clock deviation](#clock-deviation); dispatch's work per tick at greedy 200k, by function, in [Dispatch profile](#dispatch-profile); the compact `drivers.moved` shape and its effect in [Compact driver moves](#compact-driver-moves).
 
 ## Method
 
@@ -1094,3 +1094,30 @@ Dispatch in process, same parts ([37532651122](https://github.com/kludw/uber-sim
 ### Proposed cut (milestone 19's next ticket)
 
 Proposal, not decided: cut `drivers.moved` decoding first, the largest part (50.5-52.6% live). JSON.parse and Zod both work per object, two per move (the move and its cell); a shape with fewer objects per move (e.g. parallel arrays of driver IDs and coordinates) would cut both, but it changes [ADR 0045](adr/0045-publish-driver-moves-in-batches.md)'s message for every consumer (shards, dispatch, persister, UI, replay), so it needs an ADR and a decode micro-benchmark of the candidate shapes first. Next, brain-only: keep the busy and idle drivers in dispatch's state across ticks instead of rebuilding them (30.3-31.4% live, 60.4-62.4% in process), whose saving is less the per-move upkeep it adds to position updates.
+
+## Compact driver moves
+
+`drivers.moved` as parallel arrays (`driverIds`, `xs`, `ys`), each array checked by one Zod refine ([ADR 0047](adr/0047-driver-moves-as-parallel-arrays.md), [#222](https://github.com/kludw/uber-simulator/issues/222)), the first cut from [Dispatch profile](#dispatch-profile). Measured 2026-10-06 on branch `222-compact-driver-moves`.
+
+### Method
+
+- **Micro-benchmark**: JSON.parse + Zod `parse` of one 5,000-move chunk per candidate shape, median of 1,000 rounds, twice per runner, Bun 1.4.2: [decode-bench 37535589113](https://github.com/kludw/uber-simulator/actions/runs/37535589113) (EPYC 9V45 and 9V74, load average under 0.6; script `scratch/decode-moves.ts` on the unmerged branch `222-exp-decode-bench`). Table in ADR 0047.
+- **Live**: `loadtest` workflow, greedy 200k, as in [After milestone 18](#after-milestone-18) (2 driver shards, seed 1, 600 ticks): [37536239553](https://github.com/kludw/uber-simulator/actions/runs/37536239553) (EPYC 7763) and [37536243054](https://github.com/kludw/uber-simulator/actions/runs/37536243054) (EPYC 9V74). Before: that section's greedy 200k runs on the same CPU models. Dispatch ms per tick from its `messages_timed` entries summed over the run, over 600 ticks.
+
+### Results
+
+| Run | CPU model | `drivers.moved` decode | its handle | `clock.ticked` handle | Decode + handle, all types | Settle p95 | Dispatch cores | `drivers.moved` bytes per tick |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| before [37496763902](https://github.com/kludw/uber-simulator/actions/runs/37496763902) | EPYC 7763 | 195.1 | 40.5 | 164.7 | 416.1 | 563.5 | 0.54 | 9.76 MB |
+| before [37499868521](https://github.com/kludw/uber-simulator/actions/runs/37499868521) | EPYC 7763 | 189.6 | 37.0 | 154.8 | 396.6 | 531.1 | 0.52 | 9.76 MB |
+| after [37536239553](https://github.com/kludw/uber-simulator/actions/runs/37536239553) | EPYC 7763 | **87.2** | 35.0 | 117.4 | **254.0** | 333.7 | 0.33 | 3.76 MB |
+| before [37499856966](https://github.com/kludw/uber-simulator/actions/runs/37499856966) | EPYC 9V74 | 158.6 | 31.4 | 126.1 | 327.7 | 419.1 | 0.45 | 9.76 MB |
+| after [37536243054](https://github.com/kludw/uber-simulator/actions/runs/37536243054) | EPYC 9V74 | **94.6** | 37.8 | 117.4 | **263.8** | 366.7 | 0.34 | 3.76 MB |
+
+- **Decoding `drivers.moved` is 54-55% cheaper on the EPYC 7763 and 40% on the 9V74** (ms per tick in the table), in line with the micro-benchmark's 52-55% per chunk. Both runs pass every criterion (0 overruns, persister backlog second-half max 594 and 879 of 5,965).
+- Handling it (one `Map.set` per move, now with a `Cell` built per move) is unchanged within noise (35.0-37.8 against 31.4-40.5 ms).
+- The `clock.ticked` step did not change in code but is 117.4 ms in both after-runs against 126.1-164.7 before; with less decode the process waits less for a CPU (wall time), presumably, not verified.
+- Payload per tick 61% smaller; the persister uses 0.20-0.21 cores against 0.31-0.38 before on the same CPU models, the stack 699-720 CPU s against 1,014 (7763, 37499868521).
+- In process, event logs are identical to master with moves expanded per move (README commands, both matchings).
+
+Next, per the profile: dispatch's per-tick idle snapshot (busy set, idle list, sort, index), now the largest part.

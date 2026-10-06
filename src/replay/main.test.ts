@@ -10,6 +10,7 @@ import { toRow } from "../persister/rows.ts";
 import { Cell } from "../shared/grid.ts";
 import {
 	DriverId,
+	driversMoved,
 	RiderId,
 	RunId,
 	type SimEvent,
@@ -128,11 +129,9 @@ describe.skipIf(!natsUrl || !config)("bun run replay", () => {
 const d1 = DriverId.parse("d-1");
 
 function moved(tick: number, x: number): SimEvent {
-	return {
-		type: "drivers.moved",
-		tick: Tick.parse(tick),
-		moves: [{ driverId: d1, cell: Cell.parse({ x, y: 0 }) }],
-	};
+	return driversMoved(Tick.parse(tick), [
+		{ driverId: d1, cell: Cell.parse({ x, y: 0 }) },
+	]);
 }
 
 function requested(tick: number): SimEvent {

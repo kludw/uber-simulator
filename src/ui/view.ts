@@ -8,6 +8,7 @@ import type {
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
+import { forEachMove } from "../shared/messages.ts";
 
 type DriverState = "idle" | "en_route" | "at_pickup" | "on_trip" | "at_dropoff";
 
@@ -195,7 +196,7 @@ function withDriver(view: View, driverId: DriverId, driver: DriverView): View {
 function withMoves(view: View, moved: DriversMoved): View {
 	const drivers = new Map(view.drivers);
 	const driversPerState = { ...view.driversPerState };
-	for (const { driverId, cell } of moved.moves) {
+	forEachMove(moved, (driverId, cell) => {
 		const previous = drivers.get(driverId);
 		if (previous === undefined) driversPerState.idle++;
 		drivers.set(driverId, {
@@ -204,7 +205,7 @@ function withMoves(view: View, moved: DriversMoved): View {
 			previousCell: previous?.cell ?? cell,
 			movedAt: moved.tick,
 		});
-	}
+	});
 	return { ...view, drivers, driversPerState };
 }
 

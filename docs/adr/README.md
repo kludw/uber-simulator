@@ -48,5 +48,6 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0042 | [Subscribe to taken types](0042-subscribe-to-taken-types.md)            | Accepted |
 | 0043 | [Learn drivers from moves](0043-learn-drivers-from-moves.md)          | Accepted |
 | 0044 | [Persister pipelining](0044-persister-pipelining.md)                    | Accepted |
-| 0045 | [Driver moves in batches](0045-publish-driver-moves-in-batches.md)     | Accepted |
+| 0045 | [Driver moves in batches](0045-publish-driver-moves-in-batches.md)     | Accepted (message shape superseded by 0047) |
 | 0046 | [Persister pending criterion](0046-persister-pending-criterion.md)      | Accepted |
+| 0047 | [Driver moves as parallel arrays](0047-driver-moves-as-parallel-arrays.md) | Accepted |
