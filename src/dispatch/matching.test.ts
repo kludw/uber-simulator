@@ -1,14 +1,26 @@
 import { describe, expect, test } from "bun:test";
 import { createRandom, type Random } from "../shared/random.ts";
-import { type Cost, minCostMatching, type Pair } from "./matching.ts";
+import { minCostMatching, type Pair } from "./matching.ts";
 
-// The matrix's cells as the cost function minCostMatching asks for.
+// A cell of a test matrix; null = pair not allowed.
+type Cost = number | null;
+
+// The matrix's rows and columns as minCostMatching asks for them.
 function matchMatrix(costs: Cost[][]): Pair[] {
-	return minCostMatching(
-		costs.length,
-		costs[0]?.length ?? 0,
-		(row, column) => costs[row]?.[column] ?? null,
-	);
+	const columns = costs[0]?.length ?? 0;
+	const allowed = (cost: Cost | undefined) => cost ?? Number.POSITIVE_INFINITY;
+	return minCostMatching(costs.length, columns, {
+		ofRow: (row, out) => {
+			for (let column = 0; column < columns; column++) {
+				out[column] = allowed(costs[row]?.[column]);
+			}
+		},
+		ofColumn: (column, out) => {
+			for (const [row, cells] of costs.entries()) {
+				out[row] = allowed(cells[column]);
+			}
+		},
+	});
 }
 
 // Size and total cost of the returned matching; throws if it is not a valid matching
