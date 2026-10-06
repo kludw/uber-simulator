@@ -1,7 +1,7 @@
 import { type Cell, cellIn, distance, type Grid } from "../shared/grid.ts";
 import type {
 	DriverId,
-	DriverMoved,
+	DriverMove,
 	Message,
 	Tick,
 	TripCancelled,
@@ -152,25 +152,10 @@ function observe(
 			log.driverPositions.set(message.driverId, message);
 			break;
 		}
-		case "driver.moved":
-			if (log.offlineDrivers.has(message.driverId)) {
-				violations.push({
-					type: "offline_driver_moved",
-					tick: message.tick,
-					driverId: message.driverId,
-					cell: message.cell,
-				});
+		case "drivers.moved":
+			for (const move of message.moves) {
+				observeMove(log, grid, violations, message.tick, move);
 			}
-			violations.push(...checkMove(log, message));
-			if (!cellIn(grid, message.cell.x, message.cell.y).ok) {
-				violations.push({
-					type: "driver_left_grid",
-					tick: message.tick,
-					driverId: message.driverId,
-					cell: message.cell,
-				});
-			}
-			log.driverPositions.set(message.driverId, message);
 			break;
 		case "trip.requested":
 		case "trip.offered":
@@ -185,18 +170,41 @@ function observe(
 	}
 }
 
+// One entry of drivers.moved, checked as its own move (ADR 0045).
+function observeMove(
+	log: LogState,
+	grid: Grid,
+	violations: Violation[],
+	tick: Tick,
+	{ driverId, cell }: DriverMove,
+): void {
+	if (log.offlineDrivers.has(driverId)) {
+		violations.push({ type: "offline_driver_moved", tick, driverId, cell });
+	}
+	violations.push(...checkStep(log, tick, driverId, cell));
+	if (!cellIn(grid, cell.x, cell.y).ok) {
+		violations.push({ type: "driver_left_grid", tick, driverId, cell });
+	}
+	log.driverPositions.set(driverId, { tick, cell });
+}
+
 // At most one 4-neighbor step per tick, measured from the last report.
-function checkMove(log: LogState, move: DriverMoved): Violation[] {
-	const last = log.driverPositions.get(move.driverId);
+function checkStep(
+	log: LogState,
+	tick: Tick,
+	driverId: DriverId,
+	cell: Cell,
+): Violation[] {
+	const last = log.driverPositions.get(driverId);
 	if (last === undefined) return [];
-	if (move.tick > last.tick && distance(last.cell, move.cell) <= 1) return [];
+	if (tick > last.tick && distance(last.cell, cell) <= 1) return [];
 	return [
 		{
 			type: "driver_moved_too_fast",
-			tick: move.tick,
-			driverId: move.driverId,
+			tick,
+			driverId,
 			from: last.cell,
-			to: move.cell,
+			to: cell,
 		},
 	];
 }
