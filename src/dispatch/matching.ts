@@ -52,20 +52,20 @@ function solve(
 		}
 	}
 
-	const rowPotential = new Float64Array(rows + 1);
-	const columnPotential = new Float64Array(columns + 1);
-	const rowOfColumn = new Int32Array(columns + 1);
-	const previousColumn = new Int32Array(columns + 1);
+	const rowPotential = new Array<number>(rows + 1).fill(0);
+	const columnPotential = new Array<number>(columns + 1).fill(0);
+	const rowOfColumn = new Array<number>(columns + 1).fill(0);
+	const previousColumn = new Array<number>(columns + 1).fill(0);
 	// Reset per row, allocated once: a fresh pair per row was rows x columns of garbage.
-	const slack = new Float64Array(columns + 1);
-	const visited = new Uint8Array(columns + 1);
+	const slack = new Array<number>(columns + 1);
+	const visited = new Array<boolean>(columns + 1);
 	for (let row = 1; row <= rows; row++) {
 		rowOfColumn[0] = row;
 		let column = 0;
 		slack.fill(Number.POSITIVE_INFINITY);
-		visited.fill(0);
+		visited.fill(false);
 		do {
-			visited[column] = 1;
+			visited[column] = true;
 			const currentRow = at(rowOfColumn, column);
 			let delta = Number.POSITIVE_INFINITY;
 			let nextColumn = 0;
@@ -111,7 +111,7 @@ function solve(
 	return pairs;
 }
 
-function at(values: ArrayLike<number>, index: number): number {
+function at(values: readonly number[], index: number): number {
 	const value = values[index];
 	if (value === undefined) throw new Error(`index ${index} out of range`);
 	return value;
