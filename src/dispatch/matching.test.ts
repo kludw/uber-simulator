@@ -115,6 +115,15 @@ describe("minCostMatching", () => {
 		expect(() => matchMatrix([[1, 2.5]])).toThrow();
 	});
 
+	test("a row filler that skips a cell is a caller bug", () => {
+		// Writes column 1 only; column 0 must not keep row 0's cost.
+		const ofRow = (row: number, out: number[]) => {
+			if (row === 0) out[0] = 1;
+			out[1] = 2;
+		};
+		expect(() => minCostMatching(2, 2, { ofRow, ofColumn: ofRow })).toThrow();
+	});
+
 	test("same input gives the same pairs", () => {
 		// Many equally optimal matchings: all costs equal.
 		const costs = Array.from({ length: 5 }, () => [3, 3, 3, 3]);

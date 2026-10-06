@@ -43,6 +43,8 @@ function solve(rows: number, columns: number, ofRow: FillCosts): Pair[] {
 	// uses as many allowed pairs as possible. Finite: Infinity breaks the potentials.
 	let sentinel = 1;
 	for (let row = 0; row < rows; row++) {
+		// A cell the filler skips stays NaN and throws below, not a stale cost.
+		rowCosts.fill(Number.NaN);
 		ofRow(row, rowCosts);
 		for (const cost of rowCosts) {
 			if (cost === Number.POSITIVE_INFINITY) continue;
