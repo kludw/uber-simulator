@@ -242,12 +242,19 @@ describe("decideDispatch clock.ticked", () => {
 		]);
 	});
 
-	test("offers by the cell a driver last moved to", () => {
+	test("offers by the cell each driver last moved to", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
 			wentOnline(d1, cell(9, 9)),
 			wentOnline(d2, cell(5, 5)),
-			{ type: "driver.moved", tick: tick(1), driverId: d1, cell: cell(1, 3) },
+			{
+				type: "drivers.moved",
+				tick: tick(1),
+				moves: [
+					{ driverId: d2, cell: cell(5, 6) },
+					{ driverId: d1, cell: cell(1, 3) },
+				],
+			},
 			ticked(2),
 		]);
 
@@ -268,7 +275,11 @@ describe("decideDispatch clock.ticked", () => {
 	test("offers a trip to a driver first seen moving", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			{ type: "driver.moved", tick: tick(1), driverId: d1, cell: cell(1, 3) },
+			{
+				type: "drivers.moved",
+				tick: tick(1),
+				moves: [{ driverId: d1, cell: cell(1, 3) }],
+			},
 			ticked(2),
 		]);
 

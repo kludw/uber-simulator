@@ -70,7 +70,7 @@ const dispatchInputs = [
 	"cancel_trip",
 	"driver.went_online",
 	"driver.went_offline",
-	"driver.moved",
+	"drivers.moved",
 	"driver.arrived_at_pickup",
 	"driver.arrived_at_dropoff",
 	"offer_accepted",
