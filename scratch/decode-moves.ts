@@ -55,6 +55,28 @@ const ParallelRefinedShape = z
 	.refine(
 		(m) => m.xs.length === m.driverIds.length && m.ys.length === m.driverIds.length,
 	);
+// As ParallelRefinedShape, each array branded by a transform (as merged, #222).
+type Coordinate = number & z.$brand<"Coordinate">;
+const ParallelBrandedShape = z
+	.object({
+		type: z.literal("drivers.moved"),
+		tick: Tick,
+		driverIds: z
+			.array(z.string())
+			.refine((ids) => ids.every((id) => idPattern.test(id)))
+			.transform((ids) => ids as z.infer<typeof DriverId>[]),
+		xs: z
+			.array(z.number())
+			.refine((cs) => cs.every(isCoordinate))
+			.transform((cs) => cs as Coordinate[]),
+		ys: z
+			.array(z.number())
+			.refine((cs) => cs.every(isCoordinate))
+			.transform((cs) => cs as Coordinate[]),
+	})
+	.refine(
+		(m) => m.xs.length === m.driverIds.length && m.ys.length === m.driverIds.length,
+	);
 // IDs by schema per element (branded), coordinates by one refine per array.
 const ParallelHybridShape = z
 	.object({
@@ -145,6 +167,10 @@ const cases: Record<string, (json: string) => void> = {
 	},
 	parallelRefined: (json) => {
 		const m = ParallelRefinedShape.parse(JSON.parse(json));
+		sink += m.driverIds.length;
+	},
+	parallelBranded: (json) => {
+		const m = ParallelBrandedShape.parse(JSON.parse(json));
 		sink += m.driverIds.length;
 	},
 	parallelHybrid: (json) => {
