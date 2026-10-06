@@ -1,4 +1,9 @@
-import { type Cell, distanceToCoordinates, type Grid } from "../shared/grid.ts";
+import {
+	type Cell,
+	distance,
+	distanceToCoordinates,
+	type Grid,
+} from "../shared/grid.ts";
 import type {
 	CancelTrip,
 	CancelTripAccepted,
@@ -36,7 +41,7 @@ import {
 	indexIdleDrivers,
 	takeNearest,
 } from "./idle-drivers.ts";
-import { type Cost, minCostMatching } from "./matching.ts";
+import { minCostMatching } from "./matching.ts";
 import {
 	type ArrivalRejected,
 	acceptOffer,
@@ -272,27 +277,42 @@ function batchedPairs(
 	queued: readonly QueuedTrip[],
 	idle: readonly IdleDriver[],
 ): OfferPair[] {
-	// Asked for every cell more than once per batch (#213): drivers' cells as
-	// flat coordinates read in column order, and no excluded-driver lookup for
-	// the common trip that has none.
+	// A trip's row is asked for more than once per batch (#213): drivers' cells
+	// as flat coordinates, read in order.
 	const driverXs = Int32Array.from(idle, ({ cell }) => cell.x);
 	const driverYs = Int32Array.from(idle, ({ cell }) => cell.y);
-	const cost = (row: number, column: number): Cost => {
+	let columnOf: Map<DriverId, number> | undefined;
+	const ofRow = (row: number, out: number[]) => {
 		const trip = queued[row];
-		const x = driverXs[column];
-		const y = driverYs[column];
-		if (trip === undefined || x === undefined || y === undefined) {
-			throw new Error(`cost (${row}, ${column}) out of range`);
-		}
-		if (trip.excludedDrivers.size > 0) {
-			const driverId = idle[column]?.driverId;
-			if (driverId !== undefined && trip.excludedDrivers.has(driverId)) {
-				return null;
+		if (trip === undefined) throw new Error(`row ${row} out of range`);
+		for (let column = 0; column < idle.length; column++) {
+			const x = driverXs[column];
+			const y = driverYs[column];
+			if (x === undefined || y === undefined) {
+				throw new Error(`column ${column} out of range`);
 			}
+			out[column] = distanceToCoordinates(trip.pickup, x, y);
 		}
-		return distanceToCoordinates(trip.pickup, x, y);
+		if (trip.excludedDrivers.size === 0) return;
+		columnOf ??= new Map(
+			idle.map(({ driverId }, column) => [driverId, column]),
+		);
+		for (const driverId of trip.excludedDrivers) {
+			const column = columnOf.get(driverId);
+			if (column !== undefined) out[column] = Number.POSITIVE_INFINITY;
+		}
 	};
-	return minCostMatching(queued.length, idle.length, cost).map(
+	// Only when more trips are queued than drivers are idle.
+	const ofColumn = (column: number, out: number[]) => {
+		const driver = idle[column];
+		if (driver === undefined) throw new Error(`column ${column} out of range`);
+		for (const [row, trip] of queued.entries()) {
+			out[row] = trip.excludedDrivers.has(driver.driverId)
+				? Number.POSITIVE_INFINITY
+				: distance(driver.cell, trip.pickup);
+		}
+	};
+	return minCostMatching(queued.length, idle.length, { ofRow, ofColumn }).map(
 		({ row, column }) => {
 			const trip = queued[row];
 			const driver = idle[column];
