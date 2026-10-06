@@ -1,6 +1,6 @@
 # 0045. Publish driver moves in batches per shard and tick
 
-- Status: Accepted
+- Status: Accepted (message shape superseded by 0047)
 - Date: 2026-10-06
 - No ADR is superseded: `driver.moved` is defined in the `domain` skill and `src/shared/messages.ts`, not by an ADR; the new subject follows 0028's scheme
 
