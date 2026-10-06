@@ -27,6 +27,7 @@ import type {
 	TripPickedUp,
 	TripStatus,
 } from "../shared/messages.ts";
+import { driversMoved } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 
 type Driver =
@@ -551,11 +552,9 @@ const maxMovesPerMessage = 5000;
 function movedChunks(tick: Tick, moves: DriverMove[]): DriversMoved[] {
 	const chunks: DriversMoved[] = [];
 	for (let start = 0; start < moves.length; start += maxMovesPerMessage) {
-		chunks.push({
-			type: "drivers.moved",
-			tick,
-			moves: moves.slice(start, start + maxMovesPerMessage),
-		});
+		chunks.push(
+			driversMoved(tick, moves.slice(start, start + maxMovesPerMessage)),
+		);
 	}
 	return chunks;
 }

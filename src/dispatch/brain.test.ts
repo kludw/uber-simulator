@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
 import {
 	DriverId,
+	driversMoved,
 	type RequestTrip,
 	RiderId,
 	Tick,
@@ -247,14 +248,10 @@ describe("decideDispatch clock.ticked", () => {
 			requestTrip(t1, 1),
 			wentOnline(d1, cell(9, 9)),
 			wentOnline(d2, cell(5, 5)),
-			{
-				type: "drivers.moved",
-				tick: tick(1),
-				moves: [
-					{ driverId: d2, cell: cell(5, 6) },
-					{ driverId: d1, cell: cell(1, 3) },
-				],
-			},
+			driversMoved(tick(1), [
+				{ driverId: d2, cell: cell(5, 6) },
+				{ driverId: d1, cell: cell(1, 3) },
+			]),
 			ticked(2),
 		]);
 
@@ -275,11 +272,7 @@ describe("decideDispatch clock.ticked", () => {
 	test("offers a trip to a driver first seen moving", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			{
-				type: "drivers.moved",
-				tick: tick(1),
-				moves: [{ driverId: d1, cell: cell(1, 3) }],
-			},
+			driversMoved(tick(1), [{ driverId: d1, cell: cell(1, 3) }]),
 			ticked(2),
 		]);
 

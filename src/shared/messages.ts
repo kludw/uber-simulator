@@ -44,15 +44,55 @@ export const DriverWentOffline = z.object({
 });
 export type DriverWentOffline = z.infer<typeof DriverWentOffline>;
 
-// Each entry is one driver's step this tick. A shard publishes its moves of a
-// tick in chunks, before its other events of that tick (ADR 0045).
-export const DriversMoved = z.object({
-	type: z.literal("drivers.moved"),
-	tick: Tick,
-	moves: z.array(z.object({ driverId: DriverId, cell: Cell })),
-});
+// One refine per array, not a schema per element: z.int().nonnegative() per
+// coordinate was most of this message's Zod time (ADR 0047). Same rule as Cell.
+const Coordinates = z
+	.array(z.number())
+	.refine((coordinates) =>
+		coordinates.every((c) => Number.isSafeInteger(c) && c >= 0),
+	);
+
+// Move i is driver driverIds[i] stepping to cell (xs[i], ys[i]): parallel
+// arrays decode faster than an object per move (ADR 0047). A shard publishes
+// its moves of a tick in chunks, before its other events of that tick
+// (ADR 0045). Build with driversMoved, read with forEachMove.
+export const DriversMoved = z
+	.object({
+		type: z.literal("drivers.moved"),
+		tick: Tick,
+		driverIds: z.array(DriverId),
+		xs: Coordinates,
+		ys: Coordinates,
+	})
+	.refine(
+		(moved) =>
+			moved.xs.length === moved.driverIds.length &&
+			moved.ys.length === moved.driverIds.length,
+		{ error: "driverIds, xs, and ys differ in length" },
+	);
 export type DriversMoved = z.infer<typeof DriversMoved>;
-export type DriverMove = DriversMoved["moves"][number];
+export type DriverMove = { driverId: DriverId; cell: Cell };
+
+export function driversMoved(tick: Tick, moves: DriverMove[]): DriversMoved {
+	return {
+		type: "drivers.moved",
+		tick,
+		driverIds: moves.map((move) => move.driverId),
+		xs: moves.map((move) => move.cell.x),
+		ys: moves.map((move) => move.cell.y),
+	};
+}
+
+export function forEachMove(
+	moved: DriversMoved,
+	visit: (driverId: DriverId, cell: Cell) => void,
+): void {
+	for (let i = 0; i < moved.driverIds.length; i++) {
+		// Parsed (or built from Cells): the coordinates are a valid Cell.
+		const cell = { x: moved.xs[i], y: moved.ys[i] } as Cell;
+		visit(moved.driverIds[i] as DriverId, cell);
+	}
+}
 
 export const DriverArrivedAtPickup = z.object({
 	type: z.literal("driver.arrived_at_pickup"),

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
 import {
 	DriverId,
+	driversMoved,
 	type Message,
 	RiderId,
 	Tick,
@@ -67,17 +68,9 @@ const eventLog: Message[] = [
 	requested(t1, 1),
 	tripEvent("trip.offered", t1, 1),
 	tripEvent("trip.matched", t1, 1),
-	{
-		type: "drivers.moved",
-		tick: tick(2),
-		moves: [{ driverId: d1, cell: cell(1, 0) }],
-	},
+	driversMoved(tick(2), [{ driverId: d1, cell: cell(1, 0) }]),
 	tripEvent("trip.picked_up", t1, 2),
-	{
-		type: "drivers.moved",
-		tick: tick(3),
-		moves: [{ driverId: d1, cell: cell(2, 0) }],
-	},
+	driversMoved(tick(3), [{ driverId: d1, cell: cell(2, 0) }]),
 	tripEvent("trip.completed", t1, 3),
 	requested(t2, 4),
 	{ type: "trip.cancelled", tick: tick(5), tripId: t2, driverId: null },

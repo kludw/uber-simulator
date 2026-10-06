@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Cell } from "../shared/grid.ts";
 import {
 	DriverId,
+	driversMoved,
 	RiderId,
 	RunId,
 	type SimEvent,
@@ -41,7 +42,7 @@ describe("toRow", () => {
 		],
 		// One row per message, the moves in the payload (ADR 0045).
 		[
-			{ type: "drivers.moved", tick, moves: [{ driverId, cell }] },
+			driversMoved(tick, [{ driverId, cell }]),
 			{ tripId: "", driverId: "", riderId: "" },
 		],
 		[

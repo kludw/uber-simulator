@@ -35,6 +35,7 @@ import type {
 	TripRequested,
 	TripStatus,
 } from "../shared/messages.ts";
+import { forEachMove } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 import {
 	type IdleDriver,
@@ -159,9 +160,9 @@ export function decideDispatch(
 			state.driverCells.set(input.driverId, input.cell);
 			return { state, outputs: [] };
 		case "drivers.moved":
-			for (const move of input.moves) {
-				state.driverCells.set(move.driverId, move.cell);
-			}
+			forEachMove(input, (driverId, cell) => {
+				state.driverCells.set(driverId, cell);
+			});
 			return { state, outputs: [] };
 		case "driver.went_offline":
 			return onDriverWentOffline(state, input);

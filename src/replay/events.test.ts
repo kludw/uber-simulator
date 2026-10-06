@@ -10,6 +10,7 @@ import { toRow } from "../persister/rows.ts";
 import { Cell } from "../shared/grid.ts";
 import {
 	DriverId,
+	driversMoved,
 	isSimEvent,
 	RunId,
 	type SimEvent,
@@ -190,11 +191,9 @@ const d1 = DriverId.parse("d-1");
 const ingestedAt = new Date("2026-10-03T12:00:00Z");
 
 function moved(tick: number): SimEvent {
-	return {
-		type: "drivers.moved",
-		tick: Tick.parse(tick),
-		moves: [{ driverId: d1, cell: Cell.parse({ x: tick, y: 0 }) }],
-	};
+	return driversMoved(Tick.parse(tick), [
+		{ driverId: d1, cell: Cell.parse({ x: tick, y: 0 }) },
+	]);
 }
 
 function row(runId: RunId, event: SimEvent, streamSeq: number): EventRow {

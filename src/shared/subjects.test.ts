@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Cell } from "./grid.ts";
 import {
 	DriverId,
+	driversMoved,
 	type Message,
 	RiderId,
 	RunId,
@@ -34,10 +35,7 @@ describe("subjectFor", () => {
 			{ type: "driver.went_offline", tick, driverId, cell },
 			"sim.events.driver.went_offline",
 		],
-		[
-			{ type: "drivers.moved", tick, moves: [{ driverId, cell }] },
-			"sim.events.drivers.moved",
-		],
+		[driversMoved(tick, [{ driverId, cell }]), "sim.events.drivers.moved"],
 		[
 			{ type: "driver.arrived_at_pickup", tick, driverId, tripId, cell },
 			"sim.events.driver.arrived_at_pickup",
@@ -171,11 +169,10 @@ test("simEventSubjects is the wildcard over every event subject", () => {
 
 test("replaySubject prefixes the live subject with replay and the run id", () => {
 	expect(
-		replaySubject(RunId.parse("run-1"), {
-			type: "drivers.moved",
-			tick,
-			moves: [{ driverId, cell }],
-		}),
+		replaySubject(
+			RunId.parse("run-1"),
+			driversMoved(tick, [{ driverId, cell }]),
+		),
 	).toBe("replay.run-1.sim.events.drivers.moved");
 });
 

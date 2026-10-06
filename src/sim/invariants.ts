@@ -9,6 +9,7 @@ import type {
 	TripId,
 	TripPickedUp,
 } from "../shared/messages.ts";
+import { forEachMove } from "../shared/messages.ts";
 
 // The checker's own trip model, rebuilt from trip.* events alone: importing
 // dispatch's Trip would make the check agree with the code it checks.
@@ -153,9 +154,9 @@ function observe(
 			break;
 		}
 		case "drivers.moved":
-			for (const move of message.moves) {
-				observeMove(log, grid, violations, message.tick, move);
-			}
+			forEachMove(message, (driverId, cell) => {
+				observeMove(log, grid, violations, message.tick, { driverId, cell });
+			});
 			break;
 		case "trip.requested":
 		case "trip.offered":
