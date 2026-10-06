@@ -177,6 +177,17 @@ describe("loadtestReport", () => {
 		);
 	});
 
+	test("the observer's lateness warning starts at exactly 100 ms", () => {
+		const warnings = (ms: number) =>
+			loadtestReport(args, {
+				...healthy,
+				settle: { ...healthy.settle, observerLate: { ms, tick: 7 } },
+			})
+				.split("\n")
+				.filter((line) => line.startsWith("warning:")).length;
+		expect([warnings(99.9), warnings(100)]).toEqual([0, 1]);
+	});
+
 	test("a persister holding over 3 ticks of events, with none waiting, keeps up", () => {
 		const report = loadtestReport(args, {
 			...healthy,
