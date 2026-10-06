@@ -1,11 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { createRandom, type Random } from "../shared/random.ts";
-import { type Cost, minCostMatching } from "./matching.ts";
+import { type Cost, minCostMatching, type Pair } from "./matching.ts";
+
+// The matrix's cells as the cost function minCostMatching asks for.
+function matchMatrix(costs: Cost[][]): Pair[] {
+	return minCostMatching(
+		costs.length,
+		costs[0]?.length ?? 0,
+		(row, column) => costs[row]?.[column] ?? null,
+	);
+}
 
 // Size and total cost of the returned matching; throws if it is not a valid matching
 // (row or column used twice, or a disallowed pair).
 function outcome(costs: Cost[][]): { size: number; cost: number } {
-	const pairs = minCostMatching(costs);
+	const pairs = matchMatrix(costs);
 	const rows = new Set(pairs.map((pair) => pair.row));
 	const columns = new Set(pairs.map((pair) => pair.column));
 	if (rows.size !== pairs.length || columns.size !== pairs.length) {
@@ -24,7 +33,7 @@ function outcome(costs: Cost[][]): { size: number; cost: number } {
 
 describe("minCostMatching", () => {
 	test("empty matrix gives no pairs", () => {
-		expect(minCostMatching([])).toEqual([]);
+		expect(matchMatrix([])).toEqual([]);
 	});
 
 	test("square matrix: beats greedy by row", () => {
@@ -86,22 +95,18 @@ describe("minCostMatching", () => {
 		).toEqual({ size: 2, cost: 20 });
 	});
 
-	test("ragged rows are a caller bug", () => {
-		expect(() => minCostMatching([[1, 2], [3]])).toThrow();
-	});
-
 	test("negative cost is a caller bug", () => {
-		expect(() => minCostMatching([[1, -2]])).toThrow();
+		expect(() => matchMatrix([[1, -2]])).toThrow();
 	});
 
 	test("non-integer cost is a caller bug", () => {
-		expect(() => minCostMatching([[1, 2.5]])).toThrow();
+		expect(() => matchMatrix([[1, 2.5]])).toThrow();
 	});
 
 	test("same input gives the same pairs", () => {
 		// Many equally optimal matchings: all costs equal.
 		const costs = Array.from({ length: 5 }, () => [3, 3, 3, 3]);
-		expect(minCostMatching(costs)).toEqual(minCostMatching(costs));
+		expect(matchMatrix(costs)).toEqual(matchMatrix(costs));
 	});
 
 	test("matches a brute-force oracle on seeded random matrices", () => {
@@ -137,7 +142,7 @@ describe("minCostMatching", () => {
 		// Was padded to 10,000 x 10,000 (ADR 0033); now about 50^2 x 10,000 steps.
 		const random = createRandom(5);
 		const costs = randomCosts(random, 50, 10_000);
-		expect(minCostMatching(costs)).toHaveLength(50);
+		expect(matchMatrix(costs)).toHaveLength(50);
 	}, 10_000);
 });
 

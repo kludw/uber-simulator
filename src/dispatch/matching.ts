@@ -6,69 +6,73 @@ export interface Pair {
 }
 
 /**
- * Batch assignment (ADR 0030). `costs` is rows x columns (rectangular), each cell a
- * non-negative integer or `null` (pair not allowed). Returns pairs ordered by row:
- * as many allowed pairs as possible, least total cost among those. Pure function of
- * the input; which of several optimal matchings comes back is not specified.
- * Throws on ragged rows or a cost that is not a non-negative integer (caller bug).
+ * Batch assignment (ADR 0030). `cost(row, column)` for `0 <= row < rows`,
+ * `0 <= column < columns` is a non-negative integer or `null` (pair not allowed);
+ * it is asked for each cell many times, so it must be pure and cheap. Costs are
+ * never stored: memory is O(rows + columns), not O(rows x columns) (#213).
+ * Returns pairs ordered by row: as many allowed pairs as possible, least total
+ * cost among those. Pure function of the input; which of several optimal
+ * matchings comes back is not specified. Throws on a cost that is not a
+ * non-negative integer (caller bug).
  */
-export function minCostMatching(costs: readonly (readonly Cost[])[]): Pair[] {
-	const rows = costs.length;
-	const columns = costs[0]?.length ?? 0;
-	for (const row of costs) {
-		if (row.length !== columns) throw new Error("costs rows differ in length");
-		for (const cell of row) {
-			if (cell !== null && !(Number.isInteger(cell) && cell >= 0)) {
-				throw new Error(`cost ${cell} is not a non-negative integer`);
-			}
-		}
-	}
+export function minCostMatching(
+	rows: number,
+	columns: number,
+	cost: (row: number, column: number) => Cost,
+): Pair[] {
 	// Hungarian below needs rows <= columns: solve the transpose otherwise, swap back.
 	const transposed = rows > columns;
-	const matrix = transposed
-		? Array.from({ length: columns }, (_, column) =>
-				costs.map((row) => row[column] ?? null),
+	const pairs = transposed
+		? solve(columns, rows, (row, column) => cost(column, row)).map(
+				({ row, column }) => ({ row: column, column: row }),
 			)
-		: costs;
-	return solve(matrix)
-		.map(({ row, column }) =>
-			transposed ? { row: column, column: row } : { row, column },
-		)
-		.toSorted((a, b) => a.row - b.row);
+		: solve(rows, columns, cost);
+	return pairs.sort((a, b) => a.row - b.row);
 }
 
 // Rectangular Hungarian with potentials (shortest augmenting paths), rows <= columns,
 // O(rows^2 x columns); 1-indexed, index 0 is a virtual column used as the root of each
 // augmenting path. Every row ends matched; rows matched on a disallowed cell are dropped.
-function solve(costs: readonly (readonly Cost[])[]): Pair[] {
-	const rows = costs.length;
-	const columns = costs[0]?.length ?? 0;
+function solve(
+	rows: number,
+	columns: number,
+	cost: (row: number, column: number) => Cost,
+): Pair[] {
 	// Disallowed cells cost more than any whole set of allowed pairs, so the optimum
 	// uses as many allowed pairs as possible. Finite: Infinity breaks the potentials.
 	let sentinel = 1;
-	for (const row of costs) {
-		for (const cost of row) sentinel += cost ?? 0;
+	for (let row = 0; row < rows; row++) {
+		for (let column = 0; column < columns; column++) {
+			const cell = cost(row, column);
+			if (cell === null) continue;
+			if (!(Number.isInteger(cell) && cell >= 0)) {
+				throw new Error(`cost ${cell} is not a non-negative integer`);
+			}
+			sentinel += cell;
+		}
 	}
 
 	const rowPotential = new Array<number>(rows + 1).fill(0);
 	const columnPotential = new Array<number>(columns + 1).fill(0);
 	const rowOfColumn = new Array<number>(columns + 1).fill(0);
 	const previousColumn = new Array<number>(columns + 1).fill(0);
+	// Reset per row, allocated once: a fresh pair per row was rows x columns of garbage.
+	const slack = new Array<number>(columns + 1);
+	const visited = new Array<boolean>(columns + 1);
 	for (let row = 1; row <= rows; row++) {
 		rowOfColumn[0] = row;
 		let column = 0;
-		const slack = new Array<number>(columns + 1).fill(Number.POSITIVE_INFINITY);
-		const visited = new Array<boolean>(columns + 1).fill(false);
+		slack.fill(Number.POSITIVE_INFINITY);
+		visited.fill(false);
 		do {
 			visited[column] = true;
 			const currentRow = at(rowOfColumn, column);
-			const currentCosts = costs[currentRow - 1] ?? [];
 			let delta = Number.POSITIVE_INFINITY;
 			let nextColumn = 0;
 			for (let candidate = 1; candidate <= columns; candidate++) {
 				if (visited[candidate]) continue;
 				const reduced =
-					(currentCosts[candidate - 1] ?? sentinel) -
+					(cost(currentRow - 1, candidate - 1) ?? sentinel) -
 					at(rowPotential, currentRow) -
 					at(columnPotential, candidate);
 				if (reduced < at(slack, candidate)) {
@@ -101,7 +105,7 @@ function solve(costs: readonly (readonly Cost[])[]): Pair[] {
 	const pairs: Pair[] = [];
 	for (let column = 1; column <= columns; column++) {
 		const row = at(rowOfColumn, column) - 1;
-		if (costs[row]?.[column - 1] == null) continue;
+		if (row < 0 || cost(row, column - 1) === null) continue;
 		pairs.push({ row, column: column - 1 });
 	}
 	return pairs;

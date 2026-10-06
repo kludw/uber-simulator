@@ -36,7 +36,7 @@ import {
 	indexIdleDrivers,
 	takeNearest,
 } from "./idle-drivers.ts";
-import { minCostMatching } from "./matching.ts";
+import { type Cost, minCostMatching } from "./matching.ts";
 import {
 	type ArrivalRejected,
 	acceptOffer,
@@ -272,19 +272,28 @@ function batchedPairs(
 	queued: readonly QueuedTrip[],
 	idle: readonly IdleDriver[],
 ): OfferPair[] {
-	const costs = queued.map((trip) =>
-		idle.map(({ driverId, cell }) =>
-			trip.excludedDrivers.has(driverId) ? null : distance(cell, trip.pickup),
-		),
-	);
-	return minCostMatching(costs).map(({ row, column }) => {
+	const cost = (row: number, column: number): Cost => {
 		const trip = queued[row];
 		const driver = idle[column];
 		if (trip === undefined || driver === undefined) {
-			throw new Error(`matching pair (${row}, ${column}) out of range`);
+			throw new Error(`cost (${row}, ${column}) out of range`);
 		}
-		return { trip, driverId: driver.driverId };
-	});
+		// Asked per Hungarian step, not once per cell: skip the lookup for the
+		// common trip with no excluded drivers (measured: p95 ms per tick).
+		const excluded = trip.excludedDrivers;
+		if (excluded.size > 0 && excluded.has(driver.driverId)) return null;
+		return distance(driver.cell, trip.pickup);
+	};
+	return minCostMatching(queued.length, idle.length, cost).map(
+		({ row, column }) => {
+			const trip = queued[row];
+			const driver = idle[column];
+			if (trip === undefined || driver === undefined) {
+				throw new Error(`matching pair (${row}, ${column}) out of range`);
+			}
+			return { trip, driverId: driver.driverId };
+		},
+	);
 }
 
 function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
