@@ -3,7 +3,8 @@ import { Cell } from "./grid.ts";
 import type { Result } from "./result.ts";
 
 // IDs are valid NATS subject tokens (sim.offers.<driverId>, ADR 0028).
-const idToken = z.string().regex(/^[A-Za-z0-9_-]+$/);
+const idPattern = /^[A-Za-z0-9_-]+$/;
+const idToken = z.string().regex(idPattern);
 
 export const DriverId = idToken.brand<"DriverId">();
 export type DriverId = z.infer<typeof DriverId>;
@@ -44,8 +45,12 @@ export const DriverWentOffline = z.object({
 });
 export type DriverWentOffline = z.infer<typeof DriverWentOffline>;
 
-// One refine per array, not a schema per element: z.int().nonnegative() per
-// coordinate was most of this message's Zod time (ADR 0047). Same rule as Cell.
+// drivers.moved's arrays are checked by one refine each, not a schema per
+// element, which was most of this message's Zod time (ADR 0047). Same rules
+// as DriverId and Cell.
+const MovedDriverIds = z
+	.array(z.string())
+	.refine((ids) => ids.every((id) => idPattern.test(id)));
 const Coordinates = z
 	.array(z.number())
 	.refine((coordinates) =>
@@ -60,7 +65,7 @@ export const DriversMoved = z
 	.object({
 		type: z.literal("drivers.moved"),
 		tick: Tick,
-		driverIds: z.array(DriverId),
+		driverIds: MovedDriverIds,
 		xs: Coordinates,
 		ys: Coordinates,
 	})
@@ -88,7 +93,7 @@ export function forEachMove(
 	visit: (driverId: DriverId, cell: Cell) => void,
 ): void {
 	for (let i = 0; i < moved.driverIds.length; i++) {
-		// Parsed (or built from Cells): the coordinates are a valid Cell.
+		// Parsed or built from moves: a valid DriverId and Cell.
 		const cell = { x: moved.xs[i], y: moved.ys[i] } as Cell;
 		visit(moved.driverIds[i] as DriverId, cell);
 	}
