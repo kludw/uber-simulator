@@ -1,11 +1,20 @@
+import { Tick } from "../shared/messages.ts";
+import { subjectFor } from "../shared/subjects.ts";
+
 // Settle latency of ticks 1..T (ADR 0037) from the observer's receipts: when
 // clock.ticked t arrived, and when the last other event of tick t did. Keeps
 // two receipt times per tick, not every event, so it stays small at any
-// fleet size. Times in ms from any fixed origin.
+// fleet size. Times in ms from any fixed origin; bytes = the message's
+// payload.
 export type SettleTracker = {
-	clockTicked(tick: number, atMs: number): void;
+	clockTicked(tick: number, atMs: number, bytes: number): void;
 	// Any other event; ticks outside 1..T are ignored.
-	eventReceived(tick: number, atMs: number, subject: string): void;
+	eventReceived(
+		tick: number,
+		atMs: number,
+		subject: string,
+		bytes: number,
+	): void;
 	summary(): SettleSummary;
 };
 
@@ -25,7 +34,12 @@ export type SettleSummary = {
 	// Per subject, the observed ticks whose last event had it, most first
 	// (ties by subject): which publisher closes ticks.
 	lastEventSubjects: { subject: string; ticks: number }[];
+	// Per subject, events of ticks 1..T and their payload bytes, most events
+	// first (ties by subject): what each event type costs every reader (#205).
+	bySubject: { subject: string; events: number; bytes: number }[];
 };
+
+const clockSubject = subjectFor({ type: "clock.ticked", tick: Tick.parse(0) });
 
 export function createSettleTracker(ticks: number): SettleTracker {
 	// Index = tick; NaN = nothing received.
@@ -34,15 +48,23 @@ export function createSettleTracker(ticks: number): SettleTracker {
 	const lastEventSubject: (string | undefined)[] = [];
 	const inRun = (tick: number) => tick >= 1 && tick <= ticks;
 	let messages = 0;
+	const bySubject = new Map<string, { events: number; bytes: number }>();
+	const count = (subject: string, bytes: number) => {
+		messages++;
+		const counted = bySubject.get(subject) ?? { events: 0, bytes: 0 };
+		counted.events++;
+		counted.bytes += bytes;
+		bySubject.set(subject, counted);
+	};
 	return {
-		clockTicked(tick, atMs) {
+		clockTicked(tick, atMs, bytes) {
 			if (!inRun(tick)) return;
-			messages++;
+			count(clockSubject, bytes);
 			clockAt[tick] = atMs;
 		},
-		eventReceived(tick, atMs, subject) {
+		eventReceived(tick, atMs, subject, bytes) {
 			if (!inRun(tick)) return;
-			messages++;
+			count(subject, bytes);
 			const last = lastEventAt[tick] ?? Number.NaN;
 			if (!Number.isNaN(last) && atMs <= last) return;
 			lastEventAt[tick] = atMs;
@@ -90,6 +112,11 @@ export function createSettleTracker(ticks: number): SettleTracker {
 					.map(([subject, ticks]) => ({ subject, ticks }))
 					.toSorted(
 						(a, b) => b.ticks - a.ticks || (a.subject < b.subject ? -1 : 1),
+					),
+				bySubject: [...bySubject]
+					.map(([subject, counted]) => ({ subject, ...counted }))
+					.toSorted(
+						(a, b) => b.events - a.events || (a.subject < b.subject ? -1 : 1),
 					),
 			};
 		},

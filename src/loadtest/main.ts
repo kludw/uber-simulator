@@ -198,10 +198,10 @@ const observing = (async () => {
 		}
 		const { tick } = decoded.data;
 		if (message.subject !== clockSubject) {
-			settle.eventReceived(tick, atMs, message.subject);
+			settle.eventReceived(tick, atMs, message.subject, message.data.length);
 			continue;
 		}
-		settle.clockTicked(tick, atMs);
+		settle.clockTicked(tick, atMs, message.data.length);
 		if (tick === ticks) markLastTick(atMs);
 	}
 })();
