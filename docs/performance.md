@@ -855,3 +855,7 @@ Both runs pass every criterion: 0 overruns, 0 slow consumers, drain 2.1 s.
 - **`driver.moved` is 99% of messages and bytes, and 98.9% of persister rows.** Its payload averages 79.6 B per event.
 - **At dispatch it is 84% of decode + handle**, 200-212 ms per tick, mostly decode (168.6-177.7 ms, 4.8-5.1 µs per message). The other types decode at 9.4-10.5 µs per message but are 0.7% of messages. Of the rest's 38.8-40.9 ms per tick, 33.3-35.5 ms is `clock.ticked` handling (the brain's per-tick step, offers included).
 - **Persister, NATS server, ClickHouse**: their CPU isn't split by type; they carry 98.9-99.3% `driver.moved` by count. The NATS server uses 0.77-0.78 cores, ClickHouse 0.34-0.38, the persister 386.8-404.5 CPU s (0.64-0.67 cores).
+
+## After milestone 18
+
+Live limits after [ADR 0045](adr/0045-publish-driver-moves-in-batches.md)'s `drivers.moved` (a shard's moves of a tick in messages of at most 5,000), judged by ADR 0037 with [ADR 0038](adr/0038-persister-backlog-criterion.md)'s backlog bound, [#207](https://github.com/kludw/uber-simulator/issues/207). Measured 2026-10-06 at `6909e8a` (master after [#210](https://github.com/kludw/uber-simulator/pull/210)). Work in progress: greedy above 150k and batched pending.
