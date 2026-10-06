@@ -34,7 +34,10 @@ describe("subjectFor", () => {
 			{ type: "driver.went_offline", tick, driverId, cell },
 			"sim.events.driver.went_offline",
 		],
-		[{ type: "driver.moved", tick, driverId, cell }, "sim.events.driver.moved"],
+		[
+			{ type: "drivers.moved", tick, moves: [{ driverId, cell }] },
+			"sim.events.drivers.moved",
+		],
 		[
 			{ type: "driver.arrived_at_pickup", tick, driverId, tripId, cell },
 			"sim.events.driver.arrived_at_pickup",
@@ -169,12 +172,11 @@ test("simEventSubjects is the wildcard over every event subject", () => {
 test("replaySubject prefixes the live subject with replay and the run id", () => {
 	expect(
 		replaySubject(RunId.parse("run-1"), {
-			type: "driver.moved",
+			type: "drivers.moved",
 			tick,
-			driverId,
-			cell,
+			moves: [{ driverId, cell }],
 		}),
-	).toBe("replay.run-1.sim.events.driver.moved");
+	).toBe("replay.run-1.sim.events.drivers.moved");
 });
 
 test("replaySubjects is the wildcard over a run's replayed event subjects", () => {

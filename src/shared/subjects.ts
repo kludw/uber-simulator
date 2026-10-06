@@ -26,7 +26,7 @@ function kindPrefix(type: Exclude<MessageType, "offer">): string {
 		case "clock.ticked":
 		case "driver.went_online":
 		case "driver.went_offline":
-		case "driver.moved":
+		case "drivers.moved":
 		case "driver.arrived_at_pickup":
 		case "driver.arrived_at_dropoff":
 		case "trip.requested":
