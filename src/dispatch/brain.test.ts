@@ -1088,6 +1088,32 @@ describe("decideDispatch batched matching", () => {
 		expect(outputs).toEqual([]);
 	});
 
+	test("with more trips than idle drivers, a driver is never offered a trip it declined", () => {
+		// d-1 is 1 cell from t-1 and 5 from t-2; it declined t-1.
+		const { outputs } = run(
+			[
+				requestTripAt(t1, cell(2, 0)),
+				requestTripAt(t2, cell(6, 0)),
+				wentOnline(d1, cell(1, 0)),
+				ticked(2),
+				declined(t1, d1),
+				ticked(4),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d1,
+				pickup: cell(6, 0),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(4), tripId: t2, driverId: d1 },
+		]);
+	});
+
 	test("expires a batched offer on a tick outside the window", () => {
 		const { outputs } = run(
 			[

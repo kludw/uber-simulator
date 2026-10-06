@@ -1,11 +1,32 @@
 import { describe, expect, test } from "bun:test";
 import { createRandom, type Random } from "../shared/random.ts";
-import { type Cost, minCostMatching } from "./matching.ts";
+import { minCostMatching, type Pair } from "./matching.ts";
+
+// A cell of a test matrix; null = pair not allowed.
+type Cost = number | null;
+
+// The matrix's rows and columns as minCostMatching asks for them.
+function matchMatrix(costs: Cost[][]): Pair[] {
+	const columns = costs[0]?.length ?? 0;
+	const allowed = (cost: Cost | undefined) => cost ?? Number.POSITIVE_INFINITY;
+	return minCostMatching(costs.length, columns, {
+		ofRow: (row, out) => {
+			for (let column = 0; column < columns; column++) {
+				out[column] = allowed(costs[row]?.[column]);
+			}
+		},
+		ofColumn: (column, out) => {
+			for (const [row, cells] of costs.entries()) {
+				out[row] = allowed(cells[column]);
+			}
+		},
+	});
+}
 
 // Size and total cost of the returned matching; throws if it is not a valid matching
 // (row or column used twice, or a disallowed pair).
 function outcome(costs: Cost[][]): { size: number; cost: number } {
-	const pairs = minCostMatching(costs);
+	const pairs = matchMatrix(costs);
 	const rows = new Set(pairs.map((pair) => pair.row));
 	const columns = new Set(pairs.map((pair) => pair.column));
 	if (rows.size !== pairs.length || columns.size !== pairs.length) {
@@ -24,7 +45,7 @@ function outcome(costs: Cost[][]): { size: number; cost: number } {
 
 describe("minCostMatching", () => {
 	test("empty matrix gives no pairs", () => {
-		expect(minCostMatching([])).toEqual([]);
+		expect(matchMatrix([])).toEqual([]);
 	});
 
 	test("square matrix: beats greedy by row", () => {
@@ -86,22 +107,27 @@ describe("minCostMatching", () => {
 		).toEqual({ size: 2, cost: 20 });
 	});
 
-	test("ragged rows are a caller bug", () => {
-		expect(() => minCostMatching([[1, 2], [3]])).toThrow();
-	});
-
 	test("negative cost is a caller bug", () => {
-		expect(() => minCostMatching([[1, -2]])).toThrow();
+		expect(() => matchMatrix([[1, -2]])).toThrow();
 	});
 
 	test("non-integer cost is a caller bug", () => {
-		expect(() => minCostMatching([[1, 2.5]])).toThrow();
+		expect(() => matchMatrix([[1, 2.5]])).toThrow();
+	});
+
+	test("a row filler that skips a cell is a caller bug", () => {
+		// Writes column 1 only; column 0 must not keep row 0's cost.
+		const ofRow = (row: number, out: number[]) => {
+			if (row === 0) out[0] = 1;
+			out[1] = 2;
+		};
+		expect(() => minCostMatching(2, 2, { ofRow, ofColumn: ofRow })).toThrow();
 	});
 
 	test("same input gives the same pairs", () => {
 		// Many equally optimal matchings: all costs equal.
 		const costs = Array.from({ length: 5 }, () => [3, 3, 3, 3]);
-		expect(minCostMatching(costs)).toEqual(minCostMatching(costs));
+		expect(matchMatrix(costs)).toEqual(matchMatrix(costs));
 	});
 
 	test("matches a brute-force oracle on seeded random matrices", () => {
@@ -137,7 +163,7 @@ describe("minCostMatching", () => {
 		// Was padded to 10,000 x 10,000 (ADR 0033); now about 50^2 x 10,000 steps.
 		const random = createRandom(5);
 		const costs = randomCosts(random, 50, 10_000);
-		expect(minCostMatching(costs)).toHaveLength(50);
+		expect(matchMatrix(costs)).toHaveLength(50);
 	}, 10_000);
 });
 

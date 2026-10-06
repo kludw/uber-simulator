@@ -1,6 +1,6 @@
 # Performance
 
-Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12), 76k-500k in [Ceiling](#ceiling), and the distributed stack over NATS in [Live limits](#live-limits) (latest: [After milestone 18](#after-milestone-18)).
+Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12), 76k-500k in [Ceiling](#ceiling), and the distributed stack over NATS in [Live limits](#live-limits) (latest: [After milestone 18](#after-milestone-18)); batched dispatch memory in [Batched dispatch memory](#batched-dispatch-memory).
 
 ## Method
 
@@ -949,3 +949,48 @@ Greedy 200k, the four runs above (604 s from start to stop): dispatch 0.41-0.54 
 Against the in-process run ([After milestone 12](#after-milestone-12), [Ceiling](#ceiling)): greedy reliably keeps real time at 50k there, in single runs up to 500k (one 200k run: p95 163 ms of work per tick). Live greedy at 200k is now 4× the in-process "reliably" size, where it was 1.4× below it at milestone 17; live settle at 200k (p95 395-564 ms) is end-to-end and includes dispatch's decode, so it doesn't compare with in-process ms of work. Batched live (45k) stays below in process (reliably 50k, ceiling between 50k and 76k), limited by the same batch matching work.
 
 Next (proposal, no ADR): the 45k target is met. Two things set the next limits. (1) ADR 0038's bound now leaves about a tick of margin over the persister's own in-flight batches and fails batched 40k while the persister keeps up; a successor ADR could bound what isn't in flight (consumer pending only) or the age of the oldest unpersisted event, keeping the ~3 s lag meaning. (2) Greedy above 200k is limited by dispatch's single-threaded per-tick work, about half decoding `drivers.moved` and half the per-tick step; a CPU profile of dispatch at 200k would show which part to cut first. Batched needs its matching step made cheaper, in process first; its dispatch memory at 100k+ (about 12.7 GiB) is worth a look on its own.
+
+## Batched dispatch memory
+
+Why batched dispatch reached about 13 GiB peak RSS live at 100k-150k ([After milestone 18](#after-milestone-18)) and 3.1 GiB in process at 100k ([Ceiling](#ceiling)), and the fix, [#213](https://github.com/kludw/uber-simulator/issues/213). Measured 2026-10-06.
+
+### Cause
+
+- **Every batch tick built the whole queued × idle cost matrix**, as nested JS arrays (8 bytes a cell), and the Hungarian solver allocated a fresh slack and visited array of idle + 1 entries for each queued trip. Both were garbage after the tick, so the heap at the end stays small (448.7 MiB at 100k in [Ceiling](#ceiling)) while peak RSS is the high-water mark of one batch tick. Not a leak: memory O(queued × idle) per batch tick, all of it avoidable since the solver reads one row at a time.
+- **In process, 100k** (local run with a temporary log line in `batchedPairs`, not committed): 613-885 queued trips against 91,082-100,000 idle drivers per batch tick, about 80 M cells, 640 MB for the matrix plus about 1.3 GB of per-row arrays per batch tick; RSS rose from 190 MiB at the first batch tick to 3,157 MiB by the sixth and stayed there.
+- **Live it grows with the queue.** Dispatch falls behind on batch ticks (a `clock.ticked` takes up to 18.5 s to handle at 100k), so drivers' offer replies arrive after the offers expired: `trip.offer_expired` is 60.8-61.9% of events in the 100k runs ([37496888714](https://github.com/kludw/uber-simulator/actions/runs/37496888714), 117.6 per tick) and every expired trip goes back in the queue. 13 GiB of 8-byte cells against about 95k idle drivers is about 17k queued trips per batch tick (inferred from RSS, not logged). The kernel side of that allocation shows in dispatch's system CPU: 88.3-99.1 s per run before, 2.5-5.3 s after.
+
+### Fix
+
+`minCostMatching` asks the caller to fill one row of costs at a time (one column when trips outnumber drivers) and never stores the matrix; the solver allocates its per-row arrays once and tracks whether each matched pair is allowed itself. Dispatch fills a trip's row in a tight loop over drivers' cells kept as flat coordinates. Memory is O(queued + idle). Outcomes are unchanged: the batched event logs of every README `--compare` scenario (3,600 ticks, seed 42) plus a 5k picky run and a 10-driver run where trips outnumber drivers hash identically before and after.
+
+A first version asked for one cell at a time; in paired runs ([37508820698](https://github.com/kludw/uber-simulator/actions/runs/37508820698), EPYC 9V45 and Xeon Platinum 8370C) it had the same memory but p95 +2-14% at 50k and +33-52% at 100k against master (each cell computed twice, through a call), so it was replaced by the row version.
+
+### In process
+
+Paired runs: master and the branch alternately on one runner, `bun run bench --matching batched`, 300 ticks, unprofiled, two rounds per size per job, two jobs, both EPYC 7763 ([37510863320](https://github.com/kludw/uber-simulator/actions/runs/37510863320), an experiment workflow on branch `213-exp-js-arrays`, same `src/` as this change).
+
+| Drivers | Code | Peak RSS | Mean ms/tick | p95 ms/tick |
+| ---: | --- | ---: | ---: | ---: |
+| 50,000 | master | 908.6-980.0 MiB | 132.33-135.14 | 617.77-637.54 |
+| 50,000 | #213 | 211.9-225.7 MiB | 103.02-109.80 | 481.47-511.58 |
+| 100,000 | master | 3,132.0-3,719.1 MiB | 578.37-600.96 | 2,881.68-3,017.47 |
+| 100,000 | #213 | 286.4-310.6 MiB | 492.94-506.77 | 2,816.06-2,925.36 |
+
+Pair by pair, peak RSS drops 4.0-4.4× at 50k and 10.1-12.9× at 100k, and batch ticks get no slower: p95 −18% to −22% at 50k, −6% to +0% at 100k; mean −13% to −22%. Single (unpaired) master runs on other runners: 782.3-992.0 MiB at 50k and 3,118.4-3,406.5 MiB at 100k ([37505224229](https://github.com/kludw/uber-simulator/actions/runs/37505224229), [37506726656](https://github.com/kludw/uber-simulator/actions/runs/37506726656), [37508142023](https://github.com/kludw/uber-simulator/actions/runs/37508142023)).
+
+### Live
+
+`loadtest` workflow as in [After milestone 18](#after-milestone-18), batched, 600 ticks.
+
+| Drivers | Code | Run | Dispatch peak RSS | Dispatch CPU s (user + system) |
+| ---: | --- | --- | ---: | --- |
+| 100,000 | master | [37496888714](https://github.com/kludw/uber-simulator/actions/runs/37496888714) | 13,008.6 MiB | 382.9 + 92.1 |
+| 100,000 | master | [37496899926](https://github.com/kludw/uber-simulator/actions/runs/37496899926) | 12,997.4 MiB | 332.8 + 99.1 |
+| 150,000 | master | [37498516823](https://github.com/kludw/uber-simulator/actions/runs/37498516823) | 13,301.9 MiB | 378.4 + 88.3 |
+| 100,000 | #213 | [37512695124](https://github.com/kludw/uber-simulator/actions/runs/37512695124) | 211.2 MiB | 416.7 + 5.1 |
+| 100,000 | #213 | [37512705957](https://github.com/kludw/uber-simulator/actions/runs/37512705957) | 201.9 MiB | 424.0 + 5.3 |
+| 150,000 | #213 | [37512695124](https://github.com/kludw/uber-simulator/actions/runs/37512695124) | 218.5 MiB | 411.2 + 2.5 |
+| 200,000 | #213 | [37514222927](https://github.com/kludw/uber-simulator/actions/runs/37514222927) | 315.6 MiB | 422.8 + 2.9 |
+
+Dispatch peak RSS drops about 60× and no longer competes with ClickHouse for the runner's memory: batched 200k, where the stack failed at master (ClickHouse `MEMORY_LIMIT_EXCEEDED`, persister exited, [37498516823](https://github.com/kludw/uber-simulator/actions/runs/37498516823)), now runs all 600 ticks and prints a report (EPYC 9V45; fails overruns, 2.3%, and slow consumers). The verdicts don't change: batched 100k and 150k still fail overruns and slow consumers (100k also settle), because the batch matching work is still O(queued² × idle) on one thread; the batched live limit stays 45k. Making batched matching cheaper (fewer candidates per trip, or sharding dispatch, ADR 0036's follow-up) is the next step for batched, not memory.

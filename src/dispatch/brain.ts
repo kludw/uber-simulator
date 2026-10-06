@@ -1,4 +1,9 @@
-import { type Cell, distance, type Grid } from "../shared/grid.ts";
+import {
+	type Cell,
+	distance,
+	distanceToCoordinates,
+	type Grid,
+} from "../shared/grid.ts";
 import type {
 	CancelTrip,
 	CancelTripAccepted,
@@ -272,19 +277,51 @@ function batchedPairs(
 	queued: readonly QueuedTrip[],
 	idle: readonly IdleDriver[],
 ): OfferPair[] {
-	const costs = queued.map((trip) =>
-		idle.map(({ driverId, cell }) =>
-			trip.excludedDrivers.has(driverId) ? null : distance(cell, trip.pickup),
-		),
-	);
-	return minCostMatching(costs).map(({ row, column }) => {
+	// A trip's row is asked for more than once per batch (#213): drivers' cells
+	// as flat coordinates, read in order.
+	const driverXs = Int32Array.from(idle, ({ cell }) => cell.x);
+	const driverYs = Int32Array.from(idle, ({ cell }) => cell.y);
+	let columnOf: Map<DriverId, number> | undefined;
+	const ofRow = (row: number, out: number[]) => {
 		const trip = queued[row];
-		const driver = idle[column];
-		if (trip === undefined || driver === undefined) {
-			throw new Error(`matching pair (${row}, ${column}) out of range`);
+		if (trip === undefined) throw new Error(`row ${row} out of range`);
+		for (let column = 0; column < idle.length; column++) {
+			const x = driverXs[column];
+			const y = driverYs[column];
+			if (x === undefined || y === undefined) {
+				throw new Error(`column ${column} out of range`);
+			}
+			out[column] = distanceToCoordinates(trip.pickup, x, y);
 		}
-		return { trip, driverId: driver.driverId };
-	});
+		if (trip.excludedDrivers.size === 0) return;
+		columnOf ??= new Map(
+			idle.map(({ driverId }, column) => [driverId, column]),
+		);
+		for (const driverId of trip.excludedDrivers) {
+			const column = columnOf.get(driverId);
+			if (column !== undefined) out[column] = Number.POSITIVE_INFINITY;
+		}
+	};
+	// Only when more trips are queued than drivers are idle.
+	const ofColumn = (column: number, out: number[]) => {
+		const driver = idle[column];
+		if (driver === undefined) throw new Error(`column ${column} out of range`);
+		for (const [row, trip] of queued.entries()) {
+			out[row] = trip.excludedDrivers.has(driver.driverId)
+				? Number.POSITIVE_INFINITY
+				: distance(driver.cell, trip.pickup);
+		}
+	};
+	return minCostMatching(queued.length, idle.length, { ofRow, ofColumn }).map(
+		({ row, column }) => {
+			const trip = queued[row];
+			const driver = idle[column];
+			if (trip === undefined || driver === undefined) {
+				throw new Error(`matching pair (${row}, ${column}) out of range`);
+			}
+			return { trip, driverId: driver.driverId };
+		},
+	);
 }
 
 function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
