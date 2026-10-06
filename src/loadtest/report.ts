@@ -55,6 +55,10 @@ export function loadtestReport(
 	const { matching } = args;
 	const { settle, drain } = measurement;
 	const eventsPerTick = settle.messages / settle.ticksObserved;
+	const totalBytes = settle.bySubject.reduce(
+		(sum, { bytes }) => sum + bytes,
+		0,
+	);
 	const backlog = persisterBacklog(measurement.persisterBacklog, eventsPerTick);
 	const overrunShare = settle.overruns / settle.ticksObserved;
 	const drainMinutes = args.drainBoundMs / 60_000;
@@ -123,6 +127,7 @@ export function loadtestReport(
 		`overruns: ${settle.overruns} of ${settle.ticksObserved} ticks (${(overrunShare * 100).toFixed(1)}%)`,
 		`last tick: events after the ${measurement.settleGraceMs / 1000} s grace window not observed, so its settle may be understated`,
 		`message rate: ${eventsPerTick.toFixed(1)} per tick (${settle.messages} events of ticks 1..${args.ticks})`,
+		`events by subject (per tick, payload bytes per tick, share of events, share of bytes): ${settle.bySubject.map(({ subject, events, bytes }) => `${subject} ${(events / settle.ticksObserved).toFixed(1)}, ${(bytes / settle.ticksObserved).toFixed(0)} B (${((events / settle.messages) * 100).toFixed(1)}%, ${((bytes / totalBytes) * 100).toFixed(1)}%)`).join(", ")}`,
 		`observer: clock.ticked max deviation ${settle.clockMaxDeviationMs.toFixed(1)} ms, pending bytes max ${measurement.pendingBytes.observerMax}`,
 		`last event of a tick (share of observed ticks, by subject): ${settle.lastEventSubjects.map(({ subject, ticks }) => `${subject} ${((ticks / settle.ticksObserved) * 100).toFixed(1)}%`).join(", ")}`,
 		`nats: slow consumers ${measurement.slowConsumers}, pending bytes max ${measurement.pendingBytes.anyMax} (any connection)`,

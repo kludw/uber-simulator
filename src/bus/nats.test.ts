@@ -194,6 +194,10 @@ describe("connectNatsBus", () => {
 				decodeMs: 0,
 				delivered: 2,
 				handleMs: 12_000,
+				byType: {
+					cancel_trip: { received: 2, decodeMs: 0, handleMs: 12_000 },
+					request_trip_accepted: { received: 1, decodeMs: 0, handleMs: 0 },
+				},
 			},
 			{
 				type: "messages_timed",
@@ -202,6 +206,71 @@ describe("connectNatsBus", () => {
 				decodeMs: 0,
 				delivered: 1,
 				handleMs: 6000,
+				byType: {
+					cancel_trip: { received: 1, decodeMs: 0, handleMs: 6000 },
+				},
+			},
+		]);
+	}, 10_000);
+
+	test("splits messages received and ms decoding and handling by message type", async () => {
+		// A fake server, so no other publisher adds messages.
+		let client: FakeSocket | undefined;
+		const sids = new Map<string, string>();
+		const server = fakeNatsServer((socket, text) => {
+			for (const [, subject, sid] of text.matchAll(/SUB (\S+) (\S+)\r\n/g)) {
+				if (subject && sid) sids.set(subject, sid);
+				client = socket;
+			}
+			pong(socket, text);
+		});
+		// Controlled time: only handling takes any, 1 s per driver.moved and
+		// 3 s per cancel_trip, under the 10 s interval: one entry, on close.
+		let nowMs = 0;
+		const timed: MessagesTimed[] = [];
+		const result = await connectNatsBus({
+			url: server.url,
+			runId: testRunId,
+			log: () => {},
+			logStatus: () => {},
+			logTiming: (timing) => timed.push(timing),
+			now: () => nowMs,
+			inputs: ["cancel_trip", "driver.moved"],
+		});
+		if (!result.ok) throw new Error("fake server unreachable");
+		const bus = result.value;
+		const { promise: lastHandled, resolve: handledLast } =
+			Promise.withResolvers<void>();
+		bus.subscribe(["cancel_trip", "driver.moved"], (message) => {
+			nowMs += message.type === "driver.moved" ? 1000 : 3000;
+			if (message.type === "cancel_trip") handledLast();
+		});
+		const push = (subject: string, payload: string) =>
+			client?.write(
+				`MSG ${subject} ${sids.get(subject)} ${Buffer.byteLength(payload)}\r\n${payload}\r\n`,
+			);
+		const moved = (driverId: string) =>
+			JSON.stringify({
+				type: "driver.moved",
+				tick: 1,
+				driverId,
+				cell: { x: 0, y: 0 },
+			});
+
+		push("sim.events.driver.moved", moved("d-1"));
+		push("sim.events.driver.moved", moved("d-2"));
+		push(
+			"sim.commands.cancel_trip",
+			JSON.stringify({ type: "cancel_trip", tripId: "t-1" }),
+		);
+		await lastHandled;
+		await bus.close();
+		server.stop();
+
+		expect(timed.map((timing) => timing.byType)).toEqual([
+			{
+				"driver.moved": { received: 2, decodeMs: 0, handleMs: 2000 },
+				cancel_trip: { received: 1, decodeMs: 0, handleMs: 3000 },
 			},
 		]);
 	}, 10_000);

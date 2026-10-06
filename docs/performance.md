@@ -819,3 +819,39 @@ Greedy 35k, the six runs above (CPU s, user + system, over the 604 s from start 
 Against the in-process run ([After milestone 12](#after-milestone-12)): greedy reliably keeps real time at 50k there; live greedy at 35k is 1.4× below it (1.5× at milestone 16).
 
 Next (proposal, no ADR): 40k misses on slower runners in two ways: the large merge pushes a persister that keeps up past the limit (3 runs), and on the slowest runners the persister is behind before the merge and settle is near its bound (2 runs). Capping ClickHouse's merge CPU (fewer background merge threads, or a setting that defers the large merge) would address only the first, and likely moves the merge rather than removes it ([Infra CPU](#infra-cpu)). Cutting per-message work across the stack addresses both: the NATS server (0.55-0.90 cores), the persister's decode and insert, dispatch's decode, and the observer all scale with messages, and with about one event per driver per tick, `driver.moved` is almost all of them. Candidate: one positions message per shard per tick instead of one `driver.moved` per driver (an event shape change for every consumer, ClickHouse included; needs an ADR), first measuring how much of each process's CPU goes to `driver.moved`.
+
+## Cost of driver moves
+
+How much of each process's work is `driver.moved`, so the message shape of milestone 18's ADR is chosen from numbers, [#205](https://github.com/kludw/uber-simulator/issues/205). `messages_timed` now splits received messages, decode ms and handle ms by message type (`byType`, `src/bus/nats.ts`); the load test report gives events and payload bytes per tick by subject (observer). Measured 2026-10-06 on branch `205-driver-move-cost` at `7309c90` (master `3ad2a14` plus the timing and report change; later commits on the branch are docs only).
+
+### Method
+
+- `loadtest` workflow as in [After milestone 17](#after-milestone-17): greedy 35k, 2 driver shards, seed 1, 600 ticks, drain bound 5 min, one `ubuntu-latest` runner (4 CPUs, 15,989 MiB) per run.
+- Runs [37469524072](https://github.com/kludw/uber-simulator/actions/runs/37469524072) and [37469508917](https://github.com/kludw/uber-simulator/actions/runs/37469508917), both on AMD EPYC 7763.
+- Messages and bytes: the report's events-by-subject line (observer, ticks 1..600, payload bytes only). Dispatch: the sum of its 61 `messages_timed` entries (603 s, start to stop) over 600 ticks, so startup (`driver.went_online`) is included. Persister rows: `rounds_timed` events (every row it inserts) against dispatch's `driver.moved` received count; `rounds_timed` isn't split by type, so the persister's ms aren't attributed. Infra CPU from the report's runner line.
+
+### Results
+
+Same seed, so both runs carry identical traffic: 21,201,748 events over ticks 1..600 (35,336 per tick), 20,998,008 of them `driver.moved`.
+
+| | [37469524072](https://github.com/kludw/uber-simulator/actions/runs/37469524072) | [37469508917](https://github.com/kludw/uber-simulator/actions/runs/37469508917) |
+| --- | --- | --- |
+| CPU model | AMD EPYC 7763 | AMD EPYC 7763 |
+| Settle p95 ms, backlog second-half max (limit) | 481.3, 59,439 (106,009) | 511.0, 66,352 (106,009) |
+| `driver.moved` share of events / payload bytes (all `sim.events`) | 99.0% / 98.9% (34,996.7 per tick, 2,786,231 B per tick of 2,817,526) | same |
+| `driver.moved` share of messages dispatch received | 99.3% (20,998,008 of 21,152,555) | same |
+| Dispatch decode + handle ms per tick: `driver.moved` / rest | 199.9 (168.6 + 31.3) / 38.8 | 211.7 (177.7 + 34.0) / 40.9 |
+| `driver.moved` share of dispatch decode + handle | 83.8% | 83.8% |
+| Rest: of which `clock.ticked` handle ms per tick | 33.3 | 35.5 |
+| Dispatch CPU s (report) vs timed decode + handle s | 156.0 vs 143.2 | 161.7 vs 151.6 |
+| `driver.moved` share of persister rows | 98.9% (20,998,008 of 21,236,748) | same |
+| Persister CPU s; decode / insert ms per tick (all types) | 386.8; 293.2 / 354.1 | 404.5; 309.1 / 363.8 |
+| NATS server CPU s (cores) | 463.0 (0.77) | 468.6 (0.78) |
+| ClickHouse CPU s (cores) | 204.1 (0.34) | 228.5 (0.38) |
+| Runner total counted (share of 4 CPUs) | 1,436.1 s (59.4%) | 1,495.9 s (61.9%) |
+
+Both runs pass every criterion: 0 overruns, 0 slow consumers, drain 2.1 s.
+
+- **`driver.moved` is 99% of messages and bytes, and 98.9% of persister rows.** Its payload averages 79.6 B per event.
+- **At dispatch it is 84% of decode + handle**, 200-212 ms per tick, mostly decode (168.6-177.7 ms, 4.8-5.1 µs per message). The other types decode at 9.4-10.5 µs per message but are 0.7% of messages. Of the rest's 38.8-40.9 ms per tick, 33.3-35.5 ms is `clock.ticked` handling (the brain's per-tick step, offers included).
+- **Persister, NATS server, ClickHouse**: their CPU isn't split by type; they carry 98.9-99.3% `driver.moved` by count. The NATS server uses 0.77-0.78 cores, ClickHouse 0.34-0.38, the persister 386.8-404.5 CPU s (0.64-0.67 cores).
