@@ -1163,3 +1163,12 @@ In process the whole tick is 16-25% faster (mean), 24-25% on the EPYC 7763; peak
 - **Position updates cost more** (`drivers.moved` handle 53.7 → 95.6-102.8 ms at 250k, 80.0 → 121.0-129.7 at 300k): each move now updates the driver's record and, when it crosses a bucket, swaps it between buckets. Net, dispatch's decode + handle falls 18-23% at 250k and 23-29% at 300k.
 - **Greedy 300k keeps up in both runs** (settle p95 486.3 and 523.0 ms, 2 overruns each, every criterion passes), where master fails settle (655.8 ms). 250k passes in all three runs. Dispatch's peak RSS is 4-7% higher (481.9-482.6 MiB against 462.3 at 250k, 542.4-556.8 against 521.7 at 300k): one record per known driver.
 - Next, per these runs: decoding `drivers.moved` (118-157 ms) and position updates (96-130 ms) are now each larger than the step.
+
+## After milestone 19
+
+Live limits after [ADR 0047](adr/0047-driver-moves-as-parallel-arrays.md)'s compact `drivers.moved` and [ADR 0048](adr/0048-keep-idle-drivers-across-ticks.md)'s idle drivers kept across ticks, judged by ADR 0037 with [ADR 0046](adr/0046-persister-pending-criterion.md)'s backlog bound, [#223](https://github.com/kludw/uber-simulator/issues/223). Measured 2026-10-07 at `d13cf24` (master after [#227](https://github.com/kludw/uber-simulator/pull/227)).
+
+### Method
+
+- `loadtest` workflow as in [After milestone 18](#after-milestone-18): one `ubuntu-latest` job per case, 2 driver shards, demand at the spec ratio, seed 1, 5-tick batch window, 600 ticks, drain bound 5 min. CPU model per run from the report's `host` line.
+- Runs (in progress): greedy 300k / 350k / 400k / 500k in [37544202908](https://github.com/kludw/uber-simulator/actions/runs/37544202908) and [37544208726](https://github.com/kludw/uber-simulator/actions/runs/37544208726); batched 45k / 50k in [37544205913](https://github.com/kludw/uber-simulator/actions/runs/37544205913) and [37544211959](https://github.com/kludw/uber-simulator/actions/runs/37544211959).
