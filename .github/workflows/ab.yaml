@@ -1,0 +1,44 @@
+name: ab
+
+# Experiment only (#213, never merged): master and this branch's batched
+# bench alternately on one runner, so both see the same CPU.
+on:
+  push:
+    branches: [213-exp-js-arrays]
+
+permissions:
+  contents: read
+
+jobs:
+  ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        job: [1, 2]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: git worktree add ../master origin/master && cp -r node_modules ../master/
+      - name: A/B
+        env:
+          DRIVERS: "50000 100000"
+          TICKS: 300
+          ROUNDS: 2
+        run: |
+          grep -m1 "model name" /proc/cpuinfo
+          for drivers in $DRIVERS; do
+            for round in $(seq 1 "$ROUNDS"); do
+              for side in master branch; do
+                dir=.; [ "$side" = master ] && dir=../master
+                line=$(cd "$dir" && bun src/bench/main.ts --drivers "$drivers" --ticks "$TICKS" --matching batched | grep -E "wall ms|peak rss" | tr '\n' ' ')
+                echo "$drivers $side $line"
+              done
+            done
+          done
