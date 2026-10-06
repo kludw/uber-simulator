@@ -1,9 +1,4 @@
-import {
-	type Cell,
-	distance,
-	distanceToCoordinates,
-	type Grid,
-} from "../shared/grid.ts";
+import { distance, distanceToCoordinates, type Grid } from "../shared/grid.ts";
 import type {
 	CancelTrip,
 	CancelTripAccepted,
@@ -39,8 +34,14 @@ import { forEachMove } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 import {
 	type IdleDriver,
-	indexIdleDrivers,
-	takeNearest,
+	type IdleDrivers,
+	idleDriversById,
+	markBusy,
+	markFree,
+	nearestIdle,
+	placeDriver,
+	removeDriver,
+	startIdleDrivers,
 } from "./idle-drivers.ts";
 import { minCostMatching } from "./matching.ts";
 import {
@@ -62,17 +63,19 @@ import {
 // requested trips without an offer, in that order (FIFO).
 // endedTrips: completed and cancelled trips, out of the per-tick scan but kept
 // to answer late and duplicate inputs for them.
-// Online driver cells as last reported in events; may be stale (ADR 0018):
-// a driver offered a trip on the tick it went offline declines (ADR 0032).
+// drivers: online drivers' cells as last reported in events, and which are
+// busy (a pending offer or an active trip), kept across ticks (ADR 0048).
+// Cells may be stale (ADR 0018): a driver offered a trip on the tick it went
+// offline declines (ADR 0032).
 // tick: last clock tick, stamped on events caused by non-tick inputs.
-// trips, endedTrips, and driverCells are owned and updated in place (ADR 0033).
+// trips, endedTrips, and drivers are owned and updated in place (ADR 0033).
 export type DispatchState = {
 	grid: Grid;
 	tick: Tick;
 	matching: Matching;
 	trips: Map<TripId, Trip>;
 	endedTrips: Map<TripId, EndedTrip>;
-	driverCells: Map<DriverId, Cell>;
+	drivers: IdleDrivers;
 };
 
 // ADR 0030: batched matches only on ticks that are multiples of windowTicks.
@@ -140,7 +143,7 @@ export function startDispatch(config: {
 		matching,
 		trips: new Map(),
 		endedTrips: new Map(),
-		driverCells: new Map(),
+		drivers: startIdleDrivers(config.grid),
 	};
 }
 
@@ -157,11 +160,11 @@ export function decideDispatch(
 		case "cancel_trip":
 			return onCancelTrip(state, input);
 		case "driver.went_online":
-			state.driverCells.set(input.driverId, input.cell);
+			placeDriver(state.drivers, input.driverId, input.cell);
 			return { state, outputs: [] };
 		case "drivers.moved":
 			forEachMove(input, (driverId, cell) => {
-				state.driverCells.set(driverId, cell);
+				placeDriver(state.drivers, driverId, cell);
 			});
 			return { state, outputs: [] };
 		case "driver.went_offline":
@@ -183,7 +186,7 @@ export function decideDispatch(
 
 function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 	const outputs: DispatchOutput[] = [];
-	for (const { trip, driverId } of offerPairs(state, ticked.tick)) {
+	const offer = (trip: QueuedTrip, driverId: DriverId) => {
 		storeTrip(state, offerTo(trip, driverId, ticked.tick));
 		outputs.push(
 			{
@@ -195,6 +198,35 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 			},
 			{ type: "trip.offered", tick: ticked.tick, tripId: trip.id, driverId },
 		);
+	};
+	const queued = queuedTrips(state);
+	switch (state.matching.type) {
+		case "greedy":
+			// Each trip in turn takes the nearest idle driver, ties to the lowest
+			// ID; the offer makes that driver busy for the next trip.
+			for (const trip of queued) {
+				const driverId = nearestIdle(
+					state.drivers,
+					trip.pickup,
+					trip.excludedDrivers,
+				);
+				if (driverId !== undefined) offer(trip, driverId);
+			}
+			break;
+		case "batched":
+			if (queued.length === 0) break;
+			if (ticked.tick % state.matching.windowTicks !== 0) break;
+			for (const { trip, driverId } of batchedPairs(
+				queued,
+				idleDriversById(state.drivers),
+			)) {
+				offer(trip, driverId);
+			}
+			break;
+		default: {
+			const unhandled: never = state.matching;
+			throw new Error(`unhandled matching: ${unhandled}`);
+		}
 	}
 	// After offering, so an expired trip and its driver wait for the next tick
 	// (ADR 0018); offers made this tick are never due.
@@ -217,60 +249,13 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 
 type OfferPair = { trip: QueuedTrip; driverId: DriverId };
 
-// Pairs in trip FIFO order. Eligible: queued trips; known drivers without a
-// pending offer or active trip, never one excluded for the trip.
-function offerPairs(state: DispatchState, tick: Tick): OfferPair[] {
+// Requested trips without an offer, in FIFO order.
+function queuedTrips(state: DispatchState): QueuedTrip[] {
 	const queued: QueuedTrip[] = [];
-	const busy = new Set<DriverId>();
 	for (const trip of state.trips.values()) {
-		if (trip.state === "matched" || trip.state === "picked_up") {
-			busy.add(trip.driverId);
-		}
-		if (trip.state !== "requested") continue;
-		if (trip.offer === null) queued.push(trip);
-		else busy.add(trip.offer.driverId);
+		if (trip.state === "requested" && trip.offer === null) queued.push(trip);
 	}
-	if (queued.length === 0) return [];
-	switch (state.matching.type) {
-		case "greedy":
-			return greedyPairs(state, queued, idleDrivers(state, busy));
-		case "batched":
-			if (tick % state.matching.windowTicks !== 0) return [];
-			return batchedPairs(queued, idleDrivers(state, busy));
-		default: {
-			const unhandled: never = state.matching;
-			throw new Error(`unhandled matching: ${unhandled}`);
-		}
-	}
-}
-
-// This tick's snapshot of idle drivers and their cells, ordered by ID
-// (ADR 0036).
-function idleDrivers(
-	state: DispatchState,
-	busy: ReadonlySet<DriverId>,
-): IdleDriver[] {
-	const idle: IdleDriver[] = [];
-	for (const [driverId, cell] of state.driverCells) {
-		if (!busy.has(driverId)) idle.push({ driverId, cell });
-	}
-	return idle.sort((a, b) => (a.driverId < b.driverId ? -1 : 1));
-}
-
-// Each trip in turn takes the nearest remaining driver, ties to the lowest ID.
-function greedyPairs(
-	state: DispatchState,
-	queued: readonly QueuedTrip[],
-	idle: readonly IdleDriver[],
-): OfferPair[] {
-	const index = indexIdleDrivers(state.grid, idle);
-	const pairs: OfferPair[] = [];
-	for (const trip of queued) {
-		const driverId = takeNearest(index, trip.pickup, trip.excludedDrivers);
-		if (driverId === undefined) continue;
-		pairs.push({ trip, driverId });
-	}
-	return pairs;
+	return queued;
 }
 
 // ADR 0030: as many pairs as possible, least total pickup distance among those.
@@ -401,7 +386,7 @@ function onDriverWentOffline(
 	state: DispatchState,
 	wentOffline: DriverWentOffline,
 ): Decision {
-	state.driverCells.delete(wentOffline.driverId);
+	removeDriver(state.drivers, wentOffline.driverId);
 	return { state, outputs: [] };
 }
 
@@ -546,12 +531,38 @@ function knownTrip(state: DispatchState, tripId: TripId): Trip | undefined {
 }
 
 // An ended trip moves to endedTrips; a trip keeps its place in request order
-// until then.
+// until then. Every trip change goes through here, so drivers' busy marks
+// follow their trips: busy from the offer until the offer or trip is over.
 function storeTrip(state: DispatchState, trip: Trip): void {
+	const wasBusy = busyDriver(state.trips.get(trip.id));
+	const nowBusy = busyDriver(trip);
+	if (wasBusy !== nowBusy) {
+		if (wasBusy !== undefined) markFree(state.drivers, wasBusy);
+		if (nowBusy !== undefined) markBusy(state.drivers, nowBusy);
+	}
 	if (trip.state !== "completed" && trip.state !== "cancelled") {
 		state.trips.set(trip.id, trip);
 		return;
 	}
 	state.trips.delete(trip.id);
 	state.endedTrips.set(trip.id, trip);
+}
+
+// The driver a trip keeps from other trips: its offered or matched driver.
+function busyDriver(trip: Trip | undefined): DriverId | undefined {
+	if (trip === undefined) return undefined;
+	switch (trip.state) {
+		case "requested":
+			return trip.offer?.driverId;
+		case "matched":
+		case "picked_up":
+			return trip.driverId;
+		case "completed":
+		case "cancelled":
+			return undefined;
+		default: {
+			const unhandled: never = trip;
+			throw new Error(`unhandled trip state: ${unhandled}`);
+		}
+	}
 }
