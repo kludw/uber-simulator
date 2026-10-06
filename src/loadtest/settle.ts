@@ -31,6 +31,12 @@ export type SettleSummary = {
 	// clock keeps an absolute schedule, so a large one means the observer
 	// itself lagged.
 	clockMaxDeviationMs: number;
+	// The most late clock.ticked receipt against the clock's absolute schedule
+	// (1,000 ms per tick), anchored at the receipt closest to it. The clock
+	// publishes within ms of schedule (#214), so this is the observer's own
+	// lateness: settle and overruns around that tick are measured from a
+	// late receipt.
+	observerLate: { ms: number; tick: number };
 	// Per subject, the observed ticks whose last event had it, most first
 	// (ties by subject): which publisher closes ticks.
 	lastEventSubjects: { subject: string; ticks: number }[];
@@ -99,6 +105,7 @@ export function createSettleTracker(ticks: number): SettleTracker {
 				}
 			}
 			return {
+				observerLate: observerLate(clockAt),
 				settleMs: {
 					mean: mean(settleMs),
 					p95: p95(settleMs),
@@ -121,6 +128,23 @@ export function createSettleTracker(ticks: number): SettleTracker {
 			};
 		},
 	};
+}
+
+// Index = tick, as in createSettleTracker. Ticks not received are NaN, and
+// NaN compares false, so they are skipped.
+function observerLate(clockAt: Float64Array): { ms: number; tick: number } {
+	const offset = (tick: number) => (clockAt[tick] ?? Number.NaN) - tick * 1000;
+	let onSchedule = Number.POSITIVE_INFINITY;
+	for (let tick = 1; tick < clockAt.length; tick++) {
+		const received = offset(tick);
+		if (received < onSchedule) onSchedule = received;
+	}
+	let late = { ms: -1, tick: 0 };
+	for (let tick = 1; tick < clockAt.length; tick++) {
+		const ms = offset(tick) - onSchedule;
+		if (ms > late.ms) late = { ms, tick };
+	}
+	return late;
 }
 
 function mean(values: number[]): number {

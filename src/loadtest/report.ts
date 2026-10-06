@@ -49,6 +49,9 @@ export type LoadtestMeasurement = {
 const minTicks = 600;
 const maxSettleP95Ms = 610;
 const maxOverrunShare = 0.01;
+// Not a criterion: the observer's own lateness (#214). After tick 2, receipts
+// were at most 46 ms late in the runs measured (docs/performance.md).
+const observerLateWarningMs = 100;
 
 export function loadtestReport(
 	args: LoadtestArgs,
@@ -132,7 +135,12 @@ export function loadtestReport(
 		`last tick: events after the ${measurement.settleGraceMs / 1000} s grace window not observed, so its settle may be understated`,
 		`message rate: ${eventsPerTick.toFixed(1)} per tick (${settle.messages} events of ticks 1..${args.ticks})`,
 		`events by subject (per tick, payload bytes per tick, share of events, share of bytes): ${settle.bySubject.map(({ subject, events, bytes }) => `${subject} ${(events / settle.ticksObserved).toFixed(1)}, ${(bytes / settle.ticksObserved).toFixed(0)} B (${((events / settle.messages) * 100).toFixed(1)}%, ${((bytes / totalBytes) * 100).toFixed(1)}%)`).join(", ")}`,
-		`observer: clock.ticked max deviation ${settle.clockMaxDeviationMs.toFixed(1)} ms, pending bytes max ${measurement.pendingBytes.observerMax}`,
+		`observer: clock.ticked max deviation ${settle.clockMaxDeviationMs.toFixed(1)} ms, received late max ${settle.observerLate.ms.toFixed(1)} ms (tick ${settle.observerLate.tick}) against the clock's schedule, pending bytes max ${measurement.pendingBytes.observerMax}`,
+		...(settle.observerLate.ms >= observerLateWarningMs
+			? [
+					`warning: the observer received clock.ticked ${settle.observerLate.tick} ${settle.observerLate.ms.toFixed(1)} ms late (limit ${observerLateWarningMs} ms): settle and overruns around tick ${settle.observerLate.tick} are measured from its late receipt`,
+				]
+			: []),
 		`last event of a tick (share of observed ticks, by subject): ${settle.lastEventSubjects.map(({ subject, ticks }) => `${subject} ${((ticks / settle.ticksObserved) * 100).toFixed(1)}%`).join(", ")}`,
 		`nats: slow consumers ${measurement.slowConsumers}, pending bytes max ${measurement.pendingBytes.anyMax} (any connection)`,
 		`persister pending (published, not yet delivered, every ${measurement.sampleIntervalMs / 1000} s): ${persisterSamples.map(({ pending }) => pending).join(" ")}`,

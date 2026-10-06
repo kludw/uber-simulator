@@ -17,6 +17,7 @@ const healthy: LoadtestMeasurement = {
 		ticksObserved: 600,
 		messages: 630_000,
 		clockMaxDeviationMs: 3.25,
+		observerLate: { ms: 12.5, tick: 300 },
 		lastEventSubjects: [
 			{ subject: "sim.events.trip.matched", ticks: 450 },
 			{ subject: "sim.events.drivers.moved", ticks: 147 },
@@ -108,7 +109,7 @@ describe("loadtestReport", () => {
 				"last tick: events after the 2 s grace window not observed, so its settle may be understated",
 				"message rate: 1050.0 per tick (630000 events of ticks 1..600)",
 				"events by subject (per tick, payload bytes per tick, share of events, share of bytes): sim.events.drivers.moved 1000.0, 70000 B (95.2%, 92.8%), sim.events.trip.matched 49.0, 5390 B (4.7%, 7.1%), sim.events.clock.ticked 1.0, 25 B (0.1%, 0.0%)",
-				"observer: clock.ticked max deviation 3.3 ms, pending bytes max 0",
+				"observer: clock.ticked max deviation 3.3 ms, received late max 12.5 ms (tick 300) against the clock's schedule, pending bytes max 0",
 				"last event of a tick (share of observed ticks, by subject): sim.events.trip.matched 75.0%, sim.events.drivers.moved 24.5%",
 				"nats: slow consumers 0, pending bytes max 2048 (any connection)",
 				"persister pending (published, not yet delivered, every 5 s): 0 200 0 300 100 0",
@@ -164,6 +165,27 @@ describe("loadtestReport", () => {
 			"  FAIL: persister drained within 5 min",
 			"  FAIL: no slow consumers",
 		]);
+	});
+
+	test("an observer receiving clock.ticked 100 ms or more late warns that it measured settle late", () => {
+		const report = loadtestReport(args, {
+			...healthy,
+			settle: { ...healthy.settle, observerLate: { ms: 1162, tick: 1 } },
+		});
+		expect(report).toContain(
+			"warning: the observer received clock.ticked 1 1162.0 ms late (limit 100 ms): settle and overruns around tick 1 are measured from its late receipt",
+		);
+	});
+
+	test("the observer's lateness warning starts at exactly 100 ms", () => {
+		const warnings = (ms: number) =>
+			loadtestReport(args, {
+				...healthy,
+				settle: { ...healthy.settle, observerLate: { ms, tick: 7 } },
+			})
+				.split("\n")
+				.filter((line) => line.startsWith("warning:")).length;
+		expect([warnings(99.9), warnings(100)]).toEqual([0, 1]);
 	});
 
 	test("a persister holding over 3 ticks of events, with none waiting, keeps up", () => {
