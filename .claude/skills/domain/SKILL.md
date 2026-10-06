@@ -13,7 +13,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 
 - **World**: the simulated city. No single owner; each service owns its part, views built from events (0017).
 - **Grid**: synthetic square grid, `width × height` cells (v1: 500 × 500, 1 cell = 10 m). No real maps for now.
-- **Cell**: one grid square, integer `x`, `y`. Origin top-left, `0 ≤ x < width`, `0 ≤ y < height`. The `Cell` type guarantees well-formed non-negative integer coordinates only; grid bounds are checked by `cellIn` where a grid is known and by the invariant checker.
+- **Cell**: one grid square, integer `x`, `y`. Origin top-left, `0 ≤ x < width`, `0 ≤ y < height`. The `Cell` type guarantees well-formed non-negative integer coordinates only; grid bounds are checked by `cellIn` where a grid is known and by the invariant checker. Each coordinate is a **Coordinate** (branded non-negative integer); `cellAt(x, y)` makes a Cell from two.
 - **Position**: an entity's current cell.
 - **Distance**: Manhattan distance between cells, `|x1 - x2| + |y1 - y2|`.
 - **Move**: one step to a 4-neighbor cell (no diagonals). Max one move per tick per driver. Toward a target: larger remaining axis first.

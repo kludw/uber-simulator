@@ -25,13 +25,13 @@ Building a `Cell` object per move from the arrays (what dispatch stores) added n
 
 We will publish `drivers.moved { tick, driverIds, xs, ys }`: move i is driver `driverIds[i]` stepping to cell `(xs[i], ys[i])`.
 
-- The schema checks every field, each array with one Zod refine: every ID matches DriverId's pattern, every coordinate is a non-negative safe integer (Cell's rule), and the three arrays have the same length. Any failure rejects the whole message.
-- `driversMoved(tick, moves)` builds a message and `forEachMove(message, visit)` reads one, both in `src/shared/messages.ts`; no other module touches the arrays. `forEachMove` brands each ID and cell it hands out.
+- The schema checks every field with four Zod refines, one per array plus one across them: every ID matches DriverId's pattern, every x and every y is a non-negative safe integer (Cell's rule), and the three arrays have the same length. Any failure rejects the whole message. A transform on each array brands what passed (`DriverId[]`, `Coordinate[]`; `Coordinate` is also the type of a `Cell`'s fields), so the parsed type carries the checks.
+- `driversMoved(tick, moves)` builds a message and `forEachMove(message, visit)` reads one, both in `src/shared/messages.ts`; no other module touches the arrays. `forEachMove` builds each cell with `cellAt` (`src/shared/grid.ts`) and casts nothing.
 - Chunks of at most 5,000 moves, none when no driver moved, published before the shard's other events of the tick, one persisted row per message, replay unchanged: as ADR 0045.
 
 ## Rationale
 
-- Fastest candidate that keeps Zod validating every field: 0.78-1.07 ms per chunk against 1.70-2.19 for 0045's shape, 52-55% less, on both CPU models. JSON.parse halves (one string and two numbers per move, no objects), and Zod runs three refines instead of 15,000 element schemas.
+- Fastest candidate that keeps Zod validating every field: 0.78-1.07 ms per chunk against 1.70-2.19 for 0045's shape, 52-55% less, on both CPU models. JSON.parse halves (one string and two numbers per move, no objects), and Zod runs four refines instead of 15,000 element schemas. Branding by transform costs nothing measurable: 1.03-1.05 against 1.04-1.06 ms unbranded ([decode-bench 37538927872](https://github.com/kludw/uber-simulator/actions/runs/37538927872), Xeon 6973P-C and EPYC 9V74).
 - Payload 62% smaller (about 19 bytes per move instead of 49), so less for NATS, the persister's rows and replay to carry.
 - Keeping the shape behind two functions means the next shape change touches one module, not every consumer.
 
