@@ -42,7 +42,13 @@ export function cellIn(
 }
 
 export function distance(a: Cell, b: Cell): number {
-	return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+	return distanceToCoordinates(a, b.x, b.y);
+}
+
+// distance() to a cell held as flat coordinates (batched matching keeps
+// drivers' cells in typed arrays, #213).
+export function distanceToCoordinates(a: Cell, x: number, y: number): number {
+	return Math.abs(a.x - x) + Math.abs(a.y - y);
 }
 
 export function randomCell(grid: Grid, random: Random): Cell {

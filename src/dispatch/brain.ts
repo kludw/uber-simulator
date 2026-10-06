@@ -1,4 +1,4 @@
-import { type Cell, distance, type Grid } from "../shared/grid.ts";
+import { type Cell, distanceToCoordinates, type Grid } from "../shared/grid.ts";
 import type {
 	CancelTrip,
 	CancelTripAccepted,
@@ -272,17 +272,25 @@ function batchedPairs(
 	queued: readonly QueuedTrip[],
 	idle: readonly IdleDriver[],
 ): OfferPair[] {
+	// Asked for every cell more than once per batch (#213): drivers' cells as
+	// flat coordinates read in column order, and no excluded-driver lookup for
+	// the common trip that has none.
+	const driverXs = Int32Array.from(idle, ({ cell }) => cell.x);
+	const driverYs = Int32Array.from(idle, ({ cell }) => cell.y);
 	const cost = (row: number, column: number): Cost => {
 		const trip = queued[row];
-		const driver = idle[column];
-		if (trip === undefined || driver === undefined) {
+		const x = driverXs[column];
+		const y = driverYs[column];
+		if (trip === undefined || x === undefined || y === undefined) {
 			throw new Error(`cost (${row}, ${column}) out of range`);
 		}
-		// Asked per Hungarian step, not once per cell: skip the lookup for the
-		// common trip with no excluded drivers (measured: p95 ms per tick).
-		const excluded = trip.excludedDrivers;
-		if (excluded.size > 0 && excluded.has(driver.driverId)) return null;
-		return distance(driver.cell, trip.pickup);
+		if (trip.excludedDrivers.size > 0) {
+			const driverId = idle[column]?.driverId;
+			if (driverId !== undefined && trip.excludedDrivers.has(driverId)) {
+				return null;
+			}
+		}
+		return distanceToCoordinates(trip.pickup, x, y);
 	};
 	return minCostMatching(queued.length, idle.length, cost).map(
 		({ row, column }) => {
