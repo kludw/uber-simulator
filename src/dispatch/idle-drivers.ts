@@ -16,29 +16,37 @@ const defaultSearch: IdleDriverSearch = {
 	linearScanBelow: 64,
 };
 
-// Dispatch's drivers across ticks (ADR 0048): known drivers' cells, busy
-// drivers, and the idle ones (known, not busy) bucketed for the nearest
-// search, updated in place as drivers report and trips change (ADR 0033).
-// Opaque: callers can't name `internals`.
+// Dispatch's drivers across ticks (ADR 0048): each known or busy driver's
+// cell, whether it is online and busy, and the idle ones (online, not busy)
+// bucketed for the nearest search, updated in place as drivers report and
+// trips change (ADR 0033). Opaque: callers can't name `internals`.
 const internals: unique symbol = Symbol("idle drivers");
 export type IdleDrivers = { readonly [internals]: Drivers };
 
-// An idle driver's bucket and slot in it, so leaving a bucket is a swap with
-// its last entry, not a search.
-type Entry = { driverId: DriverId; cell: Cell; bucket: number; slot: number };
+// One record per driver, so a move costs one map lookup. bucket is -1 unless
+// idle; slot is its place in the bucket, so leaving is a swap with the
+// bucket's last entry, not a search. A driver offline and not busy has none.
+type Driver = {
+	driverId: DriverId;
+	cell: Cell;
+	online: boolean;
+	busy: boolean;
+	bucket: number;
+	slot: number;
+};
 
 type Drivers = {
 	grid: Grid;
 	search: IdleDriverSearch;
 	columns: number;
 	rows: number;
-	// Cells as last reported, busy drivers included.
-	cells: Map<DriverId, Cell>;
-	busy: Set<DriverId>;
-	idle: Map<DriverId, Entry>;
+	byId: Map<DriverId, Driver>;
+	idleCount: number;
 	// Row-major by bucket, unordered within a bucket.
-	buckets: Entry[][];
+	buckets: Driver[][];
 };
+
+const notIdle = -1;
 
 export function startIdleDrivers(
 	grid: Grid,
@@ -53,10 +61,9 @@ export function startIdleDrivers(
 			search,
 			columns,
 			rows,
-			cells: new Map(),
-			busy: new Set(),
-			idle: new Map(),
-			buckets: Array.from({ length: columns * rows }, (): Entry[] => []),
+			byId: new Map(),
+			idleCount: 0,
+			buckets: Array.from({ length: columns * rows }, (): Driver[] => []),
 		},
 	};
 }
@@ -69,81 +76,99 @@ export function placeDriver(
 	cell: Cell,
 ): void {
 	const drivers = idle[internals];
-	drivers.cells.set(driverId, cell);
-	const entry = drivers.idle.get(driverId);
-	if (entry === undefined) {
-		if (!drivers.busy.has(driverId)) addIdle(drivers, driverId, cell);
+	const driver = drivers.byId.get(driverId);
+	if (driver === undefined) {
+		const placed: Driver = {
+			driverId,
+			cell,
+			online: true,
+			busy: false,
+			bucket: notIdle,
+			slot: 0,
+		};
+		drivers.byId.set(driverId, placed);
+		addToBucket(drivers, placed);
 		return;
 	}
-	entry.cell = cell;
-	if (bucketOf(drivers, cell) === entry.bucket) return;
-	removeFromBucket(drivers, entry);
-	addToBucket(drivers, entry);
+	driver.cell = cell;
+	if (!driver.online) {
+		driver.online = true;
+		if (!driver.busy) addToBucket(drivers, driver);
+		return;
+	}
+	if (driver.bucket === notIdle) return;
+	if (bucketOf(drivers, cell) === driver.bucket) return;
+	removeFromBucket(drivers, driver);
+	addToBucket(drivers, driver);
 }
 
 // A driver went offline. A busy driver stays busy until freed.
 export function removeDriver(idle: IdleDrivers, driverId: DriverId): void {
 	const drivers = idle[internals];
-	drivers.cells.delete(driverId);
-	removeIdle(drivers, driverId);
+	const driver = drivers.byId.get(driverId);
+	if (driver === undefined) return;
+	if (driver.bucket !== notIdle) removeFromBucket(drivers, driver);
+	if (driver.busy) driver.online = false;
+	else drivers.byId.delete(driverId);
 }
 
-// A driver was offered a trip or has one. Busy for one trip at a time:
-// dispatch offers only idle drivers, so a second mark is a bug.
+// A driver was offered a trip. Dispatch offers only idle drivers, and a
+// driver is busy for one trip at a time, so marking any other is a bug.
 export function markBusy(idle: IdleDrivers, driverId: DriverId): void {
 	const drivers = idle[internals];
-	if (drivers.busy.has(driverId)) throw new Error(`${driverId} already busy`);
-	drivers.busy.add(driverId);
-	removeIdle(drivers, driverId);
+	const driver = drivers.byId.get(driverId);
+	if (driver === undefined || driver.bucket === notIdle) {
+		throw new Error(`${driverId} is not idle`);
+	}
+	removeFromBucket(drivers, driver);
+	driver.busy = true;
 }
 
-// A driver's offer or trip is over; idle again if its cell is known.
+// A driver's offer or trip is over: idle again if online.
 export function markFree(idle: IdleDrivers, driverId: DriverId): void {
 	const drivers = idle[internals];
-	if (!drivers.busy.delete(driverId)) throw new Error(`${driverId} not busy`);
-	const cell = drivers.cells.get(driverId);
-	if (cell !== undefined) addIdle(drivers, driverId, cell);
+	const driver = drivers.byId.get(driverId);
+	if (driver === undefined || !driver.busy) {
+		throw new Error(`${driverId} is not busy`);
+	}
+	driver.busy = false;
+	if (driver.online) addToBucket(drivers, driver);
+	else drivers.byId.delete(driverId);
 }
 
 // Idle drivers and their cells, ordered by ID (batched matching's columns).
 export function idleDriversById(idle: IdleDrivers): IdleDriver[] {
 	const drivers = idle[internals];
-	return Array.from(drivers.idle.values(), ({ driverId, cell }) => ({
-		driverId,
-		cell,
-	})).sort((a, b) => (a.driverId < b.driverId ? -1 : 1));
+	const idleDrivers: IdleDriver[] = [];
+	for (const bucket of drivers.buckets) {
+		for (const { driverId, cell } of bucket) {
+			idleDrivers.push({ driverId, cell });
+		}
+	}
+	return idleDrivers.sort((a, b) => (a.driverId < b.driverId ? -1 : 1));
 }
 
-function addIdle(drivers: Drivers, driverId: DriverId, cell: Cell): void {
-	const entry: Entry = { driverId, cell, bucket: 0, slot: 0 };
-	addToBucket(drivers, entry);
-	drivers.idle.set(driverId, entry);
+function addToBucket(drivers: Drivers, driver: Driver): void {
+	driver.bucket = bucketOf(drivers, driver.cell);
+	const bucket = drivers.buckets[driver.bucket];
+	if (bucket === undefined) throw new Error(`no bucket ${driver.bucket}`);
+	driver.slot = bucket.length;
+	bucket.push(driver);
+	drivers.idleCount++;
 }
 
-function removeIdle(drivers: Drivers, driverId: DriverId): void {
-	const entry = drivers.idle.get(driverId);
-	if (entry === undefined) return;
-	removeFromBucket(drivers, entry);
-	drivers.idle.delete(driverId);
-}
-
-function addToBucket(drivers: Drivers, entry: Entry): void {
-	entry.bucket = bucketOf(drivers, entry.cell);
-	const bucket = drivers.buckets[entry.bucket];
-	if (bucket === undefined) throw new Error(`no bucket ${entry.bucket}`);
-	entry.slot = bucket.length;
-	bucket.push(entry);
-}
-
-function removeFromBucket(drivers: Drivers, entry: Entry): void {
-	const bucket = drivers.buckets[entry.bucket];
+function removeFromBucket(drivers: Drivers, driver: Driver): void {
+	const bucket = drivers.buckets[driver.bucket];
 	const last = bucket?.pop();
 	if (bucket === undefined || last === undefined) {
-		throw new Error(`${entry.driverId} not in its bucket`);
+		throw new Error(`${driver.driverId} not in its bucket`);
 	}
-	if (last === entry) return;
-	bucket[entry.slot] = last;
-	last.slot = entry.slot;
+	if (last !== driver) {
+		bucket[driver.slot] = last;
+		last.slot = driver.slot;
+	}
+	driver.bucket = notIdle;
+	drivers.idleCount--;
 }
 
 // A cell off the grid (bad input from another service; grid bounds are an
@@ -170,7 +195,7 @@ export function nearestIdle(
 	const pickupOffGrid =
 		pickup.x >= drivers.grid.width || pickup.y >= drivers.grid.height;
 	const nearest =
-		pickupOffGrid || drivers.idle.size < drivers.search.linearScanBelow
+		pickupOffGrid || drivers.idleCount < drivers.search.linearScanBelow
 			? scanAll(drivers, pickup, excluded)
 			: searchRings(drivers, pickup, excluded);
 	return nearest?.driverId;
@@ -198,9 +223,11 @@ function scanAll(
 	excluded: ReadonlySet<DriverId>,
 ): IdleDriver | undefined {
 	let nearest: Nearest;
-	for (const driver of drivers.idle.values()) {
-		if (excluded.has(driver.driverId)) continue;
-		nearest = closer(nearest, driver, pickup);
+	for (const bucket of drivers.buckets) {
+		for (const driver of bucket) {
+			if (excluded.has(driver.driverId)) continue;
+			nearest = closer(nearest, driver, pickup);
+		}
 	}
 	return nearest?.driver;
 }

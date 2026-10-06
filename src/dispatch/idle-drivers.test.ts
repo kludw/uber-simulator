@@ -122,6 +122,29 @@ describe("nearestIdle", () => {
 	});
 });
 
+// Dispatch offers only idle drivers, and only a busy driver's offer or trip
+// can end.
+describe("busy marks", () => {
+	test("marking a driver busy that isn't idle is a bug", () => {
+		const index = placed([driver("d-1", 3, 3)]);
+		markBusy(index, DriverId.parse("d-1"));
+
+		expect(() => markBusy(index, DriverId.parse("d-1"))).toThrow();
+	});
+
+	test("marking an unknown driver busy is a bug", () => {
+		const index = placed([]);
+
+		expect(() => markBusy(index, DriverId.parse("d-1"))).toThrow();
+	});
+
+	test("freeing a driver that isn't busy is a bug", () => {
+		const index = placed([driver("d-1", 3, 3)]);
+
+		expect(() => markFree(index, DriverId.parse("d-1"))).toThrow();
+	});
+});
+
 describe("idleDriversById", () => {
 	test("lists idle drivers and their cells ordered by ID", () => {
 		const index = placed([
@@ -234,7 +257,11 @@ function expectLinearScanPicks(seed: number, offGrid: OffGrid): void {
 			} else if (action === 5) {
 				removeDriver(index, driverId);
 				model.cells.delete(driverId);
-			} else if (action === 6 && !model.busy.has(driverId)) {
+			} else if (
+				action === 6 &&
+				model.cells.has(driverId) &&
+				!model.busy.has(driverId)
+			) {
 				markBusy(index, driverId);
 				model.busy.add(driverId);
 			} else if (action === 7 && model.busy.has(driverId)) {
