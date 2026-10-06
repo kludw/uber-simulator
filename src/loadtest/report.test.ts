@@ -19,11 +19,11 @@ const healthy: LoadtestMeasurement = {
 		clockMaxDeviationMs: 3.25,
 		lastEventSubjects: [
 			{ subject: "sim.events.trip.matched", ticks: 450 },
-			{ subject: "sim.events.driver.moved", ticks: 147 },
+			{ subject: "sim.events.drivers.moved", ticks: 147 },
 		],
 		bySubject: [
 			{
-				subject: "sim.events.driver.moved",
+				subject: "sim.events.drivers.moved",
 				events: 600_000,
 				bytes: 42_000_000,
 			},
@@ -98,9 +98,9 @@ describe("loadtestReport", () => {
 				"overruns: 0 of 600 ticks (0.0%)",
 				"last tick: events after the 2 s grace window not observed, so its settle may be understated",
 				"message rate: 1050.0 per tick (630000 events of ticks 1..600)",
-				"events by subject (per tick, payload bytes per tick, share of events, share of bytes): sim.events.driver.moved 1000.0, 70000 B (95.2%, 92.8%), sim.events.trip.matched 49.0, 5390 B (4.7%, 7.1%), sim.events.clock.ticked 1.0, 25 B (0.1%, 0.0%)",
+				"events by subject (per tick, payload bytes per tick, share of events, share of bytes): sim.events.drivers.moved 1000.0, 70000 B (95.2%, 92.8%), sim.events.trip.matched 49.0, 5390 B (4.7%, 7.1%), sim.events.clock.ticked 1.0, 25 B (0.1%, 0.0%)",
 				"observer: clock.ticked max deviation 3.3 ms, pending bytes max 0",
-				"last event of a tick (share of observed ticks, by subject): sim.events.trip.matched 75.0%, sim.events.driver.moved 24.5%",
+				"last event of a tick (share of observed ticks, by subject): sim.events.trip.matched 75.0%, sim.events.drivers.moved 24.5%",
 				"nats: slow consumers 0, pending bytes max 2048 (any connection)",
 				"persister backlog (pending + ack pending, every 5 s): 0 1200 800 1000 900 400",
 				"nats server cpu per backlog sample (cores, since the previous reading): 0.40 0.40 0.40 0.90 0.40 0.40",

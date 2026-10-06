@@ -498,10 +498,7 @@ function onTick(
 		}
 		switch (driver.state) {
 			case "idle":
-				drivers.set(
-					driver.id,
-					wander(driver, state.grid, random, moves),
-				);
+				drivers.set(driver.id, wander(driver, state.grid, random, moves));
 				break;
 			case "en_route":
 				drivers.set(

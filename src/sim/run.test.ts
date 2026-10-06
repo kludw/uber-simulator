@@ -444,7 +444,11 @@ function longWaits(
 					stage: message.type,
 				});
 				break;
-			case "driver.moved":
+			case "drivers.moved":
+				for (const move of message.moves) {
+					resolve(move.driverId, message.tick);
+				}
+				break;
 			case "driver.went_offline":
 				resolve(message.driverId, message.tick);
 				break;

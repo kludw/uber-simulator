@@ -64,8 +64,8 @@ describe.skipIf(!config)("run report", () => {
 	test("listRuns lists each run's tick span and event count", async () => {
 		await succeeded(
 			clickhouse.insertEvents([
-				row("list-a", "driver.moved", 0, 1),
-				row("list-a", "driver.moved", 9, 2),
+				row("list-a", "drivers.moved", 0, 1),
+				row("list-a", "drivers.moved", 9, 2),
 				row("list-b", "clock.ticked", 3, 3),
 				// Redelivery of the same stream message: counted once.
 				row("list-b", "clock.ticked", 3, 3),
@@ -141,7 +141,7 @@ describe.skipIf(!config)("run report", () => {
 				row(run, "trip.picked_up", 20, 7, "t-2"),
 				row(run, "trip.completed", 40, 8, "t-1"),
 				row(run, "trip.completed", 70, 9, "t-2"),
-				row(run, "driver.moved", 120, 10),
+				row(run, "drivers.moved", 120, 10),
 			]),
 		);
 

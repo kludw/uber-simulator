@@ -61,7 +61,11 @@ function wentOffline(driverId: DriverId, at: Cell, when: number): Message {
 }
 
 function moved(driverId: DriverId, to: Cell, at: number): Message {
-	return { type: "drivers.moved", tick: tick(at), moves: [{ driverId, cell: to }] };
+	return {
+		type: "drivers.moved",
+		tick: tick(at),
+		moves: [{ driverId, cell: to }],
+	};
 }
 
 // d1 starts at (0,0); t1 picks up at (1,0), drops off at (2,0).

@@ -39,9 +39,10 @@ describe("toRow", () => {
 			{ type: "driver.went_offline", tick, driverId, cell },
 			{ tripId: "", driverId: "d-7", riderId: "" },
 		],
+		// One row per message, the moves in the payload (ADR 0045).
 		[
-			{ type: "driver.moved", tick, driverId, cell },
-			{ tripId: "", driverId: "d-7", riderId: "" },
+			{ type: "drivers.moved", tick, moves: [{ driverId, cell }] },
+			{ tripId: "", driverId: "", riderId: "" },
 		],
 		[
 			{ type: "driver.arrived_at_pickup", tick, driverId, tripId, cell },

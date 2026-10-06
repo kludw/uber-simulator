@@ -126,10 +126,9 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 			"run-a",
 		);
 		publish(nc, source, {
-			type: "driver.moved",
+			type: "drivers.moved",
 			tick: 3,
-			driverId: "d-1",
-			cell: { x: 0, y: 1 },
+			moves: [{ driverId: "d-1", cell: { x: 0, y: 1 } }],
 		});
 		publish(nc, source, "not json", "run-a");
 		publish(nc, source, { type: "cancel_trip", tripId: "t-1" }, "run-a");
@@ -166,11 +165,11 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 				},
 				{
 					run_id: "unknown",
-					type: "driver.moved",
+					type: "drivers.moved",
 					tick: 3,
 					stream_seq: 3,
 					trip_id: "",
-					driver_id: "d-1",
+					driver_id: "",
 					rider_id: "",
 				},
 			],

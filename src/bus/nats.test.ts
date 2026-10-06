@@ -224,7 +224,7 @@ describe("connectNatsBus", () => {
 			}
 			pong(socket, text);
 		});
-		// Controlled time: only handling takes any, 1 s per driver.moved and
+		// Controlled time: only handling takes any, 1 s per drivers.moved and
 		// 3 s per cancel_trip, under the 10 s interval: one entry, on close.
 		let nowMs = 0;
 		const timed: MessagesTimed[] = [];
@@ -235,14 +235,14 @@ describe("connectNatsBus", () => {
 			logStatus: () => {},
 			logTiming: (timing) => timed.push(timing),
 			now: () => nowMs,
-			inputs: ["cancel_trip", "driver.moved"],
+			inputs: ["cancel_trip", "drivers.moved"],
 		});
 		if (!result.ok) throw new Error("fake server unreachable");
 		const bus = result.value;
 		const { promise: lastHandled, resolve: handledLast } =
 			Promise.withResolvers<void>();
-		bus.subscribe(["cancel_trip", "driver.moved"], (message) => {
-			nowMs += message.type === "driver.moved" ? 1000 : 3000;
+		bus.subscribe(["cancel_trip", "drivers.moved"], (message) => {
+			nowMs += message.type === "drivers.moved" ? 1000 : 3000;
 			if (message.type === "cancel_trip") handledLast();
 		});
 		const push = (subject: string, payload: string) =>
@@ -251,14 +251,13 @@ describe("connectNatsBus", () => {
 			);
 		const moved = (driverId: string) =>
 			JSON.stringify({
-				type: "driver.moved",
+				type: "drivers.moved",
 				tick: 1,
-				driverId,
-				cell: { x: 0, y: 0 },
+				moves: [{ driverId, cell: { x: 0, y: 0 } }],
 			});
 
-		push("sim.events.driver.moved", moved("d-1"));
-		push("sim.events.driver.moved", moved("d-2"));
+		push("sim.events.drivers.moved", moved("d-1"));
+		push("sim.events.drivers.moved", moved("d-2"));
 		push(
 			"sim.commands.cancel_trip",
 			JSON.stringify({ type: "cancel_trip", tripId: "t-1" }),
@@ -269,7 +268,7 @@ describe("connectNatsBus", () => {
 
 		expect(timed.map((timing) => timing.byType)).toEqual([
 			{
-				"driver.moved": { received: 2, decodeMs: 0, handleMs: 2000 },
+				"drivers.moved": { received: 2, decodeMs: 0, handleMs: 2000 },
 				cancel_trip: { received: 1, decodeMs: 0, handleMs: 3000 },
 			},
 		]);
