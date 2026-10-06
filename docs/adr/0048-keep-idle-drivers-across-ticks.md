@@ -31,6 +31,6 @@ Outcomes stay byte-identical to master (event logs of the README commands, greed
 
 ## Consequences
 
-- Dispatch's state holds the bucketed drivers; tests that compare a state before and after `decide` must `structuredClone` it (ADR 0033).
+- Dispatch's state holds the bucketed drivers behind an opaque, symbol-keyed index, which `structuredClone` drops (a cloned state has `drivers: {}` and crashes `decideDispatch`). So, unlike driver and rider states, dispatch's state can't be cloned to compare before and after `decide` (an exception to ADR 0033's ownership rule in tests): tests observe it through outputs, and the index through `nearestIdle` / `idleDriversById`.
 - The busy invariant (one trip per driver) is now checked at run time: a violation throws instead of silently double-counting.
 - Batched still sorts its idle drivers on each window tick; greedy no longer sorts.

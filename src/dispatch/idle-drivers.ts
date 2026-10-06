@@ -91,9 +91,10 @@ export function placeDriver(
 		return;
 	}
 	driver.cell = cell;
+	// Only a busy driver keeps its record while offline; it stays out of the
+	// buckets until freed.
 	if (!driver.online) {
 		driver.online = true;
-		if (!driver.busy) addToBucket(drivers, driver);
 		return;
 	}
 	if (driver.bucket === notIdle) return;
