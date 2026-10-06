@@ -13,14 +13,14 @@ ADR 0036 has dispatch take one snapshot of idle drivers per tick: a busy set fro
 We will keep dispatch's drivers in its state across ticks, in one module (`src/dispatch/idle-drivers.ts`): known drivers' cells, the busy drivers, and the idle ones (known and not busy) in the grid buckets, updated in place:
 
 - `placeDriver` on `driver.went_online` and each move of `drivers.moved` (a driver changes bucket only when its cell crosses one), `removeDriver` on `driver.went_offline`.
-- `markBusy` / `markFree` from `storeTrip`, the one place trips change: a driver is busy from its offer until the offer is declined or expires or the trip ends. Dispatch offers only idle drivers, so a driver is busy for at most one trip; a second `markBusy` (or a `markFree` of an idle driver) is a bug and throws.
+- `markBusy` / `markFree` from `storeTrip`, the one place trips change: a driver is busy from its offer until the offer is declined or expires or the trip ends. Dispatch offers only idle drivers, so a driver is busy for at most one trip; `markBusy` of a driver that isn't idle, or `markFree` of one that isn't busy, is a bug and throws.
 - `nearestIdle` returns the nearest idle driver not excluded, ties to the lowest ID, without taking it: greedy's offer makes it busy before the next trip searches. `idleDriversById` gives batched its columns, ordered by ID as before.
 
 Outcomes stay byte-identical to master (event logs of the README commands, greedy and batched).
 
 ## Rationale
 
-- Removes the per-tick O(active trips + known drivers) rebuild and sort, the largest part of dispatch's step; the per-move cost added to position updates is a map lookup and, rarely, a bucket swap.
+- Removes the per-tick O(active trips + known drivers) rebuild and sort, the largest part of dispatch's step. One record per driver (cell, online, busy, bucket slot) keeps a move at one map lookup, plus a bucket swap when it crosses a bucket; measured in [Idle drivers across ticks](../performance.md#idle-drivers-across-ticks).
 - Busy marks follow trips through `storeTrip`, so there is one source of truth for "busy" and no second scan to drift from it.
 - The search, its exactness argument and its tuning (ADR 0036, [Grid index tuning](../performance.md#grid-index-tuning)) are unchanged; only how the buckets are kept changes.
 
