@@ -13,6 +13,7 @@ import { Tick } from "../shared/messages.ts";
 import { simEventSubjects, subjectFor } from "../shared/subjects.ts";
 import { parsePersisterConfig, parseServiceConfig } from "../sim/config.ts";
 import { parseLoadtestArgs } from "./args.ts";
+import type { PersisterSample } from "./backlog.ts";
 import { createInfraReader, type InfraReading } from "./infra.ts";
 import { readPendingBytes, readSlowConsumers } from "./monitoring.ts";
 import { type LoadtestMeasurement, loadtestReport } from "./report.ts";
@@ -220,8 +221,7 @@ const services: Service[] = [
 ];
 for (const service of services) spawn(service);
 
-const persisterBacklog: number[] = [];
-let persisterAckPendingMax = 0;
+const persisterSamples: PersisterSample[] = [];
 const pendingBytes = { observerMax: 0, anyMax: 0 };
 let running = true;
 // Ends the sampler's wait between samples at once, so stopping it doesn't
@@ -237,12 +237,11 @@ const sampling = (async () => {
 				return undefined;
 			});
 		if (consumer !== undefined) {
-			persisterBacklog.push(consumer.num_pending + consumer.num_ack_pending);
-			persisterAckPendingMax = Math.max(
-				persisterAckPendingMax,
-				consumer.num_ack_pending,
-			);
-			// With the backlog sample only, so the report lines them up.
+			persisterSamples.push({
+				pending: consumer.num_pending,
+				ackPending: consumer.num_ack_pending,
+			});
+			// With the persister sample only, so the report lines them up.
 			const reading = await infra.read();
 			if (!reading.ok) {
 				await abort(`infra read failed: ${JSON.stringify(reading.error)}`);
@@ -307,8 +306,7 @@ const [load1 = 0, load5 = 0, load15 = 0] = loadavg();
 console.log(
 	loadtestReport(args.value, {
 		settle: settle.summary(),
-		persisterBacklog,
-		persisterAckPendingMax,
+		persisterSamples,
 		sampleIntervalMs,
 		settleGraceMs,
 		drain,

@@ -1,16 +1,19 @@
 // The load test report (ADR 0037): what src/loadtest/main.ts measured over one
 // run, and that run's verdict on each criterion for a supported fleet size.
 import type { LoadtestArgs } from "./args.ts";
-import { maxTicksBehind, persisterBacklog } from "./backlog.ts";
+import {
+	maxTicksBehind,
+	type PersisterSample,
+	persisterBacklog,
+} from "./backlog.ts";
 import type { CpuTime, InfraReading } from "./infra.ts";
 import type { SettleSummary } from "./settle.ts";
 
 export type LoadtestMeasurement = {
 	settle: SettleSummary;
-	// Persister consumer num_pending + num_ack_pending from the start to tick
-	// T, one sample per sampleIntervalMs.
-	persisterBacklog: number[];
-	persisterAckPendingMax: number;
+	// Persister consumer num_pending and num_ack_pending from the start to
+	// tick T, one sample per sampleIntervalMs.
+	persisterSamples: PersisterSample[];
 	sampleIntervalMs: number;
 	// How long after tick T the observer still counted events of ticks <= T.
 	settleGraceMs: number;
@@ -41,7 +44,7 @@ export type LoadtestMeasurement = {
 	loadtestCpu: CpuTime;
 };
 
-// ADR 0037's criteria; ADR 0036's band for settle p95; ADR 0038's persister
+// ADR 0037's criteria; ADR 0036's band for settle p95; ADR 0046's persister
 // backlog bound (backlog.ts).
 const minTicks = 600;
 const maxSettleP95Ms = 610;
@@ -59,7 +62,8 @@ export function loadtestReport(
 		(sum, { bytes }) => sum + bytes,
 		0,
 	);
-	const backlog = persisterBacklog(measurement.persisterBacklog, eventsPerTick);
+	const { persisterSamples } = measurement;
+	const backlog = persisterBacklog(persisterSamples, eventsPerTick);
 	const overrunShare = settle.overruns / settle.ticksObserved;
 	const drainMinutes = args.drainBoundMs / 60_000;
 	const criteria: [boolean, string][] = [
@@ -74,7 +78,7 @@ export function loadtestReport(
 		],
 		[
 			backlog?.withinLimit === true,
-			`persister backlog <= ${maxTicksBehind} ticks of events`,
+			`persister backlog (pending) <= ${maxTicksBehind} ticks of events`,
 		],
 		[drain.type === "drained", `persister drained within ${drainMinutes} min`],
 		[measurement.slowConsumers === 0, "no slow consumers"],
@@ -131,17 +135,18 @@ export function loadtestReport(
 		`observer: clock.ticked max deviation ${settle.clockMaxDeviationMs.toFixed(1)} ms, pending bytes max ${measurement.pendingBytes.observerMax}`,
 		`last event of a tick (share of observed ticks, by subject): ${settle.lastEventSubjects.map(({ subject, ticks }) => `${subject} ${((ticks / settle.ticksObserved) * 100).toFixed(1)}%`).join(", ")}`,
 		`nats: slow consumers ${measurement.slowConsumers}, pending bytes max ${measurement.pendingBytes.anyMax} (any connection)`,
-		`persister backlog (pending + ack pending, every ${measurement.sampleIntervalMs / 1000} s): ${measurement.persisterBacklog.join(" ")}`,
+		`persister pending (published, not yet delivered, every ${measurement.sampleIntervalMs / 1000} s): ${persisterSamples.map(({ pending }) => pending).join(" ")}`,
+		`persister ack pending (delivered, not yet acked, every ${measurement.sampleIntervalMs / 1000} s): ${persisterSamples.map(({ ackPending }) => ackPending).join(" ")}`,
 		`nats server cpu per backlog sample (cores, since the previous reading): ${coresPerSample((reading) => reading.natsServer)}`,
 		`clickhouse cpu per backlog sample (cores, since the previous reading): ${coresPerSample((reading) => reading.clickhouse)}`,
 		`clickhouse merged rows per backlog sample (thousands, every table, since the previous reading): ${sampleIntervals.map(({ from, to }) => ((to.mergedRows - from.mergedRows) / 1000).toFixed(0)).join(" ")}`,
-		`persister ack pending max: ${measurement.persisterAckPendingMax}`,
-		`persister backlog second-half max: ${backlog === undefined ? "too few samples" : `${backlog.secondHalfMax}, limit ${backlog.limit.toFixed(0)} (${maxTicksBehind} ticks of ${eventsPerTick.toFixed(1)} events)`}`,
+		`persister ack pending max: ${Math.max(0, ...persisterSamples.map(({ ackPending }) => ackPending))}`,
+		`persister backlog (pending) second-half max: ${backlog === undefined ? "too few samples" : `${backlog.secondHalfMax}, limit ${backlog.limit.toFixed(0)} (${maxTicksBehind} ticks of ${eventsPerTick.toFixed(1)} events)`}`,
 		`persister drain: ${drain.type === "drained" ? `${(drain.ms / 1000).toFixed(1)} s` : `did not drain in ${drainMinutes} min (pending ${drain.pending})`}`,
 		`peak rss MiB: ${measurement.peakRssBytes.map(({ service, bytes }) => `${service} ${(bytes / 2 ** 20).toFixed(1)}`).join(", ")}`,
 		`cpu s (user + system, share of the service's wall time): ${measurement.cpuTime.map(({ service, userMicros, systemMicros, wallMs }) => `${service} ${(userMicros / 1e6).toFixed(1)} + ${(systemMicros / 1e6).toFixed(1)} (${(((userMicros + systemMicros) / 1000 / wallMs) * 100).toFixed(0)}%)`).join(", ")}`,
 		`runner cpu s (user + system, share of ${cpus} CPUs over the ${runSeconds.toFixed(1)} s from start to stop): services ${servicesSeconds.toFixed(1)} (${runnerShare(servicesSeconds)}), nats server ${userPlusSystem(natsServerCpu)}, clickhouse ${userPlusSystem(clickhouseCpu)}, load test ${userPlusSystem(loadtestCpu)}, total ${totalSeconds.toFixed(1)} (${runnerShare(totalSeconds)})`,
-		"criteria (ADRs 0037, 0038; supported live = the slower of two runs passes all):",
+		"criteria (ADRs 0037, 0046; supported live = the slower of two runs passes all):",
 		...criteria.map(
 			([passed, criterion]) => `  ${passed ? "pass" : "FAIL"}: ${criterion}`,
 		),

@@ -31,8 +31,17 @@ const healthy: LoadtestMeasurement = {
 			{ subject: "sim.events.clock.ticked", events: 600, bytes: 15_000 },
 		],
 	},
-	persisterBacklog: [0, 1200, 800, 1000, 900, 400],
-	persisterAckPendingMax: 1000,
+	persisterSamples: [
+		[0, 0],
+		[200, 1000],
+		[0, 800],
+		[300, 700],
+		[100, 800],
+		[0, 400],
+	].map(([pending, ackPending]) => ({
+		pending: pending ?? 0,
+		ackPending: ackPending ?? 0,
+	})),
 	sampleIntervalMs: 5000,
 	settleGraceMs: 2000,
 	drain: { type: "drained", ms: 2500 },
@@ -102,21 +111,22 @@ describe("loadtestReport", () => {
 				"observer: clock.ticked max deviation 3.3 ms, pending bytes max 0",
 				"last event of a tick (share of observed ticks, by subject): sim.events.trip.matched 75.0%, sim.events.drivers.moved 24.5%",
 				"nats: slow consumers 0, pending bytes max 2048 (any connection)",
-				"persister backlog (pending + ack pending, every 5 s): 0 1200 800 1000 900 400",
+				"persister pending (published, not yet delivered, every 5 s): 0 200 0 300 100 0",
+				"persister ack pending (delivered, not yet acked, every 5 s): 0 1000 800 700 800 400",
 				"nats server cpu per backlog sample (cores, since the previous reading): 0.40 0.40 0.40 0.90 0.40 0.40",
 				"clickhouse cpu per backlog sample (cores, since the previous reading): 0.25 0.25 1.20 0.25 0.25 0.25",
 				"clickhouse merged rows per backlog sample (thousands, every table, since the previous reading): 0 0 4500 0 0 20",
 				"persister ack pending max: 1000",
-				"persister backlog second-half max: 1000, limit 3150 (3 ticks of 1050.0 events)",
+				"persister backlog (pending) second-half max: 300, limit 3150 (3 ticks of 1050.0 events)",
 				"persister drain: 2.5 s",
 				"peak rss MiB: persister 120.0, dispatch 80.0",
 				"cpu s (user + system, share of the service's wall time): persister 90.0 + 30.5 (17%), dispatch 540.3 + 9.8 (90%)",
 				"runner cpu s (user + system, share of 4 CPUs over the 700.0 s from start to stop): services 670.5 (23.9%), nats server 60.0 + 40.0 (3.6%), clickhouse 100.0 + 20.0 (4.3%), load test 8.0 + 2.6 (0.4%), total 901.1 (32.2%)",
-				"criteria (ADRs 0037, 0038; supported live = the slower of two runs passes all):",
+				"criteria (ADRs 0037, 0046; supported live = the slower of two runs passes all):",
 				"  pass: ticks >= 600",
 				"  pass: settle p95 <= 610 ms",
 				"  pass: overruns <= 1% of ticks",
-				"  pass: persister backlog <= 3 ticks of events",
+				"  pass: persister backlog (pending) <= 3 ticks of events",
 				"  pass: persister drained within 5 min",
 				"  pass: no slow consumers",
 			].join("\n"),
@@ -134,25 +144,40 @@ describe("loadtestReport", () => {
 					overruns: 3,
 					ticksObserved: 120,
 				},
-				persisterBacklog: [5],
+				persisterSamples: [{ pending: 5, ackPending: 0 }],
 				drain: { type: "did_not_drain", pending: 4321 },
 				slowConsumers: 2,
 			},
 		);
 		expect(report.split("\n").slice(-13)).toEqual([
-			"persister ack pending max: 1000",
-			"persister backlog second-half max: too few samples",
+			"persister ack pending max: 0",
+			"persister backlog (pending) second-half max: too few samples",
 			"persister drain: did not drain in 5 min (pending 4321)",
 			"peak rss MiB: persister 120.0, dispatch 80.0",
 			"cpu s (user + system, share of the service's wall time): persister 90.0 + 30.5 (17%), dispatch 540.3 + 9.8 (90%)",
 			"runner cpu s (user + system, share of 4 CPUs over the 700.0 s from start to stop): services 670.5 (23.9%), nats server 60.0 + 40.0 (3.6%), clickhouse 100.0 + 20.0 (4.3%), load test 8.0 + 2.6 (0.4%), total 901.1 (32.2%)",
-			"criteria (ADRs 0037, 0038; supported live = the slower of two runs passes all):",
+			"criteria (ADRs 0037, 0046; supported live = the slower of two runs passes all):",
 			"  FAIL: ticks >= 600",
 			"  FAIL: settle p95 <= 610 ms",
 			"  FAIL: overruns <= 1% of ticks",
-			"  FAIL: persister backlog <= 3 ticks of events",
+			"  FAIL: persister backlog (pending) <= 3 ticks of events",
 			"  FAIL: persister drained within 5 min",
 			"  FAIL: no slow consumers",
 		]);
+	});
+
+	test("a persister holding over 3 ticks of events, with none waiting, keeps up", () => {
+		const report = loadtestReport(args, {
+			...healthy,
+			persisterSamples: [
+				{ pending: 0, ackPending: 0 },
+				{ pending: 0, ackPending: 2000 },
+				{ pending: 0, ackPending: 4000 },
+				{ pending: 0, ackPending: 4000 },
+			],
+		});
+		expect(report).toContain(
+			"  pass: persister backlog (pending) <= 3 ticks of events",
+		);
 	});
 });
