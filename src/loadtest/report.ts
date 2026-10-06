@@ -49,8 +49,8 @@ export type LoadtestMeasurement = {
 const minTicks = 600;
 const maxSettleP95Ms = 610;
 const maxOverrunShare = 0.01;
-// Not a criterion: the observer's own lateness (#214). Steady-state receipts
-// were within about 60 ms of the clock's schedule in every run measured.
+// Not a criterion: the observer's own lateness (#214). After tick 2, receipts
+// were at most 46 ms late in the runs measured (docs/performance.md).
 const observerLateWarningMs = 100;
 
 export function loadtestReport(
