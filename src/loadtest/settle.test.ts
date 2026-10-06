@@ -54,6 +54,17 @@ describe("createSettleTracker", () => {
 		expect(tracker.summary().clockMaxDeviationMs).toBe(40);
 	});
 
+	test("the observer's lateness is its most late clock.ticked receipt against the clock's 1,000 ms schedule, anchored at the earliest", () => {
+		const tracker = createSettleTracker(3);
+		// Tick 1 received late (e.g. decoding a startup burst); ticks 2 and 3
+		// 1,005 and 1,000 ms after the schedule's tick 1 would be due.
+		tracker.clockTicked(1, 1800, bytes);
+		tracker.clockTicked(2, 2005, bytes);
+		tracker.clockTicked(3, 3000, bytes);
+		// Schedule from tick 3: tick 1 due at 1000.
+		expect(tracker.summary().observerLate).toEqual({ ms: 800, tick: 1 });
+	});
+
 	test("events of ticks 1..T count towards the message rate per tick, clock.ticked included", () => {
 		const tracker = createSettleTracker(2);
 		tracker.eventReceived(0, 900, moved, bytes);
