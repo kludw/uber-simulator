@@ -181,9 +181,13 @@ const { promise: lastTickObserved, resolve: markLastTick } =
 	Promise.withResolvers<number>();
 const subscription = observer.subscribe(simEventSubjects);
 await observer.flush();
+const expClockAt = new Map<number, number>();
+const expLastAt = new Map<number, number>();
+const expLastSubject = new Map<number, string>();
 const observing = (async () => {
 	for await (const message of subscription) {
 		const atMs = performance.now();
+		const expAt = performance.timeOrigin + atMs;
 		let payload: unknown;
 		try {
 			payload = message.json();
@@ -198,6 +202,12 @@ const observing = (async () => {
 			continue;
 		}
 		const { tick } = decoded.data;
+		if (message.subject === clockSubject) {
+			expClockAt.set(tick, expAt);
+		} else if ((expLastAt.get(tick) ?? -1) < expAt) {
+			expLastAt.set(tick, expAt);
+			expLastSubject.set(tick, message.subject);
+		}
 		if (message.subject !== clockSubject) {
 			settle.eventReceived(tick, atMs, message.subject, message.data.length);
 			continue;
@@ -208,6 +218,11 @@ const observing = (async () => {
 })();
 
 const services: Service[] = [
+	{
+		name: "light-observer",
+		entrypoint: "src/loadtest/light-observer.ts",
+		env: {},
+	},
 	{ name: "dispatch", entrypoint: "src/dispatch/main.ts", env: {} },
 	{ name: "riders", entrypoint: "src/rider/main.ts", env: {} },
 	...Array.from({ length: driverShards.count }, (_, shard) => ({
@@ -271,6 +286,11 @@ await stopChildren((name) => name === "clock");
 await Bun.sleep(settleGraceMs);
 subscription.unsubscribe();
 await observing;
+for (const [tick, clock] of expClockAt) {
+	console.error(
+		`exp_heavy ${JSON.stringify({ tick, clock, last: expLastAt.get(tick) ?? null, subject: expLastSubject.get(tick) ?? null })}`,
+	);
+}
 await sampling;
 await stopChildren((name) => name !== "persister");
 
