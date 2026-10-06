@@ -1,6 +1,6 @@
 # 0038. Judge the persister by its backlog in ticks of events
 
-- Status: Accepted
+- Status: Superseded by 0046
 - Supersedes 0037's persister trend criterion
 - Date: 2026-10-04
 

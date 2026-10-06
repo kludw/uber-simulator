@@ -41,7 +41,7 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0035 | [Driver preferences](0035-driver-preferences.md)                        | Accepted |
 | 0036 | [Scale to 50k](0036-scale-to-50k.md)                                    | Accepted |
 | 0037 | [End-to-end load test](0037-end-to-end-load-test.md)                    | Accepted (persister trend criterion superseded by 0038) |
-| 0038 | [Persister backlog criterion](0038-persister-backlog-criterion.md)      | Accepted |
+| 0038 | [Persister backlog criterion](0038-persister-backlog-criterion.md)      | Superseded by 0046 |
 | 0039 | [Persister batch size](0039-persister-batch-size.md)                    | Accepted (one-round-at-a-time loop and max ack pending superseded by 0044) |
 | 0040 | [Pickup wait timeout](0040-pickup-wait-timeout.md)                      | Superseded by 0041 |
 | 0041 | [Confirm trip while waiting](0041-confirm-trip-while-waiting.md)        | Accepted |
@@ -49,3 +49,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0043 | [Learn drivers from moves](0043-learn-drivers-from-moves.md)          | Accepted |
 | 0044 | [Persister pipelining](0044-persister-pipelining.md)                    | Accepted |
 | 0045 | [Driver moves in batches](0045-publish-driver-moves-in-batches.md)     | Accepted |
+| 0046 | [Persister pending criterion](0046-persister-pending-criterion.md)      | Accepted |
