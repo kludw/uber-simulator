@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-06
-- Replaces the `driver.moved` event (event list of 0016, subjects of 0028); nothing else in those ADRs is superseded
+- No ADR is superseded: `driver.moved` is defined in the `domain` skill and `src/shared/messages.ts`, not by an ADR; the new subject follows 0028's scheme
 
 ## Context
 
@@ -20,7 +20,7 @@ We will replace `driver.moved` with `drivers.moved { tick, moves: [{ driverId, c
 ## Rationale
 
 - Cuts the dominant cost at its source for every process at once: messages per tick go from about N to about N / 5,000 per shard, persister rows and ClickHouse merge volume by about 99%. The per-move work that remains (validating each entry, updating a map) was a small part of a message's cost.
-- Chunks of 5,000 keep each message under NATS's default 1 MB `max_payload` (a move is about 60 bytes of JSON) without server config, and bound a single message's decode time.
+- Chunks of 5,000 keep each message under NATS's default 1 MB `max_payload` (a move is about 47 bytes of JSON, so a chunk is about 240 KB) without server config, and bound a single message's decode time.
 - Publishing the chunks first keeps the order a subscriber relied on: a shard's per-publisher order (ADR 0028) put each driver's `driver.moved` before its arrival.
 - One event type per shard per tick needs no new subject scheme: `sim.events.<entity>.<verb>` with the entity in plural.
 - The live system cares about positions per tick, not per-driver messages; nothing reads a single driver's move from ClickHouse today (analytics counts trip events).
@@ -37,4 +37,4 @@ We will replace `driver.moved` with `drivers.moved { tick, moves: [{ driverId, c
 - Every producer and consumer of `driver.moved` changes in one change: driver brain, dispatch, invariant checker, UI, load-test observer, subjects, message schema, domain skill.
 - A lost chunk (core NATS, ADR 0028) loses up to 5,000 moves to that subscriber for one tick; positions are corrected by the next tick's chunk, as a lost `driver.moved` was by the next one.
 - Querying one driver's path from ClickHouse needs `arrayJoin` over the payload's moves.
-- Event counts in `bun run sim` summaries and the load-test report change; trip and driver outcomes must not.
+- In-process, the message count, the event log's order within a tick (a shard's moves before its arrivals), and the lossy bus's draw sequence in the message-loss test change; trip and driver outcomes must not. The load-test report's event counts per tick change.
