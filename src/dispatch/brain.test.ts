@@ -1251,6 +1251,87 @@ describe.each<Matching>([
 	});
 });
 
+// Dispatch keeps its idle drivers across ticks (ADR 0048): a driver freed
+// by its trip is idle again from its latest cell, if still online. Ticks are
+// even so the batched window (2) is open on each.
+describe.each<Matching>([
+	{ type: "greedy" },
+	{ type: "batched", windowTicks: 2 },
+])("decideDispatch drivers freed by their trip ($type)", (matching) => {
+	test("offers a trip to a freed driver by the cell it moved to while matched", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(9, 9)),
+				ticked(2),
+				accepted(t1, d1),
+				wentOnline(d2, cell(5, 5)),
+				driversMoved(tick(2), [{ driverId: d1, cell: cell(1, 3) }]),
+				requestTrip(t2, 3),
+				cancelTrip(t1),
+				ticked(4),
+			],
+			matching,
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(4), tripId: t2, driverId: d1 },
+		]);
+	});
+
+	test("does not offer a trip to a driver that went offline while matched once its trip is cancelled", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(3, 3)),
+				ticked(2),
+				accepted(t1, d1),
+				wentOffline(d1, cell(3, 3)),
+				requestTrip(t2, 3),
+				cancelTrip(t1),
+				ticked(4),
+			],
+			matching,
+		);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("offers a trip to a driver back online after its offer expired while offline", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(3, 3)),
+				ticked(2),
+				wentOffline(d1, cell(3, 3)),
+				ticked(6),
+				requestTrip(t2, 7),
+				wentOnline(d1, cell(4, 4)),
+				ticked(8),
+			],
+			matching,
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(8), tripId: t2, driverId: d1 },
+		]);
+	});
+});
+
 // Ended trips (completed, cancelled) still answer late and duplicate inputs.
 describe("decideDispatch ended trips", () => {
 	const completedT1: DispatchInput[] = [

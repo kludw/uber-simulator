@@ -1,6 +1,6 @@
 # Performance
 
-Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12), 76k-500k in [Ceiling](#ceiling), and the distributed stack over NATS in [Live limits](#live-limits) (latest: [After milestone 18](#after-milestone-18)); batched dispatch memory in [Batched dispatch memory](#batched-dispatch-memory); the observer's `clock.ticked` deviations in [Clock deviation](#clock-deviation); dispatch's work per tick at greedy 200k, by function, in [Dispatch profile](#dispatch-profile); the compact `drivers.moved` shape and its effect in [Compact driver moves](#compact-driver-moves).
+Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12), 76k-500k in [Ceiling](#ceiling), and the distributed stack over NATS in [Live limits](#live-limits) (latest: [After milestone 18](#after-milestone-18)); batched dispatch memory in [Batched dispatch memory](#batched-dispatch-memory); the observer's `clock.ticked` deviations in [Clock deviation](#clock-deviation); dispatch's work per tick at greedy 200k, by function, in [Dispatch profile](#dispatch-profile); the compact `drivers.moved` shape and its effect in [Compact driver moves](#compact-driver-moves); dispatch keeping its idle drivers across ticks in [Idle drivers across ticks](#idle-drivers-across-ticks).
 
 ## Method
 
@@ -1120,4 +1120,46 @@ Proposal, not decided: cut `drivers.moved` decoding first, the largest part (50.
 - Payload per tick 61% smaller; the persister uses 0.20-0.21 cores against 0.31-0.38 before on the same CPU models, the stack 699-720 CPU s against 1,014 (7763, 37499868521).
 - In process, event logs are identical to master with moves expanded per move (README commands, both matchings).
 
-Next, per the profile: dispatch's per-tick idle snapshot (busy set, idle list, sort, index), now the largest part.
+Next, per the profile: dispatch's per-tick idle snapshot (busy set, idle list, sort, index), now the largest part; done in [Idle drivers across ticks](#idle-drivers-across-ticks).
+
+## Idle drivers across ticks
+
+Dispatch keeps its drivers (cells, busy marks, idle ones in the grid buckets) across ticks instead of rebuilding the busy set, idle list, sort and grid index every tick ([ADR 0048](adr/0048-keep-idle-drivers-across-ticks.md), [#225](https://github.com/kludw/uber-simulator/issues/225)), the second cut from [Dispatch profile](#dispatch-profile). Measured 2026-10-06, master `fd35f57` against branch `225-keep-idle-drivers`.
+
+### Method
+
+- **Live**: `loadtest` workflow, greedy, 2 driver shards, seed 1, 600 ticks, at 200k, 250k and 300k. Before: master run [37539921316](https://github.com/kludw/uber-simulator/actions/runs/37539921316); after: [37541548096](https://github.com/kludw/uber-simulator/actions/runs/37541548096) and [37541555132](https://github.com/kludw/uber-simulator/actions/runs/37541555132). Dispatch ms per tick from its `messages_timed` entries summed over the run, over 600 ticks (wall time, as in [Compact driver moves](#compact-driver-moves)).
+- **In process**: `bench --drivers 200000 --matching greedy`, 600 ticks, no profiler, master and branch alternately on one runner, two rounds per job, two jobs, run twice (unmerged branch `225-exp-paired-bench`, workflow `ab`): [37541560731](https://github.com/kludw/uber-simulator/actions/runs/37541560731) attempts 1 and 2. Whole bench (every service) wall ms per tick; dispatch alone isn't timed in process.
+- **Outcomes**: event logs hashed (SHA-256 over every message, in publish order) for the README `bun run sim` commands (in process, seed 42, 3,600 ticks, each greedy and batched), plus a 5k run with shifts and picky drivers (seed 7, 900 ticks, 600 requests per minute) and a 10-driver city run with shifts (seed 9, 900 ticks): identical on master (`git archive`) and the branch.
+
+### Results
+
+Live, dispatch ms per tick:
+
+| Drivers | Run | CPU model | `clock.ticked` handle | `drivers.moved` decode | its handle | Decode + handle, all types | Settle p95 | Overruns | Verdict |
+| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 200,000 | before [37539921316](https://github.com/kludw/uber-simulator/actions/runs/37539921316) | Xeon 8370C | 111.6 | 90.7 | 34.5 | 250.9 | 321.1 | 0 | pass |
+| 200,000 | after [37541555132](https://github.com/kludw/uber-simulator/actions/runs/37541555132) | Xeon 8370C | **28.9** | 99.3 | 66.8 | **210.1** | 312.8 | 0 | pass |
+| 200,000 | after [37541548096](https://github.com/kludw/uber-simulator/actions/runs/37541548096) | EPYC 9V45 | **26.2** | 73.8 | 56.3 | **166.0** | 228.4 | 0 | pass |
+| 250,000 | before [37539921316](https://github.com/kludw/uber-simulator/actions/runs/37539921316) | EPYC 7763 | 176.0 | 118.3 | 53.7 | 366.8 | 487.0 | 0 | pass |
+| 250,000 | after [37541548096](https://github.com/kludw/uber-simulator/actions/runs/37541548096) | EPYC 7763 | **47.5** | 118.3 | 95.6 | **281.3** | 390.2 | 1 | pass |
+| 250,000 | after [37541555132](https://github.com/kludw/uber-simulator/actions/runs/37541555132) | EPYC 7763 | **52.5** | 124.4 | 102.8 | **301.1** | 414.7 | 1 | pass |
+| 300,000 | before [37539921316](https://github.com/kludw/uber-simulator/actions/runs/37539921316) | EPYC 7763 | 248.4 | 144.0 | 80.0 | 497.1 | 655.8 | 6 | fails settle |
+| 300,000 | after [37541548096](https://github.com/kludw/uber-simulator/actions/runs/37541548096) | EPYC 7763 | **70.7** | 157.1 | 129.7 | **382.9** | 523.0 | 2 | pass |
+| 300,000 | after [37541555132](https://github.com/kludw/uber-simulator/actions/runs/37541555132) | EPYC 7763 | **63.4** | 143.8 | 121.0 | **352.5** | 486.3 | 2 | pass |
+
+In process, whole bench at 200k greedy, mean / p95 wall ms per tick, master → branch, same runner:
+
+| Run (attempt, job) | CPU model | Round 1 | Round 2 |
+| --- | --- | --- | --- |
+| [37541560731](https://github.com/kludw/uber-simulator/actions/runs/37541560731) (1, 1) | Xeon 6973P-C | 121.1 / 155.9 → 100.1 / 129.0 | 122.7 / 155.5 → 95.6 / 124.9 |
+| [37541560731](https://github.com/kludw/uber-simulator/actions/runs/37541560731) (1, 2) | Xeon 6973P-C | 146.9 / 183.2 → 122.7 / 153.6 | 145.3 / 181.0 → 117.4 / 146.6 |
+| [37541560731](https://github.com/kludw/uber-simulator/actions/runs/37541560731) (2, 1) | EPYC 7763 | 187.0 / 234.1 → 140.4 / 168.5 | 182.5 / 227.0 → 137.9 / 163.9 |
+| [37541560731](https://github.com/kludw/uber-simulator/actions/runs/37541560731) (2, 2) | EPYC 9V74 | 122.0 / 152.4 → 98.1 / 119.5 | 126.9 / 159.2 → 104.8 / 127.5 |
+
+In process the whole tick is 16-25% faster (mean), 24-25% on the EPYC 7763; peak RSS 642-694 → 648-705 MiB.
+
+- **The `clock.ticked` step is 70-75% cheaper** (176.0 → 47.5-52.5 ms per tick at 250k, 248.4 → 63.4-70.7 at 300k, EPYC 7763; 111.6 → 28.9 at 200k, Xeon 8370C); what is left is the trip scan for queued trips, the nearest search and the offer expiry scan.
+- **Position updates cost more** (`drivers.moved` handle 53.7 → 95.6-102.8 ms at 250k, 80.0 → 121.0-129.7 at 300k): each move now updates the driver's record and, when it crosses a bucket, swaps it between buckets. Net, dispatch's decode + handle falls 18-23% at 250k and 23-29% at 300k.
+- **Greedy 300k keeps up in both runs** (settle p95 486.3 and 523.0 ms, 2 overruns each, every criterion passes), where master fails settle (655.8 ms). 250k passes in all three runs. Dispatch's peak RSS is 4-7% higher (481.9-482.6 MiB against 462.3 at 250k, 542.4-556.8 against 521.7 at 300k): one record per known driver.
+- Next, per these runs: decoding `drivers.moved` (118-157 ms) and position updates (96-130 ms) are now each larger than the step.

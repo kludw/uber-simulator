@@ -1,6 +1,6 @@
 # 0036. Scale to 50k: indexed brain state, spatial driver lookup, exact results
 
-- Status: Accepted
+- Status: Accepted (per-tick dispatch snapshot superseded by 0048)
 - Date: 2026-10-04
 
 ## Context

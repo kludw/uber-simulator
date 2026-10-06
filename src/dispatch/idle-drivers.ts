@@ -4,7 +4,7 @@ import type { DriverId } from "../shared/messages.ts";
 export type IdleDriver = { driverId: DriverId; cell: Cell };
 
 // Square buckets of cellsPerBucket x cellsPerBucket cells. Below
-// linearScanBelow drivers left, a linear scan beats searching mostly empty
+// linearScanBelow idle drivers, a linear scan beats searching mostly empty
 // buckets (ADR 0036). Defaults measured at 50k drivers (docs/performance.md).
 type IdleDriverSearch = {
 	cellsPerBucket: number;
@@ -16,86 +16,190 @@ const defaultSearch: IdleDriverSearch = {
 	linearScanBelow: 64,
 };
 
-// One tick's idle drivers, owned by the caller for that tick: takeNearest
-// removes the driver it returns. Opaque: callers can't name `internals`.
-const internals: unique symbol = Symbol("idle driver index");
-export type IdleDriverIndex = { readonly [internals]: Index };
+// Dispatch's drivers across ticks (ADR 0048): each known or busy driver's
+// cell, whether it is online and busy, and the idle ones (online, not busy)
+// bucketed for the nearest search, updated in place as drivers report and
+// trips change (ADR 0033). Opaque: callers can't name `internals`.
+const internals: unique symbol = Symbol("idle drivers");
+export type IdleDrivers = { readonly [internals]: Drivers };
 
-type Index = {
-	grid: Grid;
-	search: IdleDriverSearch;
-	drivers: readonly IdleDriver[];
-	taken: Set<DriverId>;
-	columns: number;
-	rows: number;
-	// Row-major by bucket; each bucket's drivers not yet taken.
-	buckets: IdleDriver[][];
+// One record per driver, so a move costs one map lookup. bucket is -1 unless
+// idle; slot is its place in the bucket, so leaving is a swap with the
+// bucket's last entry, not a search. A driver offline and not busy has none.
+type Driver = {
+	driverId: DriverId;
+	cell: Cell;
+	online: boolean;
+	busy: boolean;
+	bucket: number;
+	slot: number;
 };
 
-export function indexIdleDrivers(
+type Drivers = {
+	grid: Grid;
+	search: IdleDriverSearch;
+	columns: number;
+	rows: number;
+	byId: Map<DriverId, Driver>;
+	idleCount: number;
+	// Row-major by bucket, unordered within a bucket.
+	buckets: Driver[][];
+};
+
+const notIdle = -1;
+
+export function startIdleDrivers(
 	grid: Grid,
-	drivers: readonly IdleDriver[],
 	search: IdleDriverSearch = defaultSearch,
-): IdleDriverIndex {
+): IdleDrivers {
 	const size = search.cellsPerBucket;
 	const columns = Math.ceil(grid.width / size);
 	const rows = Math.ceil(grid.height / size);
-	const buckets = Array.from(
-		{ length: columns * rows },
-		(): IdleDriver[] => [],
-	);
-	const index: Index = {
-		grid,
-		search,
-		drivers,
-		taken: new Set<DriverId>(),
-		columns,
-		rows,
-		buckets,
+	return {
+		[internals]: {
+			grid,
+			search,
+			columns,
+			rows,
+			byId: new Map(),
+			idleCount: 0,
+			buckets: Array.from({ length: columns * rows }, (): Driver[] => []),
+		},
 	};
-	for (const driver of drivers) bucketOf(index, driver.cell).push(driver);
-	return { [internals]: index };
+}
+
+// A driver went online or moved; a driver first seen moving is known from
+// then on.
+export function placeDriver(
+	idle: IdleDrivers,
+	driverId: DriverId,
+	cell: Cell,
+): void {
+	const drivers = idle[internals];
+	const driver = drivers.byId.get(driverId);
+	if (driver === undefined) {
+		const placed: Driver = {
+			driverId,
+			cell,
+			online: true,
+			busy: false,
+			bucket: notIdle,
+			slot: 0,
+		};
+		drivers.byId.set(driverId, placed);
+		addToBucket(drivers, placed);
+		return;
+	}
+	driver.cell = cell;
+	// Only a busy driver keeps its record while offline; it stays out of the
+	// buckets until freed.
+	if (!driver.online) {
+		driver.online = true;
+		return;
+	}
+	if (driver.bucket === notIdle) return;
+	if (bucketOf(drivers, cell) === driver.bucket) return;
+	removeFromBucket(drivers, driver);
+	addToBucket(drivers, driver);
+}
+
+// A driver went offline. A busy driver stays busy until freed.
+export function removeDriver(idle: IdleDrivers, driverId: DriverId): void {
+	const drivers = idle[internals];
+	const driver = drivers.byId.get(driverId);
+	if (driver === undefined) return;
+	if (driver.bucket !== notIdle) removeFromBucket(drivers, driver);
+	if (driver.busy) driver.online = false;
+	else drivers.byId.delete(driverId);
+}
+
+// A driver was offered a trip. Dispatch offers only idle drivers, and a
+// driver is busy for one trip at a time, so marking any other is a bug.
+export function markBusy(idle: IdleDrivers, driverId: DriverId): void {
+	const drivers = idle[internals];
+	const driver = drivers.byId.get(driverId);
+	if (driver === undefined || driver.bucket === notIdle) {
+		throw new Error(`${driverId} is not idle`);
+	}
+	removeFromBucket(drivers, driver);
+	driver.busy = true;
+}
+
+// A driver's offer or trip is over: idle again if online.
+export function markFree(idle: IdleDrivers, driverId: DriverId): void {
+	const drivers = idle[internals];
+	const driver = drivers.byId.get(driverId);
+	if (driver === undefined || !driver.busy) {
+		throw new Error(`${driverId} is not busy`);
+	}
+	driver.busy = false;
+	if (driver.online) addToBucket(drivers, driver);
+	else drivers.byId.delete(driverId);
+}
+
+// Idle drivers and their cells, ordered by ID (batched matching's columns).
+export function idleDriversById(idle: IdleDrivers): IdleDriver[] {
+	const drivers = idle[internals];
+	const idleDrivers: IdleDriver[] = [];
+	for (const bucket of drivers.buckets) {
+		for (const { driverId, cell } of bucket) {
+			idleDrivers.push({ driverId, cell });
+		}
+	}
+	return idleDrivers.sort((a, b) => (a.driverId < b.driverId ? -1 : 1));
+}
+
+function addToBucket(drivers: Drivers, driver: Driver): void {
+	driver.bucket = bucketOf(drivers, driver.cell);
+	const bucket = drivers.buckets[driver.bucket];
+	if (bucket === undefined) throw new Error(`no bucket ${driver.bucket}`);
+	driver.slot = bucket.length;
+	bucket.push(driver);
+	drivers.idleCount++;
+}
+
+function removeFromBucket(drivers: Drivers, driver: Driver): void {
+	const bucket = drivers.buckets[driver.bucket];
+	const last = bucket?.pop();
+	if (bucket === undefined || last === undefined) {
+		throw new Error(`${driver.driverId} not in its bucket`);
+	}
+	if (last !== driver) {
+		bucket[driver.slot] = last;
+		last.slot = driver.slot;
+	}
+	driver.bucket = notIdle;
+	drivers.idleCount--;
 }
 
 // A cell off the grid (bad input from another service; grid bounds are an
 // event log invariant) goes to the nearest edge bucket. The search stays
 // exact: from an in-grid pickup, the true cell is at least as far as the
 // clamped one, so the ring bound still holds.
-function bucketOf(index: Index, cell: Cell): IdleDriver[] {
-	const size = index.search.cellsPerBucket;
-	const column = Math.min(Math.floor(cell.x / size), index.columns - 1);
-	const row = Math.min(Math.floor(cell.y / size), index.rows - 1);
-	const bucket = index.buckets[row * index.columns + column];
-	if (bucket === undefined) throw new Error(`no bucket (${column}, ${row})`);
-	return bucket;
+function bucketOf(drivers: Drivers, cell: Cell): number {
+	const size = drivers.search.cellsPerBucket;
+	const column = Math.min(Math.floor(cell.x / size), drivers.columns - 1);
+	const row = Math.min(Math.floor(cell.y / size), drivers.rows - 1);
+	return row * drivers.columns + column;
 }
 
-// The driver nearest to the pickup, ties to the lowest ID (plain string
-// order), never one taken or excluded; exactly what a linear scan returns.
-export function takeNearest(
-	idle: IdleDriverIndex,
+// The idle driver nearest to the pickup, ties to the lowest ID (plain string
+// order), never one excluded; exactly what a linear scan returns.
+export function nearestIdle(
+	idle: IdleDrivers,
 	pickup: Cell,
 	excluded: ReadonlySet<DriverId>,
 ): DriverId | undefined {
-	const index = idle[internals];
-	const remaining = index.drivers.length - index.taken.size;
+	const drivers = idle[internals];
 	// The ring bound holds for in-grid pickups only (see bucketOf); a pickup
 	// off the grid is bad input, so take the scan, exact by construction.
 	const pickupOffGrid =
-		pickup.x >= index.grid.width || pickup.y >= index.grid.height;
+		pickup.x >= drivers.grid.width || pickup.y >= drivers.grid.height;
 	const nearest =
-		pickupOffGrid || remaining < index.search.linearScanBelow
-			? scanAll(index, pickup, excluded)
-			: searchRings(index, pickup, excluded);
-	if (nearest === undefined) return undefined;
-	index.taken.add(nearest.driverId);
-	const bucket = bucketOf(index, nearest.cell);
-	const position = bucket.indexOf(nearest);
-	if (position === -1) {
-		throw new Error(`${nearest.driverId} not in its bucket`);
-	}
-	bucket.splice(position, 1);
-	return nearest.driverId;
+		pickupOffGrid || drivers.idleCount < drivers.search.linearScanBelow
+			? scanAll(drivers, pickup, excluded)
+			: searchRings(drivers, pickup, excluded);
+	return nearest?.driverId;
 }
 
 type Nearest = { driver: IdleDriver; distance: number } | undefined;
@@ -115,16 +219,16 @@ function closer(nearest: Nearest, driver: IdleDriver, pickup: Cell): Nearest {
 }
 
 function scanAll(
-	index: Index,
+	drivers: Drivers,
 	pickup: Cell,
 	excluded: ReadonlySet<DriverId>,
 ): IdleDriver | undefined {
 	let nearest: Nearest;
-	for (const driver of index.drivers) {
-		if (index.taken.has(driver.driverId) || excluded.has(driver.driverId)) {
-			continue;
+	for (const bucket of drivers.buckets) {
+		for (const driver of bucket) {
+			if (excluded.has(driver.driverId)) continue;
+			nearest = closer(nearest, driver, pickup);
 		}
-		nearest = closer(nearest, driver, pickup);
 	}
 	return nearest?.driver;
 }
@@ -133,18 +237,18 @@ function scanAll(
 // at up to twice the distance of ring r+1's nearest, so keep expanding until
 // nothing in ring r or beyond can be as near as the best found.
 function searchRings(
-	index: Index,
+	drivers: Drivers,
 	pickup: Cell,
 	excluded: ReadonlySet<DriverId>,
 ): IdleDriver | undefined {
-	const size = index.search.cellsPerBucket;
+	const size = drivers.search.cellsPerBucket;
 	const column = Math.floor(pickup.x / size);
 	const row = Math.floor(pickup.y / size);
 	const lastRing = Math.max(
 		column,
 		row,
-		index.columns - 1 - column,
-		index.rows - 1 - row,
+		drivers.columns - 1 - column,
+		drivers.rows - 1 - row,
 	);
 	let nearest: Nearest;
 	for (let ring = 0; ring <= lastRing; ring++) {
@@ -155,12 +259,12 @@ function searchRings(
 			break;
 		}
 		for (let y = row - ring; y <= row + ring; y++) {
-			if (y < 0 || y >= index.rows) continue;
+			if (y < 0 || y >= drivers.rows) continue;
 			const edgeRow = y === row - ring || y === row + ring;
 			const step = edgeRow ? 1 : 2 * ring;
 			for (let x = column - ring; x <= column + ring; x += step) {
-				if (x < 0 || x >= index.columns) continue;
-				for (const driver of index.buckets[y * index.columns + x] ?? []) {
+				if (x < 0 || x >= drivers.columns) continue;
+				for (const driver of drivers.buckets[y * drivers.columns + x] ?? []) {
 					if (excluded.has(driver.driverId)) continue;
 					nearest = closer(nearest, driver, pickup);
 				}
