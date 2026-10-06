@@ -3,6 +3,7 @@ import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
 import {
 	DriverId,
 	driversMoved,
+	forEachMove,
 	type Offer,
 	Tick,
 	TripId,
@@ -473,11 +474,14 @@ describe("decideDriverShard on tick", () => {
 			{ type: "clock.ticked", tick: tick(1) },
 			random,
 		);
-		expect(
-			outputs.map((output) =>
-				output.type === "drivers.moved" ? output.driverIds.length : output.type,
-			),
-		).toEqual([5000, 1]);
+		const movesPerMessage = outputs.map((output) => {
+			if (output.type !== "drivers.moved") return output.type;
+			let moves = 0;
+			forEachMove(output, () => moves++);
+			return moves;
+		});
+
+		expect(movesPerMessage).toEqual([5000, 1]);
 	});
 
 	test("each idle driver moves, in driver ID order", () => {

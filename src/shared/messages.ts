@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { Cell } from "./grid.ts";
+import { Cell, type Coordinate, cellAt } from "./grid.ts";
 import type { Result } from "./result.ts";
 
 // IDs are valid NATS subject tokens (sim.offers.<driverId>, ADR 0028).
@@ -47,15 +47,17 @@ export type DriverWentOffline = z.infer<typeof DriverWentOffline>;
 
 // drivers.moved's arrays are checked by one refine each, not a schema per
 // element, which was most of this message's Zod time (ADR 0047). Same rules
-// as DriverId and Cell.
+// as DriverId and Coordinate, so the transforms only brand what passed.
 const MovedDriverIds = z
 	.array(z.string())
-	.refine((ids) => ids.every((id) => idPattern.test(id)));
+	.refine((ids) => ids.every((id) => idPattern.test(id)))
+	.transform((ids) => ids as DriverId[]);
 const Coordinates = z
 	.array(z.number())
 	.refine((coordinates) =>
 		coordinates.every((c) => Number.isSafeInteger(c) && c >= 0),
-	);
+	)
+	.transform((coordinates) => coordinates as Coordinate[]);
 
 // Move i is driver driverIds[i] stepping to cell (xs[i], ys[i]): parallel
 // arrays decode faster than an object per move (ADR 0047). A shard publishes
@@ -93,9 +95,14 @@ export function forEachMove(
 	visit: (driverId: DriverId, cell: Cell) => void,
 ): void {
 	for (let i = 0; i < moved.driverIds.length; i++) {
-		// Parsed or built from moves: a valid DriverId and Cell.
-		const cell = { x: moved.xs[i], y: moved.ys[i] } as Cell;
-		visit(moved.driverIds[i] as DriverId, cell);
+		const driverId = moved.driverIds[i];
+		const x = moved.xs[i];
+		const y = moved.ys[i];
+		// Equal lengths: checked by the schema, kept by driversMoved.
+		if (driverId === undefined || x === undefined || y === undefined) {
+			throw new Error("drivers.moved arrays differ in length");
+		}
+		visit(driverId, cellAt(x, y));
 	}
 }
 
