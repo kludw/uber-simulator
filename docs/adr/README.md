@@ -48,3 +48,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0042 | [Subscribe to taken types](0042-subscribe-to-taken-types.md)            | Accepted |
 | 0043 | [Learn drivers from moves](0043-learn-drivers-from-moves.md)          | Accepted |
 | 0044 | [Persister pipelining](0044-persister-pipelining.md)                    | Accepted |
+| 0045 | [Driver moves in batches](0045-publish-driver-moves-in-batches.md)     | Accepted |
