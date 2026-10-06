@@ -3,6 +3,7 @@ import type {
 	DriverArrivedAtDropoff,
 	DriverArrivedAtPickup,
 	DriverId,
+	DriversMoved,
 	SimEvent,
 	Tick,
 	TripId,
@@ -69,17 +70,8 @@ export function applyEvent(view: View, event: SimEvent): View {
 				previousCell: event.cell,
 				movedAt: event.tick,
 			});
-		case "driver.moved": {
-			// Unknown driver: the UI joined mid-run. Its state is unknown until
-			// its next state event; idle is the most common.
-			const driver = view.drivers.get(event.driverId);
-			return withDriver(view, event.driverId, {
-				state: driver?.state ?? "idle",
-				cell: event.cell,
-				previousCell: driver?.cell ?? event.cell,
-				movedAt: event.tick,
-			});
-		}
+		case "drivers.moved":
+			return withMoves(view, event);
 		case "trip.requested": {
 			const waitingRiders = new Map(view.waitingRiders);
 			waitingRiders.set(event.tripId, {
@@ -163,7 +155,7 @@ function withDriverState(
 }
 
 // An unknown driver (UI joined mid-run) appears at the arrival cell; a known
-// one is already there, its driver.moved comes first. A known idle driver's
+// one is already there, its drivers.moved comes first. A known idle driver's
 // arrival is late: over NATS it can follow dispatch's event that freed the
 // driver (offer expired, trip cancelled; ADR 0028), so it is ignored.
 function withArrival(
@@ -184,8 +176,8 @@ function withArrival(
 	});
 }
 
-// withDriver and withoutDriver are the only places drivers change, so
-// driversPerState always matches drivers.
+// withDriver, withMoves and withoutDriver are the only places drivers
+// change, so driversPerState always matches drivers.
 function withDriver(view: View, driverId: DriverId, driver: DriverView): View {
 	const drivers = new Map(view.drivers);
 	const driversPerState = { ...view.driversPerState };
@@ -193,6 +185,26 @@ function withDriver(view: View, driverId: DriverId, driver: DriverView): View {
 	if (previous !== undefined) driversPerState[previous.state]--;
 	driversPerState[driver.state]++;
 	drivers.set(driverId, driver);
+	return { ...view, drivers, driversPerState };
+}
+
+// One copy of drivers per message, not per move: a message carries up to
+// 5,000 moves (ADR 0045). A move keeps its driver's state; an unknown driver
+// (the UI joined mid-run) is idle, the most common state, until its next
+// state event.
+function withMoves(view: View, moved: DriversMoved): View {
+	const drivers = new Map(view.drivers);
+	const driversPerState = { ...view.driversPerState };
+	for (const { driverId, cell } of moved.moves) {
+		const previous = drivers.get(driverId);
+		if (previous === undefined) driversPerState.idle++;
+		drivers.set(driverId, {
+			state: previous?.state ?? "idle",
+			cell,
+			previousCell: previous?.cell ?? cell,
+			movedAt: moved.tick,
+		});
+	}
 	return { ...view, drivers, driversPerState };
 }
 

@@ -38,10 +38,11 @@ describe("subscriptionFor", () => {
 		const watched = subscriptionFor("?replay=run-42");
 		if (!watched.ok) throw new Error("expected a subscription");
 		const published = replaySubject(RunId.parse("run-42"), {
-			type: "driver.moved",
+			type: "drivers.moved",
 			tick: Tick.parse(3),
-			driverId: DriverId.parse("d-1"),
-			cell: Cell.parse({ x: 0, y: 0 }),
+			moves: [
+				{ driverId: DriverId.parse("d-1"), cell: Cell.parse({ x: 0, y: 0 }) },
+			],
 		});
 		expect(covers(watched.value.subject, published)).toBe(true);
 	});
