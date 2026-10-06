@@ -1,0 +1,25 @@
+name: decode-bench
+
+# Experiment for #222, not merged: decode micro-benchmark of drivers.moved shapes.
+on:
+  push:
+    branches: [222-exp-decode-bench]
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: |
+          echo "cpu: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2)"
+          echo "runner: $(nproc) cpus; load average: $(cut -d' ' -f1-3 /proc/loadavg)"
+          bun scratch/decode-moves.ts 1000
+          bun scratch/decode-moves.ts 1000
