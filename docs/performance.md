@@ -1022,3 +1022,5 @@ Same `loadtest` workflow and scenario as [After milestone 18](#after-milestone-1
 ### Report
 
 The report now states the observer's own lateness: the most late `clock.ticked` receipt against the clock's absolute schedule ([ADR 0037](adr/0037-end-to-end-load-test.md)), anchored at the receipt closest to it, with its tick, and a `warning:` line when that is 100 ms or more (after tick 2, receipts were at most 46 ms late in these runs). It is a warning, not a criterion: a late tick 1 doesn't change the verdicts. The schedule is anchored at the observer's earliest receipt rather than the clock's start time, so the lateness counts from the best-case delivery, not from publish.
+
+With it, [37519709345](https://github.com/kludw/uber-simulator/actions/runs/37519709345) (greedy, EPYC 9V74 at 200k, EPYC 7763 at 250k) reported deviations of 126.2 and 671.0 ms and named the observer's receipt of tick 1 as 132.7 and 672.6 ms late, both with the warning.
