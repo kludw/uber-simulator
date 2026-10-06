@@ -130,7 +130,8 @@ export function createSettleTracker(ticks: number): SettleTracker {
 	};
 }
 
-// Index = tick, as in createSettleTracker.
+// Index = tick, as in createSettleTracker. Ticks not received are NaN, and
+// NaN compares false, so they are skipped.
 function observerLate(clockAt: Float64Array): { ms: number; tick: number } {
 	const offset = (tick: number) => (clockAt[tick] ?? Number.NaN) - tick * 1000;
 	let onSchedule = Number.POSITIVE_INFINITY;
