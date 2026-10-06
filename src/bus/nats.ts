@@ -42,6 +42,8 @@ export type ConnectionStatus =
 // how many reached at least one subscriber, and ms decoding them and in
 // subscribers (accepts and handlers, the handlers' publishes included),
 // rounded. intervalMs minus the two is mostly waiting for messages.
+// byType splits the messages that decoded by their type (#205); the rest
+// count only in the totals.
 export type MessagesTimed = {
 	type: "messages_timed";
 	intervalMs: number;
@@ -49,7 +51,10 @@ export type MessagesTimed = {
 	decodeMs: number;
 	delivered: number;
 	handleMs: number;
+	byType: Partial<Record<MessageType, TypeTiming>>;
 };
+
+type TypeTiming = { received: number; decodeMs: number; handleMs: number };
 
 const timingIntervalMs = 10_000;
 
@@ -97,6 +102,7 @@ export async function connectNatsBus(options: {
 	const now = options.now ?? (() => performance.now());
 	const noMessages = { received: 0, decodeMs: 0, delivered: 0, handleMs: 0 };
 	let timing = { ...noMessages };
+	let byType = new Map<MessageType, TypeTiming>();
 	let intervalStart = now();
 	const logTiming = (at: number) => {
 		options.logTiming({
@@ -106,9 +112,20 @@ export async function connectNatsBus(options: {
 			decodeMs: Math.round(timing.decodeMs),
 			delivered: timing.delivered,
 			handleMs: Math.round(timing.handleMs),
+			byType: Object.fromEntries(
+				[...byType].map(([type, typeTiming]) => [
+					type,
+					{
+						received: typeTiming.received,
+						decodeMs: Math.round(typeTiming.decodeMs),
+						handleMs: Math.round(typeTiming.handleMs),
+					},
+				]),
+			),
 		});
 		intervalStart = at;
 		timing = { ...noMessages };
+		byType = new Map();
 	};
 	// A throw inside the client's callback would only stop the client's
 	// reader, with a console.log: a bug (or a subscription error) ends
@@ -133,7 +150,15 @@ export async function connectNatsBus(options: {
 		const decoded = now();
 		timing.received++;
 		timing.decodeMs += decoded - decodeStart;
+		let typeTiming: TypeTiming | undefined;
 		if (parsed.ok) {
+			const { type } = parsed.value;
+			typeTiming = byType.get(type) ?? {
+				received: 0,
+				decodeMs: 0,
+				handleMs: 0,
+			};
+			byType.set(type, typeTiming);
 			let delivered = false;
 			for (const subscriber of subscribers) {
 				if (subscriber(parsed.value)) delivered = true;
@@ -144,6 +169,11 @@ export async function connectNatsBus(options: {
 		}
 		const handled = now();
 		timing.handleMs += handled - decoded;
+		if (typeTiming) {
+			typeTiming.received++;
+			typeTiming.decodeMs += decoded - decodeStart;
+			typeTiming.handleMs += handled - decoded;
+		}
 		if (handled - intervalStart >= timingIntervalMs) logTiming(handled);
 	};
 	const inputs = new Set(options.inputs);
