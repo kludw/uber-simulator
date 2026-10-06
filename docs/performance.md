@@ -1024,3 +1024,28 @@ Same `loadtest` workflow and scenario as [After milestone 18](#after-milestone-1
 The report now states the observer's own lateness: the most late `clock.ticked` receipt against the clock's absolute schedule ([ADR 0037](adr/0037-end-to-end-load-test.md)), anchored at the receipt closest to it, with its tick, and a `warning:` line when that is 100 ms or more (after tick 2, receipts were at most 46 ms late in these runs). It is a warning, not a criterion: a late tick 1 or 2 moves the verdicts' inputs only by the bound above, so the warning says when to check a run near a limit. The schedule is anchored at the observer's earliest receipt rather than the clock's start time, so the lateness counts from the best-case delivery, not from publish.
 
 With it, [37519709345](https://github.com/kludw/uber-simulator/actions/runs/37519709345) (greedy, EPYC 9V74 at 200k, EPYC 7763 at 250k) reported deviations of 126.2 and 671.0 ms and named the observer's receipt of tick 1 as 132.7 and 672.6 ms late, both with the warning.
+
+## Observer lateness
+
+Whether the load test's observer receives events late at large fleets, which would inflate settle and understate live limits, [#218](https://github.com/kludw/uber-simulator/issues/218): it JSON-decodes every message to read its tick, 108-241 ms per tick at 200k-300k, mostly `drivers.moved` ([Clock deviation](#clock-deviation)). Measured 2026-10-06.
+
+### Method
+
+Same `loadtest` workflow and scenario as [After milestone 18](#after-milestone-18) (greedy, 600 ticks), on a branch with temporary instrumentation, not merged (`218-exp-observer-lateness`): a second, light observer in its own process subscribed to `sim.events.>` with a synchronous callback that stamps the wall clock on receipt and reads the tick from the payload's first 200 bytes with a regex, never parsing the JSON. Both observers logged, per tick, their receipt of `clock.ticked` and of the tick's last other event (`performance.timeOrigin + performance.now()`, one host, one clock). Settle per observer as ADR 0037 defines it; "late" = the load test's observer's receipt minus the light observer's. This isolates the observer's own decoding and event loop; delays both share (NATS delivery, host contention) are part of settle either way. Runs: [37522772055](https://github.com/kludw/uber-simulator/actions/runs/37522772055) and [37522798299](https://github.com/kludw/uber-simulator/actions/runs/37522798299), 200k / 250k / 300k each.
+
+### Results
+
+Ticks 3-600 (ticks 1-2 carry the startup burst of [Clock deviation](#clock-deviation)); settle p95 and overruns over all 600 ticks as the report counts them.
+
+| Drivers | Run | CPU model | Settle p95, observer / light | Overruns, observer / light | Last event received late, median / p95 / max | Settle difference, median / p95 / max |
+| ---: | --- | --- | --- | --- | --- | --- |
+| 200,000 | [37522772055](https://github.com/kludw/uber-simulator/actions/runs/37522772055) | Xeon 6973P-C | 426.5 / 427.6 ms | 0 / 0 | 0.9 / 4.5 / 9.9 ms | 0.9 / 6.6 / 21.0 ms |
+| 200,000 | [37522798299](https://github.com/kludw/uber-simulator/actions/runs/37522798299) | Xeon 6973P-C | 434.6 / 430.3 ms | 0 / 0 | 1.1 / 5.5 / 14.8 ms | 0.8 / 7.0 / 18.4 ms |
+| 250,000 | [37522772055](https://github.com/kludw/uber-simulator/actions/runs/37522772055) | EPYC 7763 | 738.7 / 736.7 ms | 5 / 5 | 1.4 / 8.0 / 15.2 ms | 1.5 / 11.6 / 24.2 ms |
+| 250,000 | [37522798299](https://github.com/kludw/uber-simulator/actions/runs/37522798299) | EPYC 7763 | 795.3 / 797.3 ms | 5 / 5 | 1.4 / 8.1 / 154.7 ms | 1.6 / 11.6 / 154.9 ms |
+| 300,000 | [37522772055](https://github.com/kludw/uber-simulator/actions/runs/37522772055) | EPYC 7763 | 1,640.8 / 1,628.5 ms | 57 / 57 | 2.0 / 14.6 / 538.4 ms | 2.1 / 16.9 / 170.4 ms |
+| 300,000 | [37522798299](https://github.com/kludw/uber-simulator/actions/runs/37522798299) | EPYC 7763 | 1,746.1 / 1,726.5 ms | 69 / 69 | 1.8 / 15.0 / 353.4 ms | 1.5 / 19.3 / 287.1 ms |
+
+- **The observer is not late enough to matter.** Its receipt of a tick's last event trails the light observer's by a median 0.9-2.0 ms (p95 4.5-15.0 ms), and settle p95 differs by -2.0 to +4.3 ms at 200k-250k and +12.3 to +19.6 ms at 300k, with the same overrun counts. The largest values at 300k (538.4 and 353.4 ms) are tick 3, the tail of the startup burst; mid-run maxima are 126-279 ms (300k, ticks that overran or follow an overrun) and 155 ms at 250k (tick 5, after an overrun), too few to move p95.
+- **Why decoding doesn't delay it**: `trip.matched` (dispatch) closes 98.7-99.8% of ticks and lands 334-903 ms after `clock.ticked` on average (settle mean); the shards' `drivers.moved` arrive first (inferred, not logged per message; corroborated by ticks 3-4 at 300k, where the observer was still behind from the startup burst and its last-event receipts were 156-538 ms late), so the observer has decoded them (108-241 ms) and is idle by the time the closing event arrives.
+- **No verdict changes**: the light observer passes 200k and fails settle at 250k (736.7-797.3 ms) and settle and overruns at 300k exactly as the report did. No fix: ADR 0037's method stands. Slow consumers (1 / 0 at 250k and 2 / 2 at 300k, 6-13 s after NATS started, per its log) aren't compared with milestone 18: the light observer is an extra connection.
