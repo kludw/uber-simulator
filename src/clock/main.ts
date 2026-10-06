@@ -15,5 +15,8 @@ const schedule = {
 for (let tick = Tick.parse(1); ; tick = Tick.parse(tick + 1)) {
 	await Bun.sleep(new Date(tickDueAt(tick, schedule)));
 	if (stopping.aborted) break;
+	const dueAt = tickDueAt(tick, schedule);
+	const wokeAt = Date.now();
 	bus.publish({ type: "clock.ticked", tick });
+	console.log(JSON.stringify({ service: "clock", type: "exp_tick", tick, dueAt, wokeLateMs: wokeAt - dueAt, publishedLateMs: Date.now() - dueAt }));
 }

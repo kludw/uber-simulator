@@ -181,9 +181,34 @@ const { promise: lastTickObserved, resolve: markLastTick } =
 	Promise.withResolvers<number>();
 const subscription = observer.subscribe(simEventSubjects);
 await observer.flush();
+let expBusyMs = 0;
+let expMaxMessageMs = 0;
+let expMessages = 0;
+let expBytes = 0;
+let expLastLoopCheck = Date.now();
+let expMaxLoopLagMs = 0;
+setInterval(() => {
+	const now = Date.now();
+	const lag = now - expLastLoopCheck - 50;
+	if (lag > 50) console.error(`[loadtest] exp_loop_lag at ${now} lagMs ${lag}`);
+	expMaxLoopLagMs = Math.max(expMaxLoopLagMs, lag);
+	expLastLoopCheck = now;
+}, 50);
 const observing = (async () => {
 	for await (const message of subscription) {
 		const atMs = performance.now();
+		const atWall = Date.now();
+		expMessages++;
+		expBytes += message.data.length;
+		if (message.subject === clockSubject) {
+			const t = (JSON.parse(message.string()) as { tick: number }).tick;
+			console.error(`[loadtest] exp_tick_received ${JSON.stringify({ tick: t, at: atWall, busyMs: expBusyMs, maxMessageMs: expMaxMessageMs, messages: expMessages, bytes: expBytes, maxLoopLagMs: expMaxLoopLagMs })}`);
+			expBusyMs = 0;
+			expMaxMessageMs = 0;
+			expMessages = 0;
+			expBytes = 0;
+			expMaxLoopLagMs = 0;
+		}
 		let payload: unknown;
 		try {
 			payload = message.json();
@@ -198,6 +223,9 @@ const observing = (async () => {
 			continue;
 		}
 		const { tick } = decoded.data;
+		const expSpent = performance.now() - atMs;
+		expBusyMs += expSpent;
+		expMaxMessageMs = Math.max(expMaxMessageMs, expSpent);
 		if (message.subject !== clockSubject) {
 			settle.eventReceived(tick, atMs, message.subject, message.data.length);
 			continue;
