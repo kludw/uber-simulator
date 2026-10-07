@@ -380,6 +380,62 @@ function runTicks(ticks: number, seed: number): Decision {
 	return { state, outputs };
 }
 
+function requestsPerTick(
+	meanPerTick: number,
+	ticks: number,
+	seed: number,
+): number[] {
+	const random = createRandom(seed);
+	let state = startRiders({ grid, requestsPerMinute: meanPerTick * 60 });
+	const counts: number[] = [];
+	for (let n = 1; n <= ticks; n++) {
+		const decision = decideRiders(
+			state,
+			{ type: "clock.ticked", tick: tick(n) },
+			random,
+		);
+		state = decision.state;
+		counts.push(
+			decision.outputs.filter((output) => output.type === "request_trip")
+				.length,
+		);
+	}
+	return counts;
+}
+
+function sampleMean(counts: number[]): number {
+	return counts.reduce((sum, count) => sum + count, 0) / counts.length;
+}
+
+describe("decideRiders with large demand", () => {
+	// 100 ticks at mean 1,000: standard error sqrt(1000 / 100) ~3.2, so +-20 is ~6 SE.
+	test("spawns 1,000 riders per tick on average at a mean of 1,000", () => {
+		const counts = requestsPerTick(1000, 100, 42);
+		expect(Math.abs(sampleMean(counts) - 1000)).toBeLessThanOrEqual(20);
+	});
+
+	// 20 ticks at mean 10,000: standard error sqrt(10000 / 20) ~22, so +-110 is ~5 SE.
+	test("spawns 10,000 riders per tick on average at a mean of 10,000", () => {
+		const counts = requestsPerTick(10000, 20, 42);
+		expect(Math.abs(sampleMean(counts) - 10000)).toBeLessThanOrEqual(110);
+	});
+
+	// Poisson variance = mean. 200 ticks: sample variance SE ~1000 * sqrt(2 / 199) ~100, so +-400 is ~4 SE.
+	test("requests per tick vary like Poisson at a mean of 1,000", () => {
+		const counts = requestsPerTick(1000, 200, 42);
+		const mean = sampleMean(counts);
+		const variance =
+			counts.reduce((sum, count) => sum + (count - mean) ** 2, 0) /
+			(counts.length - 1);
+		expect(Math.abs(variance - 1000)).toBeLessThanOrEqual(400);
+	});
+
+	// Pinned from master before #246: means Knuth's method handled stay drawn the same way.
+	test("a mean of 700 gives the pinned request counts for seed 7", () => {
+		expect(requestsPerTick(700, 5, 7)).toEqual([707, 670, 662, 712, 685]);
+	});
+});
+
 describe("decideRiders over many ticks", () => {
 	// 6000 ticks at 10/min -> 1000 expected; Poisson sd ~32, so +-100 is ~3 sd.
 	test("spawns about 10 riders per minute", () => {
