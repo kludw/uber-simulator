@@ -1,3 +1,4 @@
+import type { Bus } from "../bus/bus.ts";
 import { createInMemoryBus } from "../bus/in-memory.ts";
 import {
 	connectNatsBus,
@@ -32,6 +33,10 @@ export type RunObservers = {
 	// Once each tick's messages are all delivered, with the result so far
 	// (`bun run bench` times ticks and reports partial runs with it).
 	onTickDone?: (tick: Tick, soFar: RunResult) => void;
+	// Each message as it reaches a service, just before it handles it: what
+	// that service saw, which differs from the event log under lossShare
+	// (tests of recovery, ADR 0041/0050).
+	onDelivered?: (service: string, message: Message) => void;
 };
 
 // Runs every service over one in-memory bus, the runner acting as clock
@@ -51,7 +56,11 @@ export function runInProcess(
 ): RunResult;
 export function runInProcess(
 	config: InProcessConfig & { keepEventLog?: boolean },
-	{ onMessage = () => {}, onTickDone = () => {} }: RunObservers = {},
+	{
+		onMessage = () => {},
+		onTickDone = () => {},
+		onDelivered,
+	}: RunObservers = {},
 ): RunResult & { eventLog?: Message[] } {
 	const bus = createInMemoryBus({
 		loss: {
@@ -67,7 +76,21 @@ export function runInProcess(
 		onMessage(message);
 	});
 	for (const service of allServices(config)) {
-		service.start(bus, (rejected) =>
+		const serviceBus: Bus = onDelivered
+			? {
+					publish: bus.publish,
+					subscribe: (types, handle, region) =>
+						bus.subscribe(
+							types,
+							(message) => {
+								onDelivered(service.name, message);
+								handle(message);
+							},
+							region,
+						),
+				}
+			: bus;
+		service.start(serviceBus, (rejected) =>
 			result.rejected.push({ service: service.name, rejected }),
 		);
 	}
