@@ -295,7 +295,7 @@ How many drivers? Live (the distributed stack over NATS, `bun run loadtest`, 600
 
 | Matching | `1x1` | `2x1` | `2x2` |
 | --- | ---: | ---: | ---: |
-| greedy | 400k | 375k | 350k |
+| greedy | 500k | 375k | 350k |
 | batched | 150k | 225k | 250k |
 
 Greedy is highest with one dispatch process; batched gains from regions. Both fail settle first, and near the limit the verdict depends on the runner's CPU model. In process (`bun run bench`, no NATS), one greedy run kept real time at 500k with demand capped below the spec ratio (a bug since fixed); batched predates [ADR 0051](docs/adr/0051-search-untouched-drivers-in-batched-matching.md); neither is re-measured. Runs, what fails first, and how to measure: [docs/performance.md](docs/performance.md).

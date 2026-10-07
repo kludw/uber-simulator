@@ -398,19 +398,19 @@ test("forEachWentOnline visits a message's drivers in order, by driver ID", () =
 	]);
 });
 
-test("forEachDriverAt visits each driver's ID and coordinates in order", () => {
-	const visited: [string, number, number][] = [];
+test("forEachDriverAt visits each driver's index and coordinates in order", () => {
+	const visited: [number, number, number][] = [];
 
 	forEachDriverAt(
 		driversMoved(tick, Region.parse(0), 12, moves),
-		(id, x, y) => {
-			visited.push([id, x, y]);
+		(driverIndex, x, y) => {
+			visited.push([driverIndex, x, y]);
 		},
 	);
 
 	expect(visited).toEqual([
-		["d-10", 1, 2],
-		["d-01", 3, 4],
+		[10, 1, 2],
+		[1, 3, 4],
 	]);
 });
 

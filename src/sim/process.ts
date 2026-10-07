@@ -13,17 +13,25 @@ import {
 } from "./config.ts";
 import type { SimService } from "./services.ts";
 
-// One JSON line per entry on stdout, tagged with the service.
+// One JSON line per entry on stdout, tagged with the service. An array of
+// more than loggedArrayEntries entries (a rejected drivers.* chunk's up to
+// 5,000) is written as its length.
+const loggedArrayEntries = 100;
+
 export function log(
 	service: string,
 	entry: { type: string; [field: string]: unknown },
 ): void {
 	console.log(
-		JSON.stringify({ service, ...entry }, (_, value: unknown) =>
-			value instanceof Error
-				? { name: value.name, message: value.message }
-				: value,
-		),
+		JSON.stringify({ service, ...entry }, (_, value: unknown) => {
+			if (value instanceof Error) {
+				return { name: value.name, message: value.message };
+			}
+			if (Array.isArray(value) && value.length > loggedArrayEntries) {
+				return { length: value.length };
+			}
+			return value;
+		}),
 	);
 }
 

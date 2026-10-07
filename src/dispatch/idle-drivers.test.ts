@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import {
 	type Cell,
 	type Coordinate,
 	cellIn,
 	type Grid,
 } from "../shared/grid.ts";
-import { DriverId } from "../shared/messages.ts";
+import type { DriverId } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
 import {
 	oneRegion,
@@ -23,11 +24,14 @@ import {
 	nearestIdle,
 	nearestIdleSkipping,
 	placeDriver,
+	placeDriverAt,
 	removeDriver,
 	startIdleDrivers,
 } from "./idle-drivers.ts";
 
 const grid: Grid = { width: 20, height: 20 };
+// Two-digit IDs (ADR 0052): driver 2 is d-02, driver 10 is d-10.
+const fleetSize = 12;
 const none = new Set<DriverId>();
 
 function cell(x: number, y: number): Cell {
@@ -41,102 +45,109 @@ function xy(x: number, y: number): [Coordinate, Coordinate] {
 	return [at.x, at.y];
 }
 
-function driver(id: string, x: number, y: number) {
-	return { driverId: DriverId.parse(id), cell: cell(x, y) };
+function i(index: number): DriverIndex {
+	return DriverIndex.parse(index);
+}
+
+function id(index: number): DriverId {
+	return driverIdAt(fleetSize, i(index));
+}
+
+function driver(index: number, x: number, y: number): IdleDriver {
+	return { driverId: id(index), cell: cell(x, y) };
+}
+
+function at(index: number, x: number, y: number) {
+	return { driverIndex: i(index), cell: cell(x, y) };
 }
 
 function placed(
-	drivers: readonly IdleDriver[],
-	search?: Parameters<typeof startIdleDrivers>[2],
+	drivers: readonly ReturnType<typeof at>[],
+	search?: Parameters<typeof startIdleDrivers>[3],
 ): IdleDrivers {
-	const index = startIdleDrivers(grid, undefined, search);
-	for (const { driverId, cell: at } of drivers)
-		placeDriver(index, driverId, at.x, at.y);
+	const index = startIdleDrivers(grid, fleetSize, undefined, search);
+	for (const { driverIndex, cell: placedAt } of drivers)
+		placeDriverAt(index, driverIndex, placedAt.x, placedAt.y);
 	return index;
 }
 
 describe("nearestIdle", () => {
 	test("returns the idle driver nearest to the pickup", () => {
-		const index = startIdleDrivers(grid);
-		placeDriver(index, DriverId.parse("d-1"), ...xy(15, 15));
-		placeDriver(index, DriverId.parse("d-2"), ...xy(6, 4));
-		placeDriver(index, DriverId.parse("d-3"), ...xy(0, 0));
+		const index = startIdleDrivers(grid, fleetSize);
+		placeDriverAt(index, i(1), ...xy(15, 15));
+		placeDriverAt(index, i(2), ...xy(6, 4));
+		placeDriverAt(index, i(3), ...xy(0, 0));
 
-		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-2"));
+		expect(nearestIdle(index, cell(5, 5), none)).toBe(id(2));
 	});
 
 	test("finds a driver by the cell it last moved to", () => {
-		const index = startIdleDrivers(grid);
-		placeDriver(index, DriverId.parse("d-1"), ...xy(15, 15));
-		placeDriver(index, DriverId.parse("d-2"), ...xy(6, 4));
-		placeDriver(index, DriverId.parse("d-2"), ...xy(19, 19));
+		const index = startIdleDrivers(grid, fleetSize);
+		placeDriverAt(index, i(1), ...xy(15, 15));
+		placeDriverAt(index, i(2), ...xy(6, 4));
+		placeDriverAt(index, i(2), ...xy(19, 19));
 
-		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-1"));
+		expect(nearestIdle(index, cell(5, 5), none)).toBe(id(1));
 	});
 
 	test("never returns a busy driver", () => {
-		const index = startIdleDrivers(grid);
-		placeDriver(index, DriverId.parse("d-1"), ...xy(15, 15));
-		placeDriver(index, DriverId.parse("d-2"), ...xy(6, 4));
-		markBusy(index, DriverId.parse("d-2"));
+		const index = startIdleDrivers(grid, fleetSize);
+		placeDriverAt(index, i(1), ...xy(15, 15));
+		placeDriverAt(index, i(2), ...xy(6, 4));
+		markBusy(index, id(2));
 
-		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-1"));
+		expect(nearestIdle(index, cell(5, 5), none)).toBe(id(1));
 	});
 
 	test("finds a freed driver by the cell it moved to while busy", () => {
-		const index = startIdleDrivers(grid);
-		placeDriver(index, DriverId.parse("d-1"), ...xy(8, 8));
-		placeDriver(index, DriverId.parse("d-2"), ...xy(15, 15));
-		markBusy(index, DriverId.parse("d-2"));
-		placeDriver(index, DriverId.parse("d-2"), ...xy(5, 6));
-		markFree(index, DriverId.parse("d-2"));
+		const index = startIdleDrivers(grid, fleetSize);
+		placeDriverAt(index, i(1), ...xy(8, 8));
+		placeDriverAt(index, i(2), ...xy(15, 15));
+		markBusy(index, id(2));
+		placeDriverAt(index, i(2), ...xy(5, 6));
+		markFree(index, id(2));
 
-		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-2"));
+		expect(nearestIdle(index, cell(5, 5), none)).toBe(id(2));
 	});
 
 	test("never returns a driver excluded for the trip", () => {
-		const index = placed([driver("d-1", 15, 15), driver("d-2", 6, 4)]);
+		const index = placed([at(1, 15, 15), at(2, 6, 4)]);
 
-		expect(
-			nearestIdle(index, cell(5, 5), new Set([DriverId.parse("d-2")])),
-		).toBe(DriverId.parse("d-1"));
+		expect(nearestIdle(index, cell(5, 5), new Set([id(2)]))).toBe(id(1));
 	});
 
 	test("returns no driver when none is idle", () => {
-		const index = placed([driver("d-1", 15, 15)]);
-		markBusy(index, DriverId.parse("d-1"));
+		const index = placed([at(1, 15, 15)]);
+		markBusy(index, id(1));
 
 		expect(nearestIdle(index, cell(5, 5), none)).toBeUndefined();
 	});
 
-	test("ties go to the lowest driver ID in plain string order", () => {
-		const index = placed([
-			driver("d-10", 5, 7),
-			driver("d-2", 7, 5),
-			driver("d-3", 5, 3),
-		]);
+	// Within a fleet, index order is ID order (ADR 0052).
+	test("ties go to the lowest driver ID", () => {
+		const index = placed([at(10, 5, 7), at(2, 7, 5), at(3, 5, 3)]);
 
-		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-10"));
+		expect(nearestIdle(index, cell(5, 5), none)).toBe(id(2));
 	});
 
 	test("never returns a removed driver", () => {
-		const index = startIdleDrivers(grid);
-		placeDriver(index, DriverId.parse("d-1"), ...xy(15, 15));
-		placeDriver(index, DriverId.parse("d-2"), ...xy(6, 4));
-		removeDriver(index, DriverId.parse("d-2"));
+		const index = startIdleDrivers(grid, fleetSize);
+		placeDriverAt(index, i(1), ...xy(15, 15));
+		placeDriverAt(index, i(2), ...xy(6, 4));
+		removeDriver(index, id(2));
 
-		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-1"));
+		expect(nearestIdle(index, cell(5, 5), none)).toBe(id(1));
 	});
 
 	test("never returns a driver removed while busy once it is freed", () => {
-		const index = startIdleDrivers(grid);
-		placeDriver(index, DriverId.parse("d-1"), ...xy(15, 15));
-		placeDriver(index, DriverId.parse("d-2"), ...xy(6, 4));
-		markBusy(index, DriverId.parse("d-2"));
-		removeDriver(index, DriverId.parse("d-2"));
-		markFree(index, DriverId.parse("d-2"));
+		const index = startIdleDrivers(grid, fleetSize);
+		placeDriverAt(index, i(1), ...xy(15, 15));
+		placeDriverAt(index, i(2), ...xy(6, 4));
+		markBusy(index, id(2));
+		removeDriver(index, id(2));
+		markFree(index, id(2));
 
-		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-1"));
+		expect(nearestIdle(index, cell(5, 5), none)).toBe(id(1));
 	});
 });
 
@@ -149,37 +160,37 @@ describe("a region's drivers", () => {
 	);
 
 	test("a driver moving out of the region is no longer idle in it", () => {
-		const index = startIdleDrivers(grid, leftHalf);
-		placeDriver(index, DriverId.parse("d-1"), ...xy(9, 5));
-		placeDriver(index, DriverId.parse("d-1"), ...xy(10, 5));
+		const index = startIdleDrivers(grid, fleetSize, leftHalf);
+		placeDriverAt(index, i(1), ...xy(9, 5));
+		placeDriverAt(index, i(1), ...xy(10, 5));
 
 		expect(idleDriversById(index)).toEqual([]);
 	});
 
 	test("a busy driver moving out of the region is idle again when freed back inside", () => {
-		const index = startIdleDrivers(grid, leftHalf);
-		placeDriver(index, DriverId.parse("d-1"), ...xy(9, 5));
-		markBusy(index, DriverId.parse("d-1"));
-		placeDriver(index, DriverId.parse("d-1"), ...xy(10, 5));
-		placeDriver(index, DriverId.parse("d-1"), ...xy(9, 6));
-		markFree(index, DriverId.parse("d-1"));
+		const index = startIdleDrivers(grid, fleetSize, leftHalf);
+		placeDriverAt(index, i(1), ...xy(9, 5));
+		markBusy(index, id(1));
+		placeDriverAt(index, i(1), ...xy(10, 5));
+		placeDriverAt(index, i(1), ...xy(9, 6));
+		markFree(index, id(1));
 
-		expect(idleDriversById(index)).toEqual([driver("d-1", 9, 6)]);
+		expect(idleDriversById(index)).toEqual([driver(1, 9, 6)]);
 	});
 
 	test("a busy driver freed outside the region is not idle in it", () => {
-		const index = startIdleDrivers(grid, leftHalf);
-		placeDriver(index, DriverId.parse("d-1"), ...xy(9, 5));
-		markBusy(index, DriverId.parse("d-1"));
-		placeDriver(index, DriverId.parse("d-1"), ...xy(10, 5));
-		markFree(index, DriverId.parse("d-1"));
+		const index = startIdleDrivers(grid, fleetSize, leftHalf);
+		placeDriverAt(index, i(1), ...xy(9, 5));
+		markBusy(index, id(1));
+		placeDriverAt(index, i(1), ...xy(10, 5));
+		markFree(index, id(1));
 
 		expect(idleDriversById(index)).toEqual([]);
 	});
 
 	test("a driver first seen outside the region is not idle in it", () => {
-		const index = startIdleDrivers(grid, leftHalf);
-		placeDriver(index, DriverId.parse("d-1"), ...xy(10, 5));
+		const index = startIdleDrivers(grid, fleetSize, leftHalf);
+		placeDriverAt(index, i(1), ...xy(10, 5));
 
 		expect(idleDriversById(index)).toEqual([]);
 	});
@@ -189,34 +200,30 @@ describe("a region's drivers", () => {
 // can end.
 describe("busy marks", () => {
 	test("marking a driver busy that isn't idle is a bug", () => {
-		const index = placed([driver("d-1", 3, 3)]);
-		markBusy(index, DriverId.parse("d-1"));
+		const index = placed([at(1, 3, 3)]);
+		markBusy(index, id(1));
 
-		expect(() => markBusy(index, DriverId.parse("d-1"))).toThrow();
+		expect(() => markBusy(index, id(1))).toThrow();
 	});
 
 	test("marking an unknown driver busy is a bug", () => {
 		const index = placed([]);
 
-		expect(() => markBusy(index, DriverId.parse("d-1"))).toThrow();
+		expect(() => markBusy(index, id(1))).toThrow();
 	});
 
 	test("freeing a driver that isn't busy is a bug", () => {
-		const index = placed([driver("d-1", 3, 3)]);
+		const index = placed([at(1, 3, 3)]);
 
-		expect(() => markFree(index, DriverId.parse("d-1"))).toThrow();
+		expect(() => markFree(index, id(1))).toThrow();
 	});
 });
 
 describe("idleCount", () => {
 	test("counts online drivers that are not busy", () => {
-		const index = placed([
-			driver("d-1", 1, 1),
-			driver("d-2", 2, 2),
-			driver("d-3", 3, 3),
-		]);
-		markBusy(index, DriverId.parse("d-1"));
-		removeDriver(index, DriverId.parse("d-2"));
+		const index = placed([at(1, 1, 1), at(2, 2, 2), at(3, 3, 3)]);
+		markBusy(index, id(1));
+		removeDriver(index, id(2));
 
 		expect(idleCount(index)).toBe(1);
 	});
@@ -224,38 +231,23 @@ describe("idleCount", () => {
 
 describe("nearestIdleSkipping", () => {
 	test("returns the nearest idle driver the predicate keeps, with its cell", () => {
-		const index = placed([
-			driver("d-1", 15, 15),
-			driver("d-2", 6, 4),
-			driver("d-3", 4, 6),
-		]);
+		const index = placed([at(1, 15, 15), at(2, 6, 4), at(3, 4, 6)]);
 
 		expect(
-			nearestIdleSkipping(
-				index,
-				cell(5, 5),
-				(driverId) => driverId === DriverId.parse("d-2"),
-			),
-		).toEqual(driver("d-3", 4, 6));
+			nearestIdleSkipping(index, cell(5, 5), (driverId) => driverId === id(2)),
+		).toEqual(driver(3, 4, 6));
 	});
 
 	test("searching rings, skips drivers the predicate rejects", () => {
-		const index = placed(
-			[driver("d-1", 5, 6), driver("d-2", 9, 9), driver("d-3", 5, 2)],
-			searchGrid,
-		);
+		const index = placed([at(1, 5, 6), at(2, 9, 9), at(3, 5, 2)], searchGrid);
 
 		expect(
-			nearestIdleSkipping(
-				index,
-				cell(5, 5),
-				(driverId) => driverId === DriverId.parse("d-1"),
-			),
-		).toEqual(driver("d-3", 5, 2));
+			nearestIdleSkipping(index, cell(5, 5), (driverId) => driverId === id(1)),
+		).toEqual(driver(3, 5, 2));
 	});
 
 	test("returns no driver when the predicate skips every idle driver", () => {
-		const index = placed([driver("d-1", 15, 15)]);
+		const index = placed([at(1, 15, 15)]);
 
 		expect(nearestIdleSkipping(index, cell(5, 5), () => true)).toBeUndefined();
 	});
@@ -263,20 +255,34 @@ describe("nearestIdleSkipping", () => {
 
 describe("idleDriversById", () => {
 	test("lists idle drivers and their cells ordered by ID", () => {
-		const index = placed([
-			driver("d-3", 1, 1),
-			driver("d-10", 2, 2),
-			driver("d-2", 3, 3),
-			driver("d-1", 4, 4),
-		]);
-		markBusy(index, DriverId.parse("d-1"));
-		placeDriver(index, DriverId.parse("d-3"), ...xy(1, 2));
+		const index = placed([at(3, 1, 1), at(10, 2, 2), at(2, 3, 3), at(1, 4, 4)]);
+		markBusy(index, id(1));
+		placeDriverAt(index, i(3), ...xy(1, 2));
 
 		expect(idleDriversById(index)).toEqual([
-			driver("d-10", 2, 2),
-			driver("d-2", 3, 3),
-			driver("d-3", 1, 2),
+			driver(2, 3, 3),
+			driver(3, 1, 2),
+			driver(10, 2, 2),
 		]);
+	});
+});
+
+// Offer replies and arrivals name a driver by ID (ADR 0052); dispatch only
+// takes them from the driver its offer or trip keeps busy.
+describe("placing a driver by ID", () => {
+	test("a busy driver placed by ID is idle at that cell once freed", () => {
+		const index = placed([at(1, 8, 8), at(2, 15, 15)]);
+		markBusy(index, id(2));
+		placeDriver(index, id(2), ...xy(5, 6));
+		markFree(index, id(2));
+
+		expect(nearestIdle(index, cell(5, 5), none)).toBe(id(2));
+	});
+
+	test("placing a driver no message placed by index is a bug", () => {
+		const index = placed([]);
+
+		expect(() => placeDriver(index, id(1), ...xy(5, 6))).toThrow();
 	});
 });
 
@@ -286,35 +292,27 @@ const searchGrid = { cellsPerBucket: 1, linearScanBelow: 0 };
 
 describe("nearestIdle grid search", () => {
 	test("a driver at distance 2r in ring r loses to one at r+1 in ring r+1", () => {
-		const index = placed(
-			[driver("d-1", 7, 7), driver("d-2", 8, 5)],
-			searchGrid,
-		);
+		const index = placed([at(1, 7, 7), at(2, 8, 5)], searchGrid);
 
-		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-2"));
+		expect(nearestIdle(index, cell(5, 5), none)).toBe(id(2));
 	});
 
 	test("a tie in an outer ring with a lower ID wins", () => {
-		const index = placed(
-			[driver("d-1", 7, 5), driver("d-2", 6, 6)],
-			searchGrid,
-		);
+		const index = placed([at(1, 7, 5), at(2, 6, 6)], searchGrid);
 
-		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-1"));
+		expect(nearestIdle(index, cell(5, 5), none)).toBe(id(1));
 	});
 
 	test("finds a driver in the farthest corner", () => {
-		const index = placed([driver("d-1", 19, 19)], searchGrid);
+		const index = placed([at(1, 19, 19)], searchGrid);
 
-		expect(nearestIdle(index, cell(0, 0), none)).toBe(DriverId.parse("d-1"));
+		expect(nearestIdle(index, cell(0, 0), none)).toBe(id(1));
 	});
 
 	test("takes no driver when all are excluded", () => {
-		const index = placed([driver("d-1", 3, 3)], searchGrid);
+		const index = placed([at(1, 3, 3)], searchGrid);
 
-		expect(
-			nearestIdle(index, cell(0, 0), new Set([DriverId.parse("d-1")])),
-		).toBeUndefined();
+		expect(nearestIdle(index, cell(0, 0), new Set([id(1)]))).toBeUndefined();
 	});
 
 	test("returns exactly what a linear scan returns", () => {
@@ -361,8 +359,7 @@ function expectLinearScanPicks(
 				y: random.int(0, scenarioGrid.height - 1 + past),
 			} as Cell;
 		};
-		// IDs with mixed digit counts so string order differs from numeric order.
-		const randomDriver = () => DriverId.parse(`d-${random.int(0, 99)}`);
+		const scenarioFleet = 100;
 		const layout = regions
 			? RegionLayout.parse(
 					`${random.int(1, Math.min(3, scenarioGrid.width))}x${random.int(1, Math.min(3, scenarioGrid.height))}`,
@@ -379,7 +376,7 @@ function expectLinearScanPicks(
 			at.y >= region.min.y &&
 			(at.x <= region.max.x || region.max.x === scenarioGrid.width - 1) &&
 			(at.y <= region.max.y || region.max.y === scenarioGrid.height - 1);
-		const index = startIdleDrivers(scenarioGrid, region, {
+		const index = startIdleDrivers(scenarioGrid, scenarioFleet, region, {
 			cellsPerBucket: random.int(1, 6),
 			linearScanBelow: random.int(0, 1) === 0 ? 0 : random.int(0, 20),
 		});
@@ -391,10 +388,11 @@ function expectLinearScanPicks(
 		const expected: (DriverId | undefined)[] = [];
 		for (let step = 0; step < 200; step++) {
 			const action = random.int(0, 9);
-			const driverId = randomDriver();
+			const driverIndex = DriverIndex.parse(random.int(0, scenarioFleet - 1));
+			const driverId = driverIdAt(scenarioFleet, driverIndex);
 			if (action <= 4) {
 				const at = randomCell(offGrid.drivers);
-				placeDriver(index, driverId, at.x, at.y);
+				placeDriverAt(index, driverIndex, at.x, at.y);
 				if (inRegion(at) || model.busy.has(driverId)) {
 					model.cells.set(driverId, at);
 				} else {

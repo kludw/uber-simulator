@@ -173,6 +173,8 @@ export function dispatchService(config: SimConfig, region: Region): SimService {
 				start: {
 					state: startDispatch({
 						grid: config.grid,
+						fleetSize:
+							config.driverShards.count * config.driverShards.driversPerShard,
 						tick: startTick,
 						matching: config.matching,
 						regions: config.regions,

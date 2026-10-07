@@ -1,3 +1,4 @@
+import { type DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import {
 	type Cell,
 	type Coordinate,
@@ -32,13 +33,14 @@ const defaultSearch: IdleDriverSearch = {
 const internals: unique symbol = Symbol("idle drivers");
 export type IdleDrivers = { readonly [internals]: Drivers };
 
-// One record per driver, so a move costs one map lookup. Its cell as x and y
-// numbers, not a Cell, so a move allocates nothing (docs/performance-history.md,
-// Dispatch moves profile). bucket is -1 unless idle; slot is its place in the
+// One record per driver, so a move costs one array read by driver index
+// (ADR 0052). Its cell as x and y numbers, not a Cell, so a move allocates
+// nothing (docs/performance-history.md, Dispatch moves profile). bucket is -1 unless idle; slot is its place in the
 // bucket, so leaving is a swap with the bucket's last entry, not a search. A
 // driver offline and not busy has none.
 type Driver = {
 	driverId: DriverId;
+	index: DriverIndex;
 	x: Coordinate;
 	y: Coordinate;
 	online: boolean;
@@ -53,6 +55,9 @@ type Drivers = {
 	search: IdleDriverSearch;
 	columns: number;
 	rows: number;
+	// Known drivers by driver index, the fleet's size long, for moves; by ID
+	// for the messages that name a driver by ID. Set and cleared together.
+	byIndex: (Driver | undefined)[];
 	byId: Map<DriverId, Driver>;
 	idleCount: number;
 	// Row-major by bucket, unordered within a bucket.
@@ -64,10 +69,12 @@ const notIdle = -1;
 // Inclusive corners, as regionBounds returns them.
 type Area = { min: Cell; max: Cell };
 
+// fleetSize: the run's fleet; driver indexes are below it (ADR 0052).
 // region: the cells whose drivers this index keeps (ADR 0050); missing = the
 // whole grid.
 export function startIdleDrivers(
 	grid: Grid,
+	fleetSize: number,
 	region: Area = {
 		min: cellAt(0 as Coordinate, 0 as Coordinate),
 		max: cellAt(
@@ -87,6 +94,7 @@ export function startIdleDrivers(
 			search,
 			columns,
 			rows,
+			byIndex: new Array<Driver | undefined>(fleetSize).fill(undefined),
 			byId: new Map(),
 			idleCount: 0,
 			buckets: Array.from({ length: columns * rows }, (): Driver[] => []),
@@ -97,6 +105,40 @@ export function startIdleDrivers(
 // A driver went online or moved; a driver first seen moving in the region is
 // known from then on. A known driver outside the region is dropped unless
 // busy (ADR 0050).
+export function placeDriverAt(
+	idle: IdleDrivers,
+	index: DriverIndex,
+	x: Coordinate,
+	y: Coordinate,
+): void {
+	const drivers = idle[internals];
+	// Callers check messages' fleet size against this index's (ADR 0052).
+	if (index >= drivers.byIndex.length) {
+		throw new Error(`driver index ${index} outside the fleet`);
+	}
+	const driver = drivers.byIndex[index];
+	if (driver !== undefined) {
+		place(drivers, driver, x, y);
+		return;
+	}
+	if (!inRegion(drivers, x, y)) return;
+	const placed: Driver = {
+		driverId: driverIdAt(drivers.byIndex.length, index),
+		index,
+		x,
+		y,
+		online: true,
+		busy: false,
+		bucket: notIdle,
+		slot: 0,
+	};
+	drivers.byIndex[index] = placed;
+	drivers.byId.set(placed.driverId, placed);
+	addToBucket(drivers, placed);
+}
+
+// As placeDriverAt, for a driver named by ID: an offer reply or an arrival,
+// taken only from a driver dispatch keeps busy, so known; any other is a bug.
 export function placeDriver(
 	idle: IdleDrivers,
 	driverId: DriverId,
@@ -105,22 +147,16 @@ export function placeDriver(
 ): void {
 	const drivers = idle[internals];
 	const driver = drivers.byId.get(driverId);
-	const inside = inRegion(drivers, x, y);
-	if (driver === undefined) {
-		if (!inside) return;
-		const placed: Driver = {
-			driverId,
-			x,
-			y,
-			online: true,
-			busy: false,
-			bucket: notIdle,
-			slot: 0,
-		};
-		drivers.byId.set(driverId, placed);
-		addToBucket(drivers, placed);
-		return;
-	}
+	if (driver === undefined) throw new Error(`${driverId} is not known`);
+	place(drivers, driver, x, y);
+}
+
+function place(
+	drivers: Drivers,
+	driver: Driver,
+	x: Coordinate,
+	y: Coordinate,
+): void {
 	driver.x = x;
 	driver.y = y;
 	// A busy driver keeps its record, offline or outside the region, until
@@ -130,9 +166,9 @@ export function placeDriver(
 		driver.online = true;
 		return;
 	}
-	if (!inside) {
+	if (!inRegion(drivers, x, y)) {
 		removeFromBucket(drivers, driver);
-		drivers.byId.delete(driverId);
+		forget(drivers, driver);
 		return;
 	}
 	if (bucketOf(drivers, x, y) === driver.bucket) return;
@@ -147,7 +183,7 @@ export function removeDriver(idle: IdleDrivers, driverId: DriverId): void {
 	if (driver === undefined) return;
 	if (driver.bucket !== notIdle) removeFromBucket(drivers, driver);
 	if (driver.busy) driver.online = false;
-	else drivers.byId.delete(driverId);
+	else forget(drivers, driver);
 }
 
 // A driver was offered a trip. Dispatch offers only idle drivers, and a
@@ -173,7 +209,12 @@ export function markFree(idle: IdleDrivers, driverId: DriverId): void {
 	driver.busy = false;
 	if (driver.online && inRegion(drivers, driver.x, driver.y)) {
 		addToBucket(drivers, driver);
-	} else drivers.byId.delete(driverId);
+	} else forget(drivers, driver);
+}
+
+function forget(drivers: Drivers, driver: Driver): void {
+	drivers.byIndex[driver.index] = undefined;
+	drivers.byId.delete(driver.driverId);
 }
 
 export function idleCount(idle: IdleDrivers): number {

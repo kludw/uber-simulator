@@ -3,6 +3,7 @@ import { connect } from "@nats-io/transport-node";
 import * as z from "zod";
 import type { Matching } from "../dispatch/brain.ts";
 import { cityDemand } from "../rider/demand.ts";
+import { driverIdAt } from "../shared/fleet.ts";
 import { Cell, cellAt, distance } from "../shared/grid.ts";
 import type { Message } from "../shared/messages.ts";
 import {
@@ -347,11 +348,11 @@ describe("runInProcess", () => {
 							break;
 						case "drivers.went_online":
 						case "drivers.moved":
-							forEachDriverAt(message, (driverId, x, y) => {
+							forEachDriverAt(message, (driverIndex, x, y) => {
 								const cell = cellAt(x, y);
 								if (regionOfCell(cell) !== message.region)
 									crossingMovesDelivered++;
-								view.set(driverId, cell);
+								view.set(driverIdAt(message.fleetSize, driverIndex), cell);
 							});
 							break;
 						case "offer_declined":
@@ -420,8 +421,11 @@ describe("runInProcess", () => {
 						break;
 					case "drivers.went_online":
 					case "drivers.moved":
-						forEachDriverAt(message, (driverId, x, y) =>
-							cellsThisTick.set(driverId, cellAt(x, y)),
+						forEachDriverAt(message, (driverIndex, x, y) =>
+							cellsThisTick.set(
+								driverIdAt(message.fleetSize, driverIndex),
+								cellAt(x, y),
+							),
 						);
 						break;
 					case "offer": {
