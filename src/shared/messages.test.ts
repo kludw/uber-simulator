@@ -11,8 +11,11 @@ import {
 	type ClockTicked,
 	DriverId,
 	type DriverMove,
+	type DriverOnline,
 	driversMoved,
+	driversWentOnline,
 	forEachMove,
+	forEachWentOnline,
 	isSimEvent,
 	type Message,
 	parseMessage,
@@ -60,7 +63,10 @@ const dropoff = cell(3, 4);
 
 const samples: Message[] = [
 	{ type: "clock.ticked", tick },
-	{ type: "driver.went_online", tick, driverId, cell: pickup },
+	driversWentOnline(tick, [
+		{ driverId, cell: pickup },
+		{ driverId: DriverId.parse("d-2"), cell: dropoff },
+	]),
 	{ type: "driver.went_offline", tick, driverId, cell: pickup },
 	driversMoved(tick, [
 		{ driverId, cell: pickup },
@@ -131,7 +137,7 @@ test.each(samples.map((message) => [message.type, message]))(
 const invalidInputs: [string, unknown][] = [
 	["not an object", "clock.ticked"],
 	["unknown type", { type: "clock.stopped", tick: 1 }],
-	["missing field", { type: "driver.went_online", tick: 1, driverId: "d-1" }],
+	["missing field", { type: "driver.went_offline", tick: 1, driverId: "d-1" }],
 	["wrong field type", { type: "clock.ticked", tick: "1" }],
 	["negative tick", { type: "clock.ticked", tick: -1 }],
 	// IDs must be valid NATS subject tokens (sim.offers.<driverId>, ADR 0028).
@@ -207,6 +213,36 @@ const invalidInputs: [string, unknown][] = [
 		"move with a bad driver ID",
 		{ type: "drivers.moved", tick: 1, driverIds: ["d.1"], xs: [0], ys: [0] },
 	],
+	[
+		"drivers online with fewer y than driver IDs",
+		{
+			type: "drivers.went_online",
+			tick: 1,
+			driverIds: ["d-1", "d-2"],
+			xs: [0, 0],
+			ys: [0],
+		},
+	],
+	[
+		"driver online at a negative x",
+		{
+			type: "drivers.went_online",
+			tick: 1,
+			driverIds: ["d-1"],
+			xs: [-1],
+			ys: [0],
+		},
+	],
+	[
+		"driver online with a bad driver ID",
+		{
+			type: "drivers.went_online",
+			tick: 1,
+			driverIds: ["d 1"],
+			xs: [0],
+			ys: [0],
+		},
+	],
 ];
 
 test.each(invalidInputs)("rejects %s as invalid_message", (_case, input) => {
@@ -251,4 +287,18 @@ test("forEachMove visits a message's moves in order", () => {
 	});
 
 	expect(visited).toEqual(moves);
+});
+
+test("forEachWentOnline visits a message's drivers in order", () => {
+	const drivers: DriverOnline[] = [
+		{ driverId: DriverId.parse("d-2"), cell: cell(1, 2) },
+		{ driverId: DriverId.parse("d-1"), cell: cell(3, 4) },
+	];
+	const visited: DriverOnline[] = [];
+
+	forEachWentOnline(driversWentOnline(tick, drivers), (driverId, cell) => {
+		visited.push({ driverId, cell });
+	});
+
+	expect(visited).toEqual(drivers);
 });

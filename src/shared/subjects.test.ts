@@ -3,6 +3,7 @@ import { Cell } from "./grid.ts";
 import {
 	DriverId,
 	driversMoved,
+	driversWentOnline,
 	type Message,
 	RiderId,
 	RunId,
@@ -28,8 +29,8 @@ describe("subjectFor", () => {
 	const cases: [Message, string][] = [
 		[{ type: "clock.ticked", tick }, "sim.events.clock.ticked"],
 		[
-			{ type: "driver.went_online", tick, driverId, cell },
-			"sim.events.driver.went_online",
+			driversWentOnline(tick, [{ driverId, cell }]),
+			"sim.events.drivers.went_online",
 		],
 		[
 			{ type: "driver.went_offline", tick, driverId, cell },
