@@ -1,6 +1,6 @@
 # 0047. Publish driver moves as parallel arrays
 
-- Status: Accepted
+- Status: Accepted (`driverIds` superseded by 0052)
 - Supersedes 0045's message shape (chunks of at most 5,000 moves, published first in a shard's tick, are kept)
 - Date: 2026-10-06
 
