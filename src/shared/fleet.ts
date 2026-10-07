@@ -28,3 +28,13 @@ export function driverIdAt(fleetSize: number, index: DriverIndex): DriverId {
 	table[index] = made;
 	return made;
 }
+
+const madeId = /^d-(\d+)$/;
+
+// The index driverIdAt made a driver ID from; null for any other ID (the
+// schema allows other tokens). Needs no fleet size: padding only orders IDs.
+export function driverIndexOf(driverId: DriverId): DriverIndex | null {
+	const digits = madeId.exec(driverId)?.[1];
+	if (digits === undefined) return null;
+	return Number(digits) as DriverIndex;
+}

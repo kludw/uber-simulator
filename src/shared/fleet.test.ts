@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { DriverIndex, driverIdAt } from "./fleet.ts";
+import { DriverIndex, driverIdAt, driverIndexOf } from "./fleet.ts";
+import { DriverId } from "./messages.ts";
 
 const index = (n: number) => DriverIndex.parse(n);
 
@@ -23,3 +24,19 @@ test("one fleet size gives the same ID for an index every time", () => {
 test("an index outside the fleet is a bug", () => {
 	expect(() => driverIdAt(10, index(10))).toThrow();
 });
+
+test("a driver ID in driverIdAt's format names its index", () => {
+	const indexes = [
+		driverIndexOf(driverIdAt(100, index(7))),
+		driverIndexOf(driverIdAt(400_000, index(399_999))),
+		driverIndexOf(DriverId.parse("d-0")),
+	];
+	expect(indexes).toEqual([7, 399_999, 0].map(index));
+});
+
+test.each(["d-", "d-x1", "driver-1", "D-1", "d-1a", "1"])(
+	"driver ID %p names no index",
+	(id) => {
+		expect(driverIndexOf(DriverId.parse(id))).toBeNull();
+	},
+);
