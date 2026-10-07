@@ -177,35 +177,44 @@ function draw(
 	// Spike #272: above 20k drivers, one pixel per cell (grid-sized raster,
 	// scaled up), busy states drawn over idle; no interpolation.
 	if (fleet.size > 0) {
-		rasterCanvas ??= new OffscreenCanvas(grid.width, grid.height);
+		rasterCanvas ??= new OffscreenCanvas(grid.width / 5, grid.height / 5);
 		const raster = rasterCanvas.getContext("2d");
 		if (raster === null) throw new Error("no raster context");
-		rasterImage ??= raster.createImageData(grid.width, grid.height);
+		rasterImage ??= raster.createImageData(grid.width / 5, grid.height / 5);
 		const pixels = new Uint32Array(rasterImage.data.buffer);
 		if (rasterTick !== view.tick) {
 		rasterTick = view.tick;
 		pixels.fill(0);
-		const rank = { idle: 1, en_route: 2, at_pickup: 3, on_trip: 4, at_dropoff: 5 };
-		const abgr = {
-			idle: 0xff9e948b,
-			en_route: 0xff41b3e3,
-			at_pickup: 0xff3e88f0,
-			on_trip: 0xff50b93f,
-			at_dropoff: 0xffffa658,
-		};
-		const ranks = new Uint8Array(grid.width * grid.height);
-		const colors = [0, abgr.idle, abgr.en_route, abgr.at_pickup, abgr.on_trip, abgr.at_dropoff];
-		void rank;
+		// Spike #272 heatmap: 5x5-cell tiles; brightness = drivers vs mean,
+		// green = busy share, red = waiting riders.
+		const tile = 5;
+		const tilesWide = grid.width / tile;
+		const total = new Float32Array(pixels.length);
+		const busy = new Float32Array(pixels.length);
+		const waiting = new Float32Array(pixels.length);
+		let online = 0;
 		for (let d = 0; d < fleet.size; d++) {
 			const state = fleet.states[d] ?? 0;
 			if (state === 0) continue;
-			const i = (fleet.ys[d] ?? 0) * grid.width + (fleet.xs[d] ?? 0);
-			if (state <= (ranks[i] ?? 0)) continue;
-			ranks[i] = state;
-			pixels[i] = colors[state] ?? 0;
+			online++;
+			const i = Math.floor((fleet.ys[d] ?? 0) / tile) * tilesWide + Math.floor((fleet.xs[d] ?? 0) / tile);
+			total[i] = (total[i] ?? 0) + 1;
+			if (state > 1) busy[i] = (busy[i] ?? 0) + 1;
 		}
 		for (const rider of view.waitingRiders.values()) {
-			pixels[rider.pickup.y * grid.width + rider.pickup.x] = 0xff727bff;
+			const i = Math.floor(rider.pickup.y / tile) * tilesWide + Math.floor(rider.pickup.x / tile);
+			waiting[i] = (waiting[i] ?? 0) + 1;
+		}
+		const mean = online / pixels.length;
+		for (let i = 0; i < pixels.length; i++) {
+			const t = total[i] ?? 0;
+			const density = Math.min(1, t / (2 * mean));
+			const busyShare = t === 0 ? 0 : (busy[i] ?? 0) / t;
+			const w = Math.min(1, (waiting[i] ?? 0) / 3);
+			const r = Math.min(255, 40 + 60 * density + 215 * w);
+			const g = Math.min(255, 40 + 60 * density + 200 * busyShare * 3);
+			const b = Math.min(255, 50 + 70 * density);
+			pixels[i] = 0xff000000 | (b << 16) | (g << 8) | r;
 		}
 		raster.putImageData(rasterImage, 0, 0);
 		}
