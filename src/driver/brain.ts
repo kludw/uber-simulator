@@ -179,8 +179,9 @@ export function startDriverShard(
 	const drivers = new Map<DriverId, Driver>();
 	let schedule: Schedule | null = null;
 	if (shifts.type === "always_online") {
-		for (const driver of placed)
+		for (const driver of placed) {
 			drivers.set(driver.id, idle(driver, driver.cell));
+		}
 	} else {
 		const periods = new Map<DriverId, Period>();
 		for (const { id, index, cell } of placed) {
