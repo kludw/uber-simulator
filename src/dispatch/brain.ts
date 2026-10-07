@@ -1,4 +1,4 @@
-import { distance, distanceToCoordinates, type Grid } from "../shared/grid.ts";
+import { distance, type Grid } from "../shared/grid.ts";
 import type {
 	CancelTrip,
 	CancelTripAccepted,
@@ -299,32 +299,11 @@ function densePairs(
 	queued: readonly QueuedTrip[],
 	idle: readonly IdleDriver[],
 ): OfferPair[] {
-	// A trip's row is asked for more than once per batch (#213): drivers' cells
-	// as flat coordinates, read in order.
-	const driverXs = Int32Array.from(idle, ({ cell }) => cell.x);
-	const driverYs = Int32Array.from(idle, ({ cell }) => cell.y);
-	let columnOf: Map<DriverId, number> | undefined;
-	const ofRow = (row: number, out: number[]) => {
-		const trip = queued[row];
-		if (trip === undefined) throw new Error(`row ${row} out of range`);
-		for (let column = 0; column < idle.length; column++) {
-			const x = driverXs[column];
-			const y = driverYs[column];
-			if (x === undefined || y === undefined) {
-				throw new Error(`column ${column} out of range`);
-			}
-			out[column] = distanceToCoordinates(trip.pickup, x, y);
-		}
-		if (trip.excludedDrivers.size === 0) return;
-		columnOf ??= new Map(
-			idle.map(({ driverId }, column) => [driverId, column]),
-		);
-		for (const driverId of trip.excludedDrivers) {
-			const column = columnOf.get(driverId);
-			if (column !== undefined) out[column] = Number.POSITIVE_INFINITY;
-		}
+	// More trips than idle drivers: the solver solves the transpose and asks
+	// for drivers' columns only.
+	const ofRow = () => {
+		throw new Error("dense matching asked for a trip's row");
 	};
-	// Only when more trips are queued than drivers are idle.
 	const ofColumn = (column: number, out: number[]) => {
 		const driver = idle[column];
 		if (driver === undefined) throw new Error(`column ${column} out of range`);
