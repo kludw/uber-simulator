@@ -4,7 +4,8 @@
 import { type Msg, wsconnect } from "@nats-io/nats-core";
 import * as z from "zod";
 import { specGrid } from "../shared/grid.ts";
-import { isSimEvent, parseMessage, type SimEvent } from "../shared/messages.ts";
+import { forEachDriverAt, isSimEvent, parseMessage, type SimEvent } from "../shared/messages.ts";
+import { fleet } from "./fleet-spike.ts";
 import { type PanelRow, panelRows } from "./panel.ts";
 import { startRenderer } from "./render.ts";
 import { subscriptionFor } from "./subscription.ts";
@@ -110,7 +111,18 @@ async function watch(): Promise<void> {
 		const started = performance.now();
 		const event = decode(received);
 		if (event === null) continue;
-		view = applyEvent(view, event);
+		if (event.type === "drivers.moved" || event.type === "drivers.went_online") {
+			fleet.ensure(event.fleetSize);
+			const online = event.type === "drivers.went_online";
+			forEachDriverAt(event, (index, x, y) => {
+				fleet.xs[index] = x;
+				fleet.ys[index] = y;
+				if (online || fleet.states[index] === 0) fleet.states[index] = 1;
+			});
+		} else {
+			fleet.onStateEvent(event);
+			view = applyEvent(view, event);
+		}
 		uiStats.applyMs += performance.now() - started;
 		uiStats.messages++;
 		uiStats.bytes += received.data.length;

@@ -1,6 +1,7 @@
 import type { Grid } from "../shared/grid.ts";
 import type { Tick } from "../shared/messages.ts";
 import { type DriverView, emptyView, type View } from "./view.ts";
+import { fleet } from "./fleet-spike.ts";
 
 // Cell coordinates; fractional while a driver is between cells.
 type Point = { x: number; y: number };
@@ -24,6 +25,7 @@ const driverRadius = 3;
 const waitingRiderSize = 5;
 let rasterCanvas: OffscreenCanvas | null = null;
 let rasterImage: ImageData | null = null;
+let rasterTick: number | null = null;
 
 // Scales the grid uniformly to fit the canvas and centers it (letterboxed),
 // so cells stay square whatever the canvas shape.
@@ -145,6 +147,7 @@ function draw(
 		cityBottomRight.y - cityTopLeft.y,
 	);
 
+	if (fleet.size === 0) {
 	context.strokeStyle = activeTripColor;
 	context.lineWidth = 1;
 	context.beginPath();
@@ -169,14 +172,18 @@ function draw(
 		);
 	}
 
+	}
+
 	// Spike #272: above 20k drivers, one pixel per cell (grid-sized raster,
 	// scaled up), busy states drawn over idle; no interpolation.
-	if (view.drivers.size > 20_000) {
+	if (fleet.size > 0) {
 		rasterCanvas ??= new OffscreenCanvas(grid.width, grid.height);
 		const raster = rasterCanvas.getContext("2d");
 		if (raster === null) throw new Error("no raster context");
 		rasterImage ??= raster.createImageData(grid.width, grid.height);
 		const pixels = new Uint32Array(rasterImage.data.buffer);
+		if (rasterTick !== view.tick) {
+		rasterTick = view.tick;
 		pixels.fill(0);
 		const rank = { idle: 1, en_route: 2, at_pickup: 3, on_trip: 4, at_dropoff: 5 };
 		const abgr = {
@@ -187,13 +194,21 @@ function draw(
 			at_dropoff: 0xffffa658,
 		};
 		const ranks = new Uint8Array(grid.width * grid.height);
-		for (const driver of view.drivers.values()) {
-			const i = driver.cell.y * grid.width + driver.cell.x;
-			if (rank[driver.state] <= (ranks[i] ?? 0)) continue;
-			ranks[i] = rank[driver.state];
-			pixels[i] = abgr[driver.state];
+		const colors = [0, abgr.idle, abgr.en_route, abgr.at_pickup, abgr.on_trip, abgr.at_dropoff];
+		void rank;
+		for (let d = 0; d < fleet.size; d++) {
+			const state = fleet.states[d] ?? 0;
+			if (state === 0) continue;
+			const i = (fleet.ys[d] ?? 0) * grid.width + (fleet.xs[d] ?? 0);
+			if (state <= (ranks[i] ?? 0)) continue;
+			ranks[i] = state;
+			pixels[i] = colors[state] ?? 0;
+		}
+		for (const rider of view.waitingRiders.values()) {
+			pixels[rider.pickup.y * grid.width + rider.pickup.x] = 0xff727bff;
 		}
 		raster.putImageData(rasterImage, 0, 0);
+		}
 		context.imageSmoothingEnabled = false;
 		context.drawImage(
 			rasterCanvas,

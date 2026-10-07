@@ -70,7 +70,7 @@ export function applyEvent(view: View, event: SimEvent): View {
 		case "drivers.moved":
 			return withMoves(view, event);
 		case "trip.requested": {
-			const waitingRiders = new Map(view.waitingRiders);
+			const waitingRiders = view.waitingRiders as Map<TripId, WaitingRider>;
 			waitingRiders.set(event.tripId, {
 				pickup: event.pickup,
 				dropoff: event.dropoff,
@@ -82,7 +82,7 @@ export function applyEvent(view: View, event: SimEvent): View {
 			const next = withDriverState(view, event.driverId, "en_route");
 			const rider = view.waitingRiders.get(event.tripId);
 			if (rider === undefined) return next;
-			const activeTrips = new Map(view.activeTrips);
+			const activeTrips = view.activeTrips as Map<TripId, ActiveTrip>;
 			activeTrips.set(event.tripId, {
 				driverId: event.driverId,
 				pickup: rider.pickup,
@@ -236,14 +236,14 @@ function withoutDriver(view: View, driverId: DriverId): View {
 
 function withoutWaitingRider(view: View, tripId: TripId): View {
 	if (!view.waitingRiders.has(tripId)) return view;
-	const waitingRiders = new Map(view.waitingRiders);
+	const waitingRiders = view.waitingRiders as Map<TripId, WaitingRider>;
 	waitingRiders.delete(tripId);
 	return { ...view, waitingRiders };
 }
 
 function withoutActiveTrip(view: View, tripId: TripId): View {
 	if (!view.activeTrips.has(tripId)) return view;
-	const activeTrips = new Map(view.activeTrips);
+	const activeTrips = view.activeTrips as Map<TripId, ActiveTrip>;
 	activeTrips.delete(tripId);
 	return { ...view, activeTrips };
 }
