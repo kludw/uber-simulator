@@ -13,6 +13,7 @@ import {
 	parseMessage,
 	type RunId,
 } from "../shared/messages.ts";
+import type { Region } from "../shared/regions.ts";
 import type { Result } from "../shared/result.ts";
 import { subjectFor, subscriptionSubject } from "../shared/subjects.ts";
 import type { Bus } from "./bus.ts";
@@ -77,6 +78,9 @@ export async function connectNatsBus(options: {
 	// Every type the bus's subscribers take, subscribed before connect returns
 	// so the bus misses nothing published after; subscribe() takes no other.
 	inputs: readonly MessageType[];
+	// Only this region's messages of the inputs carrying one (ADR 0050:
+	// dispatch k); every region's when unset. subscribe() takes no other.
+	region?: Region | undefined;
 	log: (dropped: DroppedMessage) => void;
 	logStatus: (status: ConnectionStatus) => void;
 	logTiming: (timing: MessagesTimed) => void;
@@ -177,7 +181,10 @@ export async function connectNatsBus(options: {
 		if (handled - intervalStart >= timingIntervalMs) logTiming(handled);
 	};
 	const inputs = new Set(options.inputs);
-	for (const subject of new Set(options.inputs.map(subscriptionSubject))) {
+	const subjects = options.inputs.map((type) =>
+		subscriptionSubject(type, options.region),
+	);
+	for (const subject of new Set(subjects)) {
 		connection.subscribe(subject, { callback: deliver });
 	}
 	try {
@@ -223,10 +230,15 @@ export async function connectNatsBus(options: {
 					headers: runHeaders,
 				});
 			},
-			subscribe(types, handle) {
+			subscribe(types, handle, region) {
 				const outside = types.filter((type) => !inputs.has(type));
 				if (outside.length > 0) {
 					throw new Error(`not among the bus's inputs: ${outside.join(", ")}`);
+				}
+				if (region !== options.region) {
+					throw new Error(
+						`subscribing for region ${region} on a bus for region ${options.region}`,
+					);
 				}
 				const taken = new Set(types);
 				subscribers.push((message) => {

@@ -90,6 +90,52 @@ describe("in-memory bus", () => {
 
 		expect(received).toEqual([]);
 	});
+
+	// ADR 0050: dispatch k takes only region k's messages.
+	test("a subscriber for a region receives only that region's messages of its types", () => {
+		const bus = createInMemoryBus();
+		const received: Message[] = [];
+		bus.subscribe(
+			["cancel_trip"],
+			(message) => received.push(message),
+			Region.parse(1),
+		);
+		const inRegion1 = { ...cancelTrip, region: Region.parse(1) };
+
+		bus.publish(cancelTrip);
+		bus.publish(inRegion1);
+		bus.drain();
+
+		expect(received).toEqual([inRegion1]);
+	});
+
+	test("a subscriber for a region receives types without a region", () => {
+		const bus = createInMemoryBus();
+		const received: Message[] = [];
+		bus.subscribe(
+			["clock.ticked"],
+			(message) => received.push(message),
+			Region.parse(1),
+		);
+
+		bus.publish(ticked(1));
+		bus.drain();
+
+		expect(received).toEqual([ticked(1)]);
+	});
+
+	test("a subscriber without a region receives every region's messages", () => {
+		const bus = createInMemoryBus();
+		const received: Message[] = [];
+		bus.subscribe(["cancel_trip"], (message) => received.push(message));
+		const inRegion1 = { ...cancelTrip, region: Region.parse(1) };
+
+		bus.publish(cancelTrip);
+		bus.publish(inRegion1);
+		bus.drain();
+
+		expect(received).toEqual([cancelTrip, inRegion1]);
+	});
 });
 
 function cancels(count: number): CancelTrip[] {

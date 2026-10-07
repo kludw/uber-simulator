@@ -34,12 +34,16 @@ export function createInMemoryBus({ loss }: InMemoryBusOptions = {}): Bus & {
 		publish(message) {
 			queue.push(message);
 		},
-		subscribe(types, handle) {
+		subscribe(types, handle, region) {
 			const taken = new Set(types);
 			subscriptions.push({
 				lossy: true,
 				deliver: (message) => {
-					if (isOneOf(taken, message)) handle(message);
+					if (!isOneOf(taken, message)) return;
+					if (region !== undefined && "region" in message) {
+						if (message.region !== region) return;
+					}
+					handle(message);
 				},
 			});
 		},

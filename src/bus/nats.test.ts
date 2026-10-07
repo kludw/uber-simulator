@@ -157,7 +157,9 @@ describe("connectNatsBus", () => {
 		let client: FakeSocket | undefined;
 		let sid = "";
 		const server = fakeNatsServer((socket, text) => {
-			const subscribed = text.match(/SUB sim\.commands\.cancel_trip (\S+)\r\n/);
+			const subscribed = text.match(
+				/SUB sim\.commands\.cancel_trip\.\* (\S+)\r\n/,
+			);
 			if (subscribed?.[1]) {
 				client = socket;
 				sid = subscribed[1];
@@ -186,7 +188,7 @@ describe("connectNatsBus", () => {
 		});
 		const push = (payload: string) =>
 			client?.write(
-				`MSG sim.commands.cancel_trip ${sid} ${Buffer.byteLength(payload)}\r\n${payload}\r\n`,
+				`MSG sim.commands.cancel_trip.region-0 ${sid} ${Buffer.byteLength(payload)}\r\n${payload}\r\n`,
 			);
 
 		push(
@@ -276,9 +278,10 @@ describe("connectNatsBus", () => {
 			nowMs += message.type === "drivers.moved" ? 1000 : 3000;
 			if (message.type === "cancel_trip") handledLast();
 		});
+		// Region 0's subjects, on the bus's subscriptions to every region's.
 		const push = (subject: string, payload: string) =>
 			client?.write(
-				`MSG ${subject} ${sids.get(subject)} ${Buffer.byteLength(payload)}\r\n${payload}\r\n`,
+				`MSG ${subject}.region-0 ${sids.get(`${subject}.*`)} ${Buffer.byteLength(payload)}\r\n${payload}\r\n`,
 			);
 		const moved = (driverId: string) =>
 			JSON.stringify({
@@ -390,6 +393,7 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 	async function connectBus(
 		options: {
 			inputs?: readonly MessageType[];
+			region?: Region;
 			log?: (dropped: DroppedMessage) => void;
 			logTiming?: (timing: MessagesTimed) => void;
 		} = {},
@@ -401,6 +405,7 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 			logStatus: () => {},
 			logTiming: options.logTiming ?? (() => {}),
 			inputs: options.inputs ?? ["cancel_trip"],
+			region: options.region,
 		});
 		if (!result.ok) throw new Error("NATS unavailable", { cause: result });
 		open.push(result.value);
@@ -527,11 +532,44 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		expect(() => bus.subscribe(["trip_status"], () => {})).toThrow();
 	});
 
+	// ADR 0050: dispatch k's connection takes only region k's messages.
+	test("a bus for a region receives only that region's messages, and types without one", async () => {
+		const publisher = await connectBus({ inputs: [] });
+		const subscriber = await connectBus({
+			inputs: ["cancel_trip", "request_trip_accepted"],
+			region: Region.parse(1),
+		});
+		const received: Message[] = [];
+		subscriber.subscribe(
+			["cancel_trip", "request_trip_accepted"],
+			(message) => {
+				if (isOwn(message)) received.push(message);
+			},
+			Region.parse(1),
+		);
+		const inRegion1 = { ...cancelTrip(2), region: Region.parse(1) };
+
+		// One publisher: once the last arrives, the earlier ones would have.
+		publisher.publish(cancelTrip(1));
+		publisher.publish(inRegion1);
+		publisher.publish(requestTripAccepted(3));
+		await waitFor(() => received.length >= 2);
+		await subscriber.close();
+
+		expect(received).toEqual([inRegion1, requestTripAccepted(3)]);
+	});
+
+	test("subscribing for a region other than the bus's is a bug", async () => {
+		const bus = await connectBus({ region: Region.parse(1) });
+
+		expect(() => bus.subscribe(["cancel_trip"], () => {})).toThrow();
+	});
+
 	test("every published message carries the bus's run id as a Run-Id header", async () => {
 		const bus = await connectBus();
 		// A raw connection sees headers, which the bus port hides.
 		const raw = await connect({ servers: natsUrl });
-		const subscription = raw.subscribe("sim.commands.cancel_trip");
+		const subscription = raw.subscribe("sim.commands.cancel_trip.region-0");
 		await raw.flush();
 		const received: (string | undefined)[] = [];
 		const reading = (async () => {
@@ -615,7 +653,7 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 		// A raw connection can publish what the bus never would; one publisher
 		// keeps the valid message last.
 		const raw = await connect({ servers: natsUrl });
-		const subject = "sim.commands.cancel_trip";
+		const subject = "sim.commands.cancel_trip.region-0";
 
 		raw.publish(subject, "{not json");
 		raw.publish(subject, JSON.stringify({ type: "no_such_message" }));
