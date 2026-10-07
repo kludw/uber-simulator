@@ -1473,3 +1473,7 @@ Results that ran with the cap (mean above about 745 per tick, about 447k drivers
 - [Ceiling](#ceiling), greedy 500k (in process): ran about 745 requests per tick against 833 at the spec ratio, about 11% light. Requests are a small share of its 152.6 M messages (driver moves dominate), but dispatch's matching work was understated, so "greedy keeps real time up to 500k" holds for that lighter demand only.
 - [After milestone 19](#after-milestone-19), greedy 500k (live, 2 runs): same cap (4,441.7-4,466.3 events per tick). One failed anyway; the pass on the EPYC 9V45 is at about 11% fewer requests than the spec ratio.
 - [After milestone 20](#after-milestone-20), greedy 450k-600k (live): 450k was 0.8% light, which doesn't change its verdicts; 475k-600k failed anyway, so the limits stand, but their dispatch numbers understate spec-ratio load.
+
+## After milestone 21
+
+Live limits after [ADR 0050](adr/0050-split-dispatch-by-region.md)'s dispatch by region (one dispatch process per region), judged by ADR 0037 with [ADR 0046](adr/0046-persister-pending-criterion.md)'s backlog bound, [#238](https://github.com/kludw/uber-simulator/issues/238). Measured 2026-10-07 at `b9e2b7a` (master after [#257](https://github.com/kludw/uber-simulator/pull/257)). Runs in progress.
