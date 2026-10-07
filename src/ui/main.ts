@@ -20,6 +20,10 @@ function element<T extends HTMLElement>(id: string, type: { new (): T }): T {
 	return found;
 }
 
+// Experiment #272: feed and view-update cost.
+const uiStats = { drawMs: [] as number[], applyMs: 0, messages: 0, bytes: 0 };
+(globalThis as unknown as { uiStats: typeof uiStats }).uiStats = uiStats;
+
 const statusElement = element("status", HTMLElement);
 const panelElement = element("panel", HTMLTableElement);
 const renderer = startRenderer(element("city", HTMLCanvasElement), specGrid);
@@ -103,9 +107,13 @@ async function watch(): Promise<void> {
 	let view = emptyView();
 	let panelPending = false;
 	for await (const received of subscription) {
+		const started = performance.now();
 		const event = decode(received);
 		if (event === null) continue;
 		view = applyEvent(view, event);
+		uiStats.applyMs += performance.now() - started;
+		uiStats.messages++;
+		uiStats.bytes += received.data.length;
 		renderer.show(view);
 		// Many events per tick; the panel only needs the latest view per frame.
 		if (panelPending) continue;

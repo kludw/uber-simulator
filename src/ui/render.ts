@@ -101,7 +101,10 @@ export function startRenderer(
 	let timing = noTickTiming;
 
 	const frame = (now: number) => {
+		const started = performance.now();
 		draw(context, view, grid, tickFraction(timing, now));
+		// Experiment #272: per-frame draw cost.
+		(globalThis as unknown as { uiStats: { drawMs: number[] } }).uiStats.drawMs.push(performance.now() - started);
 		requestAnimationFrame(frame);
 	};
 	requestAnimationFrame(frame);
