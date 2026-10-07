@@ -48,6 +48,7 @@ type Driver = {
 
 type Drivers = {
 	grid: Grid;
+	region: Area;
 	search: IdleDriverSearch;
 	columns: number;
 	rows: number;
@@ -59,8 +60,20 @@ type Drivers = {
 
 const notIdle = -1;
 
+// Inclusive corners, as regionBounds returns them.
+type Area = { min: Cell; max: Cell };
+
+// region: the cells whose drivers this index keeps (ADR 0050); missing = the
+// whole grid.
 export function startIdleDrivers(
 	grid: Grid,
+	region: Area = {
+		min: cellAt(0 as Coordinate, 0 as Coordinate),
+		max: cellAt(
+			(grid.width - 1) as Coordinate,
+			(grid.height - 1) as Coordinate,
+		),
+	},
 	search: IdleDriverSearch = defaultSearch,
 ): IdleDrivers {
 	const size = search.cellsPerBucket;
@@ -69,6 +82,7 @@ export function startIdleDrivers(
 	return {
 		[internals]: {
 			grid,
+			region,
 			search,
 			columns,
 			rows,
@@ -80,7 +94,8 @@ export function startIdleDrivers(
 }
 
 // A driver went online or moved; a driver first seen moving is known from
-// then on.
+// then on. Outside the region, a driver is dropped unless busy: a busy one
+// keeps its record until freed.
 export function placeDriver(
 	idle: IdleDrivers,
 	driverId: DriverId,
@@ -89,6 +104,18 @@ export function placeDriver(
 ): void {
 	const drivers = idle[internals];
 	const driver = drivers.byId.get(driverId);
+	if (!inRegion(drivers, x, y)) {
+		if (driver === undefined) return;
+		if (driver.busy) {
+			driver.x = x;
+			driver.y = y;
+			driver.online = true;
+			return;
+		}
+		if (driver.bucket !== notIdle) removeFromBucket(drivers, driver);
+		drivers.byId.delete(driverId);
+		return;
+	}
 	if (driver === undefined) {
 		const placed: Driver = {
 			driverId,
@@ -139,7 +166,8 @@ export function markBusy(idle: IdleDrivers, driverId: DriverId): void {
 	driver.busy = true;
 }
 
-// A driver's offer or trip is over: idle again if online.
+// A driver's offer or trip is over: idle again if online and in the region,
+// else dropped.
 export function markFree(idle: IdleDrivers, driverId: DriverId): void {
 	const drivers = idle[internals];
 	const driver = drivers.byId.get(driverId);
@@ -147,8 +175,9 @@ export function markFree(idle: IdleDrivers, driverId: DriverId): void {
 		throw new Error(`${driverId} is not busy`);
 	}
 	driver.busy = false;
-	if (driver.online) addToBucket(drivers, driver);
-	else drivers.byId.delete(driverId);
+	if (driver.online && inRegion(drivers, driver.x, driver.y)) {
+		addToBucket(drivers, driver);
+	} else drivers.byId.delete(driverId);
 }
 
 // Idle drivers and their cells, ordered by ID (batched matching's columns).
@@ -184,6 +213,18 @@ function removeFromBucket(drivers: Drivers, driver: Driver): void {
 	}
 	driver.bucket = notIdle;
 	drivers.idleCount--;
+}
+
+// A region's sides on the grid's edges are open, so a cell off the grid
+// (bad input) stays where bucketOf puts it, as with one region.
+function inRegion(drivers: Drivers, x: number, y: number): boolean {
+	const { grid, region } = drivers;
+	return (
+		x >= region.min.x &&
+		y >= region.min.y &&
+		(x <= region.max.x || region.max.x === grid.width - 1) &&
+		(y <= region.max.y || region.max.y === grid.height - 1)
+	);
 }
 
 // A cell off the grid (bad input from another service; grid bounds are an
