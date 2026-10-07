@@ -1,6 +1,6 @@
 # Performance
 
-Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12), 76k-500k in [Ceiling](#ceiling), and the distributed stack over NATS in [Live limits](#live-limits) (latest: [After milestone 21](#after-milestone-21), dispatch split by region); batched dispatch memory in [Batched dispatch memory](#batched-dispatch-memory); the observer's `clock.ticked` deviations in [Clock deviation](#clock-deviation); dispatch's work per tick at greedy 200k, by function, in [Dispatch profile](#dispatch-profile); the compact `drivers.moved` shape and its effect in [Compact driver moves](#compact-driver-moves); dispatch keeping its idle drivers across ticks in [Idle drivers across ticks](#idle-drivers-across-ticks); cheaper move handling in dispatch in [Move handling cut](#move-handling-cut); the CI runner being 2 SMT cores in [Runner topology](#runner-topology).
+Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12), 76k-500k in [Ceiling](#ceiling), and the distributed stack over NATS in [Live limits](#live-limits) (latest: [After milestone 21](#after-milestone-21), dispatch split by region); batched dispatch memory in [Batched dispatch memory](#batched-dispatch-memory); the observer's `clock.ticked` deviations in [Clock deviation](#clock-deviation); dispatch's work per tick at greedy 200k, by function, in [Dispatch profile](#dispatch-profile); the compact `drivers.moved` shape and its effect in [Compact driver moves](#compact-driver-moves); dispatch keeping its idle drivers across ticks in [Idle drivers across ticks](#idle-drivers-across-ticks); cheaper move handling in dispatch in [Move handling cut](#move-handling-cut); the CI runner being 2 SMT cores in [Runner topology](#runner-topology); batched matching's profile and the exact cut that lifts its limit in [Cheaper batched matching](#cheaper-batched-matching).
 
 ## Method
 
@@ -1614,3 +1614,76 @@ Found 2026-10-07 in [After milestone 21](#after-milestone-21) ([#238](https://gi
 - [After milestone 17](#after-milestone-17), [After milestone 18](#after-milestone-18), [After milestone 19](#after-milestone-19), [After milestone 20](#after-milestone-20) (each section's CPU budget at the limit): totals "of 4 cores" and "the runner has (more than 2) cores to spare". The totals are of 4 SMT threads on 2 cores.
 - [Dispatch moves profile](#dispatch-moves-profile)'s proposed decoding on a worker ("the runner has more than 2 cores to spare"): a second thread competes for the same 2 cores, as the region split's extra processes do.
 - `docs/spec.md` milestone 20 ("the runner has cores to spare") and [ADR 0050](adr/0050-split-dispatch-by-region.md)'s context ("the runner has 4 CPUs; the whole stack uses 1.4-1.9 cores"), which motivated milestone 21.
+
+## Cheaper batched matching
+
+Where batched dispatch's time goes at its live limit, and an exact way to cut it, [#240](https://github.com/kludw/uber-simulator/issues/240) (milestone 22, decided in [ADR 0051](adr/0051-search-untouched-drivers-in-batched-matching.md)). Measured 2026-10-07 at master `61d3ee0` plus experiment hooks.
+
+### Method
+
+- Experiment branch `240-exp-batched` (not merged; CI runs at `4b812d3`): dispatch logs each batch (queued trips, idle drivers, pairs, total pickup distance, wall ms) to stderr; `BATCH_SOLVER=lazy` switches to the spike solver (`src/dispatch/lazy-matching.ts`, queued <= idle only, else the dense one); the `loadtest` workflow can start each dispatch process with `--cpu-prof` and both workflows take a `solver` input; `scratch/batched-profile.ts` groups profile samples by call stack (Hungarian loop = `solve` self; row filling = the `ofRow` callback; idle list = `idleDriversById`; decode, moves, publish as in [Dispatch profile](#dispatch-profile)). One sample is about 1 ms of the thread running; shares only, as there.
+- Profiles: `bench` (in process, 600 ticks, `batched`, `1x1`) and `loadtest` (live, as in [After milestone 21](#after-milestone-21)) with the current (dense) solver. Speed: the same with the lazy solver, plus unprofiled bench runs of both. Batch ms are the dispatch log's wall time per batch tick (120 per run per instance).
+- Quality: the lazy solver against the dense one on the same input (both run on each batch, `BATCH_CHECK`, local Apple M1 Pro, `bun run bench`), on 3,000 random instances (a test on the branch), and the summaries of the README `--compare` scenarios and of 10k-50k in-process runs, each solver alone.
+
+### Where a batch goes (dense solver)
+
+Share of dispatch's samples:
+
+| Case | Run | CPU model | Hungarian loop | Row filling | Idle list | Decode | Moves | Rest |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 50k in process | [37624982185](https://github.com/kludw/uber-simulator/actions/runs/37624982185) | Xeon Platinum 8573C | 71.4% | 16.0% | 3.7% | | 7.5% | 1.4% |
+| 55k in process | [37624982185](https://github.com/kludw/uber-simulator/actions/runs/37624982185) | EPYC 7763 | 71.4% | 19.6% | 2.8% | | 5.0% | 1.2% |
+| 100k in process | [37624982185](https://github.com/kludw/uber-simulator/actions/runs/37624982185) | Xeon Platinum 8370C | 76.0% | 18.7% | 1.6% | | 2.9% | 0.8% |
+| 50k live `1x1` | [37625010315](https://github.com/kludw/uber-simulator/actions/runs/37625010315) | EPYC 9V45 | 50.5% | 13.1% | 4.9% | 16.5% | 11.6% | 3.4% |
+| 55k live `1x1` | [37625010315](https://github.com/kludw/uber-simulator/actions/runs/37625010315) | Xeon Platinum 8573C | 60.6% | 13.4% | 3.3% | 11.3% | 8.6% | 2.8% |
+| 100k live `2x2`, each of 4 instances | [37625014614](https://github.com/kludw/uber-simulator/actions/runs/37625014614) | EPYC 7763 | 51.3-52.0% | 12.2-13.2% | 3.9-4.3% | 14.5-15.1% | 12.5-13.3% | 3.4-4.3% |
+
+- **Matching is 64-74% of dispatch live and 87-95% in process**, almost all of it the solver scanning every idle driver on every augmenting-path step: one step reads a trip's row (row filling) and scans it (Hungarian loop), both O(idle drivers). A batch at 50k has 412 queued trips on average against 32k idle drivers; at 100k, 828 against 64k.
+- Live `1x1` at 55k (fails settle in this run too, p95 627.4 ms) batch ticks take 484 ms on average (p95 711 ms); at 50k 239 ms (p95 338 ms). The profiled `2x2` 100k run passes (570.1 ms, one overrun), 125k fails (970.7 ms, 4.2% overruns), as in [After milestone 21](#after-milestone-21).
+
+### An exact cut
+
+The paths are short: each queued trip's augmenting path takes 2-4 steps on average (locally at 100k: 2,160-3,552 steps for 799-880 trips per batch), and each path ends at a driver no earlier path reached. A driver no path has reached yet ("untouched") still has dual potential 0 and no trip, so, from a trip on the path, the cheapest untouched driver is simply its nearest untouched allowed idle driver: one query to the idle driver index instead of a scan. The spike solves the same shortest augmenting paths over the touched drivers (at most one new per trip) plus that query per visited trip, and caches each trip's answer until that driver is touched (`469b94a`, 9-24% less batch time per batch locally at 100k; the CI runs below predate it).
+
+It is exact, not a heuristic:
+
+- On 3,000 random instances (grids 1-120 cells across, 1-200 drivers, up to every driver excluded for a trip): same pair count and total pickup distance as the dense solver in every one.
+- Both solvers on every batch's same input, in process: 120 batches at 50k `1x1`, 480 at 50k `2x2` (600 ticks), 60 at 100k `1x1` (300 ticks): same pair count and total distance in all.
+- Every README `--compare` scenario (eight, seed 42, 3,600 ticks): batched summaries identical. The `--preferences picky` event log diverges from tick 305: the solvers chose different, equally short assignments at tick 300 and picky drivers then declined differently; the summary still matches.
+- Alone, each solver's summary differs only through such ties, both ways: 10k drivers (1,000 requests/min, 600 ticks), seeds 1-5, completed trips dense / lazy 4,353 / 4,350, 4,294 / 4,294, 4,267 / 4,267, 4,192 / 4,198, 4,223 / 4,218, mean ticks to pickup within 0.2; 50k (seed 1, 600 ticks) 21,699 / 21,710 completed, 12.6 / 12.5 ticks to pickup.
+
+So there is no quality cost to measure against exact matching: it is exact matching.
+
+### Speed
+
+In process, unprofiled (dense [37625000978](https://github.com/kludw/uber-simulator/actions/runs/37625000978), lazy [37625005993](https://github.com/kludw/uber-simulator/actions/runs/37625005993)), batch ms mean / p95, and the run's wall ms per tick mean / p95:
+
+| Drivers | Dense: CPU model, batch, tick | Lazy: CPU model, batch, tick |
+| ---: | --- | --- |
+| 50,000 | EPYC 9V45: 215 / 295, 58.4 / 275.8 | EPYC 9V45: 5.3 / 9.7, 12.2 / 21.0 |
+| 100,000 | EPYC 7763: 2,402 / 4,462, 530.5 / 3,209.2 | EPYC 7763: 96 / 304, 61.0 / 195.5 |
+| 150,000 | Xeon Platinum 8573C: 4,926 / 9,651, 1,039.2 / 6,898.1 | EPYC 9V74: 237 / 739, 117.8 / 459.3 |
+| 200,000 | | EPYC 9V74: 708 / 2,240, 246.7 / 1,385.8 |
+
+On the same CPU model a batch is 41× faster at 50k and 25× at 100k. The lazy batch's cost follows how far idle drivers are from pickups rather than how many there are: at 100k it rises from 14-20 ms in the first 100 ticks to 300 ms around tick 250, when most drivers are busy and the mean pickup distance per pair is highest (15-18 cells against under 4), then falls back to 14 ms by tick 600. Profiled at 100k (lazy, [37624987434](https://github.com/kludw/uber-simulator/actions/runs/37624987434), EPYC 7763), the nearest queries are 40.4% of dispatch and the rest of the solver 17.3%; moves 37.5%.
+
+Live, lazy solver (two workflow runs per layout, unprofiled):
+
+| Drivers | Regions | Run | CPU model | Settle ms mean / p95 / max | Overruns | Batch ms mean / p95 (all instances) | Failed |
+| ---: | --- | --- | --- | --- | ---: | --- | --- |
+| 50,000 | 1x1 | [37625028129](https://github.com/kludw/uber-simulator/actions/runs/37625028129) | EPYC 7763 | 49.1 / 70.9 / 101.0 | 0 | 20.5 / 38.9 | none |
+| 50,000 | 1x1 | [37625036649](https://github.com/kludw/uber-simulator/actions/runs/37625036649) | EPYC 9V74 | 47.2 / 66.9 / 92.1 | 0 | 17.4 / 32.6 | none |
+| 100,000 | 1x1 | [37625028129](https://github.com/kludw/uber-simulator/actions/runs/37625028129) | EPYC 9V45 | 74.0 / 133.2 / 305.2 | 0 | 58.0 / 136.9 | none |
+| 100,000 | 1x1 | [37625036649](https://github.com/kludw/uber-simulator/actions/runs/37625036649) | Xeon Platinum 8573C | 88.4 / 180.5 / 316.3 | 0 | 85.0 / 223.7 | none |
+| 125,000 | 1x1 | [37625028129](https://github.com/kludw/uber-simulator/actions/runs/37625028129) | EPYC 7763 | 151.8 / 448.5 / 1,028.5 | 2 (0.3%) | 223.2 / 523.3 | none |
+| 125,000 | 1x1 | [37625036649](https://github.com/kludw/uber-simulator/actions/runs/37625036649) | EPYC 9V74 | 170.7 / 383.1 / 1,109.5 | 2 (0.3%) | 183.1 / 405.3 | none |
+| 150,000 | 2x2 | [37625032454](https://github.com/kludw/uber-simulator/actions/runs/37625032454) | EPYC 7763 | 176.3 / 370.0 / 674.9 | 0 | 143.9 / 427.3 | none |
+| 150,000 | 2x2 | [37625041896](https://github.com/kludw/uber-simulator/actions/runs/37625041896) | Xeon Platinum 8370C | 179.4 / 369.9 / 599.4 | 0 | 134.6 / 409.4 | none |
+| 200,000 | 2x2 | [37625032454](https://github.com/kludw/uber-simulator/actions/runs/37625032454) | Xeon 6973P-C | 214.3 / 615.8 / 1,639.6 | 4 (0.7%) | 262.0 / 817.6 | settle |
+| 200,000 | 2x2 | [37625041896](https://github.com/kludw/uber-simulator/actions/runs/37625041896) | EPYC 9V74 | 278.7 / 773.2 / 1,910.4 | 17 (2.8%) | 330.3 / 988.6 | settle, overruns |
+
+Every run finished 600 of 600 ticks with no slow consumers and the persister backlog at most 409 against limits of 1,479-5,971.
+
+- **Milestone 22's targets are met by the spike**: `1x1` 100k (two of two, 133.2 and 180.5 ms p95) and `2x2` 150k (two of two, 370.0 and 369.9 ms); `1x1` also passes 125k twice (448.5, 383.1 ms). `2x2` 200k fails settle (615.8, 773.2 ms).
+- At 50k `1x1` settle p95 drops from 287.7-575.7 ms ([After milestone 21](#after-milestone-21)) to 66.9-70.9 ms.
+- `2x2` batches are slower than `1x1` for the same drivers per region (150k `2x2`: 37.5k per region, 134.6-143.9 ms mean per batch; 50k `1x1`: 17.4-20.5 ms): the four instances solve their batches on the same tick on 2 physical cores ([Runner topology](#runner-topology)), and batch ms are wall time. Where the first limit now sits, per layout, is #242's measurement.

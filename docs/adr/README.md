@@ -36,10 +36,10 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0030 | [Batched matching](0030-batched-matching.md)                            | Accepted |
 | 0031 | [Hotspot demand](0031-hotspot-demand.md)                                | Accepted |
 | 0032 | [Driver shifts](0032-driver-shifts.md)                                  | Accepted |
-| 0033 | [Scale fixes](0033-scale-fixes.md)                                      | Accepted |
+| 0033 | [Scale fixes](0033-scale-fixes.md)                                      | Accepted (dense rectangular solve for queued ≤ idle superseded by 0051) |
 | 0034 | [Replay](0034-replay.md)                                                | Accepted |
 | 0035 | [Driver preferences](0035-driver-preferences.md)                        | Accepted |
-| 0036 | [Scale to 50k](0036-scale-to-50k.md)                                    | Accepted (per-tick dispatch snapshot superseded by 0048) |
+| 0036 | [Scale to 50k](0036-scale-to-50k.md)                                    | Accepted (per-tick dispatch snapshot superseded by 0048; batched sentinel rule superseded by 0051) |
 | 0037 | [End-to-end load test](0037-end-to-end-load-test.md)                    | Accepted (persister trend criterion superseded by 0038) |
 | 0038 | [Persister backlog criterion](0038-persister-backlog-criterion.md)      | Superseded by 0046 |
 | 0039 | [Persister batch size](0039-persister-batch-size.md)                    | Accepted (one-round-at-a-time loop and max ack pending superseded by 0044) |
@@ -54,3 +54,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0048 | [Keep idle drivers across ticks](0048-keep-idle-drivers-across-ticks.md) | Accepted |
 | 0049 | [Drivers going online in batches](0049-publish-drivers-going-online-in-batches.md) | Accepted |
 | 0050 | [Split dispatch by region](0050-split-dispatch-by-region.md) | Accepted |
+| 0051 | [Search untouched drivers in batched matching](0051-search-untouched-drivers-in-batched-matching.md) | Accepted |
