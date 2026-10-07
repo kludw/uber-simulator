@@ -34,22 +34,29 @@ function classify(stack: Frame[]): string {
 	if (live && has("decode", "src/bus/nats.ts")) return "decode";
 	if (has("onTick", "src/dispatch/brain.ts")) {
 		if (has("lazyMinCostMatching", "lazy-matching.ts")) {
-			if (has("nearestIdle", "idle-drivers.ts")) return "tick: lazy nearest queries";
+			if (has("nearestIdle", "idle-drivers.ts"))
+				return "tick: lazy nearest queries";
 			return "tick: lazy solver";
 		}
 		if (has("batchedPairs", "src/dispatch/brain.ts")) {
-			if (has("ofRow", "src/dispatch/brain.ts") || has("ofColumn", "src/dispatch/brain.ts"))
+			if (
+				has("ofRow", "src/dispatch/brain.ts") ||
+				has("ofColumn", "src/dispatch/brain.ts")
+			)
 				return "tick: row filling (ofRow)";
-			if (has("solve", "src/dispatch/matching.ts")) return "tick: Hungarian loop (solve)";
+			if (has("solve", "src/dispatch/matching.ts"))
+				return "tick: Hungarian loop (solve)";
 			return "tick: batchedPairs setup";
 		}
-		if (has("idleDriversById", "idle-drivers.ts")) return "tick: idle list (idleDriversById)";
+		if (has("idleDriversById", "idle-drivers.ts"))
+			return "tick: idle list (idleDriversById)";
 		if (has("idleCell", "idle-drivers.ts")) return "tick: experiment stats";
 		return "tick: other";
 	}
 	if (has("forEachDriverAt", "shared/messages.ts")) return "moves";
 	if (live && has("publish", "src/bus/nats.ts")) return "publish";
-	if (has("decideDispatch", "src/dispatch/brain.ts")) return "other dispatch handlers";
+	if (has("decideDispatch", "src/dispatch/brain.ts"))
+		return "other dispatch handlers";
 	if (live) return "outside dispatch handlers (bus, idle)";
 	return "other services";
 }

@@ -51,7 +51,7 @@ import {
 	removeDriver,
 	startIdleDrivers,
 } from "./idle-drivers.ts";
-import { lazyMinCostMatching } from "./lazy-matching.ts";
+import { lazyMinCostMatching, lazyStats } from "./lazy-matching.ts";
 import { minCostMatching } from "./matching.ts";
 import {
 	type ArrivalRejected,
@@ -238,6 +238,10 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 			{
 				// #240 experiment, not merged: solver choice and per-batch stats.
 				const started = performance.now();
+				lazyStats.phases = 0;
+				lazyStats.steps = 0;
+				lazyStats.queries = 0;
+				lazyStats.touched = 0;
 				const idleTotal = idleCount(state.drivers);
 				const lazy =
 					process.env.BATCH_SOLVER === "lazy" && queued.length <= idleTotal;
@@ -291,7 +295,7 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 						0,
 					);
 					console.error(
-						`batch tick=${ticked.tick} queued=${queued.length} idle=${idleTotal} pairs=${pairs.length} distance=${total} ms=${(performance.now() - started).toFixed(2)} solver=${lazy ? "lazy" : "dense"}`,
+						`batch tick=${ticked.tick} queued=${queued.length} idle=${idleTotal} pairs=${pairs.length} distance=${total} ms=${(performance.now() - started).toFixed(2)} solver=${lazy ? "lazy" : "dense"} phases=${lazyStats.phases} steps=${lazyStats.steps} queries=${lazyStats.queries} touched=${lazyStats.touched}`,
 					);
 				}
 				for (const { trip, driverId } of pairs) offer(trip, driverId);

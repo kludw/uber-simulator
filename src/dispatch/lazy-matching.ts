@@ -51,6 +51,9 @@ export function lazyMinCostMatching(
 	let visited: boolean[] = [];
 	let visitedAt: number[] = [];
 
+	const useCache = process.env.CACHE_NEAREST !== "false";
+	const cachedDriver: (DriverId | undefined)[] = new Array(rowCount);
+	const cachedDist: number[] = new Array(rowCount);
 	const root = -1;
 	for (let startRow = 0; startRow < rowCount; startRow++) {
 		lazyStats.phases++;
@@ -100,22 +103,31 @@ export function lazyMinCostMatching(
 					keyAllowed[column] = allowed;
 				}
 			}
-			lazyStats.queries++;
-			const skip = {
-				has: (id: DriverId) =>
-					touchedIndex.has(id) || row.excludedDrivers.has(id),
-			};
-			let driverId = nearestIdle(
-				drivers,
-				row.pickup,
-				skip as unknown as ReadonlySet<DriverId>,
-			);
-			if (driverId !== undefined) {
-				const cell = idleCell(drivers, driverId);
-				poolDriver.push(driverId);
-				poolKey.push(
-					distanceToCoordinates(row.pickup, cell.x, cell.y) - u + reached,
+			// Untouched columns only shrink, so a row's nearest untouched
+			// driver stays its nearest until it is touched (CACHE_NEAREST).
+			let driverId = useCache ? cachedDriver[currentRow] : undefined;
+			let cachedDistance = useCache ? cachedDist[currentRow] : undefined;
+			if (driverId === undefined || touchedIndex.has(driverId)) {
+				lazyStats.queries++;
+				const skip = {
+					has: (id: DriverId) =>
+						touchedIndex.has(id) || row.excludedDrivers.has(id),
+				};
+				driverId = nearestIdle(
+					drivers,
+					row.pickup,
+					skip as unknown as ReadonlySet<DriverId>,
 				);
+				if (driverId !== undefined) {
+					const cell = idleCell(drivers, driverId);
+					cachedDistance = distanceToCoordinates(row.pickup, cell.x, cell.y);
+					cachedDriver[currentRow] = driverId;
+					cachedDist[currentRow] = cachedDistance;
+				}
+			}
+			if (driverId !== undefined) {
+				poolDriver.push(driverId);
+				poolKey.push((cachedDistance as number) - u + reached);
 				poolAllowed.push(true);
 			} else {
 				driverId = nearestIdle(
