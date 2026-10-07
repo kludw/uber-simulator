@@ -41,15 +41,17 @@ import {
 import {
 	type IdleDriver,
 	type IdleDrivers,
+	idleCount,
 	idleDriversById,
 	markBusy,
 	markFree,
 	nearestIdle,
+	nearestIdleSkipping,
 	placeDriver,
 	removeDriver,
 	startIdleDrivers,
 } from "./idle-drivers.ts";
-import { minCostMatching } from "./matching.ts";
+import { minCostMatching, minCostMatchingByNearest } from "./matching.ts";
 import {
 	type ArrivalRejected,
 	acceptOffer,
@@ -232,10 +234,7 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 		case "batched":
 			if (queued.length === 0) break;
 			if (ticked.tick % state.matching.windowTicks !== 0) break;
-			for (const { trip, driverId } of batchedPairs(
-				queued,
-				idleDriversById(state.drivers),
-			)) {
+			for (const { trip, driverId } of batchedPairs(state, queued)) {
 				offer(trip, driverId);
 			}
 			break;
@@ -274,8 +273,29 @@ function queuedTrips(state: DispatchState): QueuedTrip[] {
 	return queued;
 }
 
-// ADR 0030: as many pairs as possible, least total pickup distance among those.
+// ADR 0030: as many pairs as possible, least total pickup distance among
+// those. Idle drivers found by nearest queries, unless more trips are queued
+// than drivers are idle: then the dense solver over the few idle drivers
+// (ADR 0051).
 function batchedPairs(
+	state: DispatchState,
+	queued: readonly QueuedTrip[],
+): OfferPair[] {
+	if (queued.length > idleCount(state.drivers)) {
+		return densePairs(queued, idleDriversById(state.drivers));
+	}
+	return minCostMatchingByNearest(
+		queued,
+		(pickup, skip) => nearestIdleSkipping(state.drivers, pickup, skip),
+		state.grid,
+	).map(({ row, driverId }) => {
+		const trip = queued[row];
+		if (trip === undefined) throw new Error(`matching row ${row} out of range`);
+		return { trip, driverId };
+	});
+}
+
+function densePairs(
 	queued: readonly QueuedTrip[],
 	idle: readonly IdleDriver[],
 ): OfferPair[] {
