@@ -3,9 +3,10 @@ import { connect } from "@nats-io/transport-node";
 import * as z from "zod";
 import type { Matching } from "../dispatch/brain.ts";
 import { cityDemand } from "../rider/demand.ts";
-import { Cell, distance } from "../shared/grid.ts";
+import { Cell, cellAt, distance } from "../shared/grid.ts";
 import type { Message } from "../shared/messages.ts";
-import { forEachMove } from "../shared/messages.ts";
+import { forEachDriverAt, forEachMove } from "../shared/messages.ts";
+import { regionOf } from "../shared/regions.ts";
 import { preferencesNamed, shiftsNamed } from "./config.ts";
 import { checkInvariants } from "./invariants.ts";
 import {
@@ -42,6 +43,19 @@ const scarceConfig = {
 	driverShards: { count: 1, driversPerShard: 2 },
 	requestsPerMinute: 30,
 };
+
+// Four regions of 25 x 25 cells, about five drivers each.
+const regionsConfig = {
+	seed: 1,
+	ticks: 3600,
+	grid: { width: 50, height: 50 },
+	driverShards: { count: 2, driversPerShard: 10 },
+	requestsPerMinute: 20,
+	regions: { columns: 2, rows: 2 },
+};
+
+const regionOfCell = (cell: Cell): number =>
+	regionOf(regionsConfig.regions, regionsConfig.grid, cell);
 
 describe("runInProcess", () => {
 	test("riders' trips get completed by drivers across shards", () => {
@@ -300,6 +314,134 @@ describe("runInProcess", () => {
 			violations: [],
 		});
 	}, 30_000);
+
+	// ADR 0050 (6): a lost border-crossing move leaves the old region a ghost,
+	// an idle driver at a stale cell inside it; that's allowed. What isn't: an
+	// instance offering a driver whose last cell it was told (moves, going
+	// online, declines' idleAt, arrivals, confirms) is outside its region.
+	// Offers come only on clock.ticked, so the view is the one at that tick.
+	test("with 1% of messages lost at 2x2, no invariant breaks and no region offers a driver last seen outside it", () => {
+		const views = new Map<string, Map<string, Cell | null>>();
+		const viewsAtTick = new Map<string, Map<string, Cell | null>>();
+		const viewOf = (service: string) => {
+			const view = views.get(service) ?? new Map<string, Cell | null>();
+			views.set(service, view);
+			return view;
+		};
+		let crossingMoves = 0;
+		let crossingMovesDelivered = 0;
+		const offersOutside: string[] = [];
+		const { eventLog } = runInProcess(
+			{ ...regionsConfig, lossShare: 0.01, keepEventLog: true },
+			{
+				onDelivered: (service, message) => {
+					if (!service.startsWith("dispatch-")) return;
+					const view = viewOf(service);
+					switch (message.type) {
+						case "clock.ticked":
+							viewsAtTick.set(service, new Map(view));
+							break;
+						case "drivers.went_online":
+						case "drivers.moved":
+							forEachDriverAt(message, (driverId, x, y) => {
+								const cell = cellAt(x, y);
+								if (regionOfCell(cell) !== message.region)
+									crossingMovesDelivered++;
+								view.set(driverId, cell);
+							});
+							break;
+						case "offer_declined":
+							view.set(message.driverId, message.idleAt);
+							break;
+						case "driver.arrived_at_pickup":
+						case "driver.arrived_at_dropoff":
+						case "confirm_trip":
+							view.set(message.driverId, message.cell);
+							break;
+						case "driver.went_offline":
+							view.set(message.driverId, null);
+							break;
+					}
+				},
+				onMessage: (message) => {
+					if (message.type === "drivers.moved") {
+						forEachMove(message, (_, cell) => {
+							if (regionOfCell(cell) !== message.region) crossingMoves++;
+						});
+					}
+					if (message.type !== "offer") return;
+					const region = regionOfCell(message.pickup);
+					const cell = viewsAtTick
+						.get(`dispatch-${region}`)
+						?.get(message.driverId);
+					if (!cell || regionOfCell(cell) !== region)
+						offersOutside.push(message.tripId);
+				},
+			},
+		);
+
+		expect({
+			violations: checkInvariants(eventLog, regionsConfig.grid),
+			crossingMovesLost: crossingMoves > crossingMovesDelivered,
+			offersOutside,
+		}).toEqual({ violations: [], crossingMovesLost: true, offersOutside: [] });
+	}, 30_000);
+
+	// ADR 0050: one dispatch per region, each matching only its region's idle
+	// drivers. Without loss every instance knows a driver's last cell. It
+	// matches on clock.ticked t, before that tick's moves reach it, so each
+	// offer goes to a driver last seen in the pickup's region by tick t - 1.
+	test.each<[string, Matching]>([
+		["greedy", { type: "greedy" }],
+		["batched", { type: "batched", windowTicks: 5 }],
+	])(
+		"a 2x2 %s run breaks no invariant and each region offers its trips only to drivers last seen in it",
+		(_, matching) => {
+			const { eventLog } = runInProcess({
+				...regionsConfig,
+				matching,
+				keepEventLog: true,
+			});
+
+			const lastCells = new Map<string, Cell>();
+			const cellsThisTick = new Map<string, Cell>();
+			const offeredRegions = new Set<number>();
+			const offersOutside: string[] = [];
+			for (const message of eventLog) {
+				switch (message.type) {
+					case "clock.ticked":
+						for (const [driverId, cell] of cellsThisTick)
+							lastCells.set(driverId, cell);
+						cellsThisTick.clear();
+						break;
+					case "drivers.went_online":
+					case "drivers.moved":
+						forEachDriverAt(message, (driverId, x, y) =>
+							cellsThisTick.set(driverId, cellAt(x, y)),
+						);
+						break;
+					case "offer": {
+						const region = regionOfCell(message.pickup);
+						const cell = lastCells.get(message.driverId);
+						offeredRegions.add(region);
+						if (cell === undefined || regionOfCell(cell) !== region)
+							offersOutside.push(message.tripId);
+						break;
+					}
+				}
+			}
+			expect({
+				violations: checkInvariants(eventLog, regionsConfig.grid),
+				offeredRegions: [...offeredRegions].toSorted(),
+				offersOutside,
+			}).toEqual({
+				violations: [],
+				offeredRegions: [0, 1, 2, 3],
+				offersOutside: [],
+			});
+		},
+		30_000,
+	);
 
 	test("publishes clock.ticked for ticks 1..N in order", () => {
 		const { eventLog } = runInProcess({ ...quietConfig, keepEventLog: true });

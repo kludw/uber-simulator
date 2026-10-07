@@ -1,3 +1,4 @@
+import type { Bus } from "../bus/bus.ts";
 import { createInMemoryBus } from "../bus/in-memory.ts";
 import {
 	connectNatsBus,
@@ -6,6 +7,7 @@ import {
 } from "../bus/nats.ts";
 import { type Message, messageTypes, RunId, Tick } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
+import { oneRegion, Region } from "../shared/regions.ts";
 import type { Result } from "../shared/result.ts";
 import {
 	dispatchService,
@@ -31,6 +33,10 @@ export type RunObservers = {
 	// Once each tick's messages are all delivered, with the result so far
 	// (`bun run bench` times ticks and reports partial runs with it).
 	onTickDone?: (tick: Tick, soFar: RunResult) => void;
+	// Each message as it reaches a service, just before it handles it: what
+	// that service saw, which differs from the event log under lossShare
+	// (tests of recovery, ADR 0041/0050).
+	onDelivered?: (service: string, message: Message) => void;
 };
 
 // Runs every service over one in-memory bus, the runner acting as clock
@@ -50,7 +56,11 @@ export function runInProcess(
 ): RunResult;
 export function runInProcess(
 	config: InProcessConfig & { keepEventLog?: boolean },
-	{ onMessage = () => {}, onTickDone = () => {} }: RunObservers = {},
+	{
+		onMessage = () => {},
+		onTickDone = () => {},
+		onDelivered,
+	}: RunObservers = {},
 ): RunResult & { eventLog?: Message[] } {
 	const bus = createInMemoryBus({
 		loss: {
@@ -66,7 +76,21 @@ export function runInProcess(
 		onMessage(message);
 	});
 	for (const service of allServices(config)) {
-		service.start(bus, (rejected) =>
+		const serviceBus: Bus = onDelivered
+			? {
+					publish: bus.publish,
+					subscribe: (types, handle, region) =>
+						bus.subscribe(
+							types,
+							(message) => {
+								onDelivered(service.name, message);
+								handle(message);
+							},
+							region,
+						),
+				}
+			: bus;
+		service.start(serviceBus, (rejected) =>
 			result.rejected.push({ service: service.name, rejected }),
 		);
 	}
@@ -96,12 +120,16 @@ export async function runOverNats(
 	const buses: NatsBus[] = [];
 	// Runner first, so it is subscribed before any service publishes. It
 	// records every message type.
-	const connections = [{ name: "runner", inputs: messageTypes }, ...services];
-	for (const { name, inputs } of connections) {
+	const connections: Pick<SimService, "name" | "inputs" | "region">[] = [
+		{ name: "runner", inputs: messageTypes },
+		...services,
+	];
+	for (const { name, inputs, region } of connections) {
 		const connected = await connectNatsBus({
 			url: config.url,
 			runId,
 			inputs,
+			region,
 			log: (dropped) =>
 				console.warn(
 					JSON.stringify({
@@ -174,11 +202,14 @@ async function settled(received: () => number): Promise<void> {
 }
 
 function allServices(config: SimConfig): SimService[] {
+	const { columns, rows } = config.regions ?? oneRegion;
 	return [
 		...Array.from({ length: config.driverShards.count }, (_, shard) =>
 			driverShardService(config, shard),
 		),
-		dispatchService(config),
+		...Array.from({ length: columns * rows }, (_, region) =>
+			dispatchService(config, Region.parse(region)),
+		),
 		ridersService(config),
 	];
 }

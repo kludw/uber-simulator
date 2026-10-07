@@ -24,6 +24,7 @@ import {
 	Tick,
 } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
+import type { Region, RegionLayout } from "../shared/regions.ts";
 
 // What every service of one simulation must agree on, whether they share a
 // process (src/sim/run.ts) or not (src/*/main.ts).
@@ -40,16 +41,22 @@ export type SimConfig = {
 	shifts?: Shifts | undefined;
 	// Driver shards' offer preferences (ADR 0035); accept all when unset.
 	preferences?: Preferences | undefined;
+	// Region layout, one dispatch instance per region (ADR 0050); one region
+	// when unset.
+	regions?: RegionLayout | undefined;
 };
 
 export type Rejected = InputRejected<Message, string>;
 
 // One service wired for the bus. The name labels its seed stream and its logs.
 // inputs: every message type it subscribes to, known before it starts so a
-// NATS bus subscribes before anyone publishes (ADR 0042).
+// NATS bus subscribes before anyone publishes (ADR 0042). region: the one
+// region whose messages it takes (dispatch k, ADR 0050), known before it
+// starts for the same reason; every region's when unset.
 export type SimService = {
 	name: string;
 	inputs: readonly MessageType[];
+	region?: Region;
 	start(bus: Bus, logRejected: (rejected: Rejected) => void): void;
 };
 
@@ -136,6 +143,7 @@ export function driverShardService(
 						tick: startTick,
 						shifts: config.shifts,
 						preferences: config.preferences,
+						regions: config.regions,
 					},
 					random,
 				),
@@ -150,11 +158,13 @@ export function driverShardService(
 	};
 }
 
-export function dispatchService(config: SimConfig): SimService {
-	const name = "dispatch";
+// One instance per region of config.regions (ADR 0050).
+export function dispatchService(config: SimConfig, region: Region): SimService {
+	const name = `dispatch-${region}`;
 	return {
 		name,
 		inputs: dispatchInputs,
+		region,
 		start(bus, logRejected) {
 			startService(bus, {
 				// Bare-state start: dispatch publishes nothing when it starts.
@@ -163,10 +173,13 @@ export function dispatchService(config: SimConfig): SimService {
 						grid: config.grid,
 						tick: startTick,
 						matching: config.matching,
+						regions: config.regions,
+						region,
 					}),
 					outputs: [],
 				},
 				inputs: dispatchInputs,
+				region,
 				decide: decideDispatch,
 				random: createRandom(config.seed).child(name),
 				log: logRejected,
@@ -187,6 +200,7 @@ export function ridersService(config: SimConfig): SimService {
 						grid: config.grid,
 						requestsPerMinute: config.requestsPerMinute,
 						demand: config.demand,
+						regions: config.regions,
 					}),
 					outputs: [],
 				},

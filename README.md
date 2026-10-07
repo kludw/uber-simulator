@@ -51,13 +51,13 @@ docker compose down
 
 ## Run
 
-Seeded headless run at spec scale (500 × 500 grid, 2 shards × 50 drivers, 10 trip requests/min). Defaults: `--seed 1 --ticks 3600` (1 simulated hour), `--matching greedy`. `--matching batched` makes dispatch match every `--batch-window` ticks (default `5`) instead ([ADR 0030](docs/adr/0030-batched-matching.md)). `--demand city` spawns riders around downtown and airport hotspots instead of uniformly (default `uniform`, [ADR 0031](docs/adr/0031-hotspot-demand.md)); `--requests-per-minute` (default `10`) and `--drivers-per-shard` (default `50`) set load and fleet size. `--shifts on` makes drivers work shifts: online 1200-2400 ticks, offline 300-900 ticks, 80% online at start (default `off`: all online the whole run, [ADR 0032](docs/adr/0032-driver-shifts.md)). `--preferences picky` makes idle drivers decline offers: pickups beyond a per-driver max of 20-80 cells (200-800 m), and 10% of the rest at random (default `off`: accept every offer while idle, [ADR 0035](docs/adr/0035-driver-preferences.md)).
+Seeded headless run at spec scale (500 × 500 grid, 2 shards × 50 drivers, 10 trip requests/min). Defaults: `--seed 1 --ticks 3600` (1 simulated hour), `--matching greedy`. `--matching batched` makes dispatch match every `--batch-window` ticks (default `5`) instead ([ADR 0030](docs/adr/0030-batched-matching.md)). `--demand city` spawns riders around downtown and airport hotspots instead of uniformly (default `uniform`, [ADR 0031](docs/adr/0031-hotspot-demand.md)); `--requests-per-minute` (default `10`) and `--drivers-per-shard` (default `50`) set load and fleet size. `--shifts on` makes drivers work shifts: online 1200-2400 ticks, offline 300-900 ticks, 80% online at start (default `off`: all online the whole run, [ADR 0032](docs/adr/0032-driver-shifts.md)). `--preferences picky` makes idle drivers decline offers: pickups beyond a per-driver max of 20-80 cells (200-800 m), and 10% of the rest at random (default `off`: accept every offer while idle, [ADR 0035](docs/adr/0035-driver-preferences.md)). `--regions <columns>x<rows>` splits the grid into that many equal tiles and runs one dispatch instance per tile, each matching only its own region's trips and drivers (default `1x1`: one dispatch for the whole grid; at most 500 columns and rows, [ADR 0050](docs/adr/0050-split-dispatch-by-region.md), see [Split dispatch by region](#split-dispatch-by-region)).
 
 ```bash
 bun run sim -- --seed 42 --ticks 3600
 ```
 
-Prints seed, ticks, matching strategy, demand model, requests per minute, driver shards (shards × drivers per shard), shifts, preferences, drivers, trips requested / completed / cancelled, mean ticks from request to pickup, rejected inputs, and invariant violations (one JSON line each). Exit code 0 ok, 1 invariant violated, 2 invalid args or `NATS_URL`, 3 NATS unreachable.
+Prints seed, ticks, matching strategy, demand model, requests per minute, driver shards (shards × drivers per shard), shifts, preferences, region layout, drivers, trips requested / completed / cancelled, mean ticks from request to pickup, rejected inputs, and invariant violations (one JSON line each). Exit code 0 ok, 1 invariant violated, 2 invalid args or `NATS_URL`, 3 NATS unreachable.
 
 Same run over NATS, each service on its own connection, ticks as fast as the services settle (needs the local NATS server and `NATS_URL`, see Local infra; don't run `bun run dev` on the same server at the same time). Only each publisher's order is guaranteed, so the counts can differ from the in-process run and between runs. The summary starts with `run id: <id>`, a fresh UUID per run carried as the `Run-Id` header on every message ([ADR 0029](docs/adr/0029-event-persistence.md)):
 
@@ -67,7 +67,7 @@ bun run sim -- --seed 42 --ticks 600 --bus nats
 
 ### Compare matching strategies
 
-Runs greedy and batched matching in process on the same seed (riders request the same trips in both) and prints seed, ticks, batch window, demand model, requests per minute, driver shards, shifts, and preferences, then their numbers side by side, then any invariant violations (one JSON line each, tagged with the strategy). Takes `--seed`, `--ticks`, `--batch-window`, `--demand`, `--requests-per-minute`, `--drivers-per-shard`, `--shifts`, `--preferences`; in process only (`--bus nats` exits 2). Exit code 1 if either run violates an invariant, 2 invalid args.
+Runs greedy and batched matching in process on the same seed (riders request the same trips in both) and prints seed, ticks, batch window, demand model, requests per minute, driver shards, shifts, preferences, and region layout, then their numbers side by side, then any invariant violations (one JSON line each, tagged with the strategy). Takes `--seed`, `--ticks`, `--batch-window`, `--demand`, `--requests-per-minute`, `--drivers-per-shard`, `--shifts`, `--preferences`, `--regions`; in process only (`--bus nats` exits 2). Exit code 1 if either run violates an invariant, 2 invalid args.
 
 ```bash
 bun run sim -- --compare --seed 42 --ticks 3600 --batch-window 5
@@ -133,6 +133,25 @@ bun run sim -- --compare --seed 42 --ticks 3600 --demand city --requests-per-min
 
 At spec load picky drivers cost both strategies about 26-29% of completed trips (cancellations about 8× higher), and pickups that do happen are faster, as only trips with a willing driver nearby get served.
 Under heavy load picky drivers lift greedy from 235 to 301 completed trips but cut batched from 421 to 336, because picky declines (45,896 of greedy's 46,410 offers) cut greedy's mean matched pickup from 238 to 39 cells and match-to-pickup from 72 to 36 ticks (most of its matches used to be cancelled before pickup), while batched, whose matches were already mostly picked up (75-cell pickups), gains little and loses a window on each of its 11,878 declined offers (97% of 12,298), so its matches fall from 609 to 390.
+
+### Split dispatch by region
+
+The README's spec load and heavy load runs with dispatch split into 2 (`2x1`, left and right halves) and 4 (`2x2`) regions ([ADR 0050](docs/adr/0050-split-dispatch-by-region.md)):
+
+```bash
+bun run sim -- --compare --seed 42 --ticks 3600 --batch-window 5 --regions 2x2
+bun run sim -- --compare --seed 42 --ticks 3600 --demand city --requests-per-minute 30 --drivers-per-shard 25 --batch-window 5 --regions 2x2
+```
+
+Trips completed, greedy / batched (mean ticks from request to pickup), no invariant violations in any run:
+
+| Regions | spec load | heavy load |
+| --- | --- | --- |
+| `1x1` | 477 / 474 (61.1 / 62.0) | 235 / 421 (186.8 / 124.2) |
+| `2x1` | 473 / 467 (60.0 / 61.2) | 244 / 419 (187.5 / 120.6) |
+| `2x2` | 471 / 477 (61.3 / 64.3) | 277 / 424 (184.7 / 118.2) |
+
+`1x1` gives exactly the runs above. With several regions, each dispatch offers its trips only to idle drivers it knows in its region, a driver crossing a border is unknown to its new region for a tick or two, and an idle driver declines an offer from a region it has just left. At spec load (100 drivers on the whole grid) completed trips move by at most 1.5% either way (467-477); under heavy load greedy completes more (235 to 277), as it no longer sends drivers across the grid to the oldest trips. At 10k drivers (`--drivers-per-shard 5000 --requests-per-minute 1000 --ticks 1800`) the layouts are within 0.1% of each other.
 
 ### As separate processes over NATS
 
@@ -260,13 +279,13 @@ The view, canvas, and side panel are the live ones; the status says `replay <run
 
 ### Benchmark
 
-One in-process run at a given fleet size, demand scaled with it at the spec ratio (10 requests/min per 100 drivers), uniform demand, shifts off. Defaults: `--drivers 1000 --ticks 600 --matching greedy --batch-window 5 --shards 2 --seed 1`; `--drivers` must split evenly over `--shards`. `--max-minutes` (positive, fractions ok; default no limit) stops the run once a tick ends past that much wall time.
+One in-process run at a given fleet size, demand scaled with it at the spec ratio (10 requests/min per 100 drivers), uniform demand, shifts off. Defaults: `--drivers 1000 --ticks 600 --matching greedy --batch-window 5 --shards 2 --seed 1`; `--drivers` must split evenly over `--shards`. `--regions` (default `1x1`) runs one dispatch per region as in `bun run sim`. `--max-minutes` (positive, fractions ok; default no limit) stops the run once a tick ends past that much wall time.
 
 ```bash
 bun run bench -- --drivers 1000 --ticks 600 --matching greedy
 ```
 
-Prints the run settings, wall ms per tick (mean, p95; tick 1 includes starting the services), total messages, peak RSS, and JS heap size and object count at the end (no event log is kept), and `status: finished`. Stopped at `--max-minutes`, it prints the same for the ticks done (`ticks: 4050 of 100000`) with `status: did not finish in N min`; CPU profiles are still written. Exit code 0 ok, 2 invalid args, 3 stopped at `--max-minutes`. CPU and heap profiles come from Bun's own flags ([bun.com/docs/project/benchmarking](https://bun.com/docs/project/benchmarking)), e.g. `bun --cpu-prof-md --cpu-prof-dir profiles src/bench/main.ts --drivers 1000`.
+Prints the run settings (incl. region layout), wall ms per tick (mean, p95; tick 1 includes starting the services), total messages, peak RSS, and JS heap size and object count at the end (no event log is kept), and `status: finished`. Stopped at `--max-minutes`, it prints the same for the ticks done (`ticks: 4050 of 100000`) with `status: did not finish in N min`; CPU profiles are still written. Exit code 0 ok, 2 invalid args, 3 stopped at `--max-minutes`. CPU and heap profiles come from Bun's own flags ([bun.com/docs/project/benchmarking](https://bun.com/docs/project/benchmarking)), e.g. `bun --cpu-prof-md --cpu-prof-dir profiles src/bench/main.ts --drivers 1000`.
 
 Wall timings on a busy dev machine mean little: measure in CI with the `bench` workflow (`.github/workflows/bench.yaml`, manual). `gh workflow run bench.yaml --ref master` runs 1k, 5k, 10k drivers × greedy, batched for 600 ticks, each stopped at 30 min (`-f timeout_minutes=N`; recorded as `did not finish`, or `out of memory` when killed; a `timeout` 5 min later is the backstop for a tick that never ends), with a CPU profile; narrow it with `-f drivers=10000 -f matching=greedy`, add `-f heap_profile=true` for a heap profile, `-f cpu_profile=false` to skip the CPU profile (it inflates peak RSS; use for memory measurements). Each run's report, profiles, and runner note (CPUs, CPU model, memory, load average) are uploaded as an artifact (`gh run download <run id>`). Baseline and after-fix results, hot spots, and targets: [docs/performance.md](docs/performance.md); at 50k drivers, unprofiled CI p95 is 31-42 ms per tick greedy and 566-600 ms batched ([After milestone 12](docs/performance.md#after-milestone-12)).
 

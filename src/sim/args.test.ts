@@ -23,8 +23,17 @@ describe("parseSimArgs", () => {
 					demand: { type: "uniform" },
 					shifts: { type: "always_online" },
 					preferences: { type: "accept_all" },
+					regions: { columns: 1, rows: 1 },
 				},
 			},
+		});
+	});
+
+	// ADR 0050: one dispatch instance per region.
+	test("--regions splits dispatch into columns x rows regions", () => {
+		expect(parseSimArgs(["--regions", "2x2"])).toMatchObject({
+			ok: true,
+			value: { config: { regions: { columns: 2, rows: 2 } } },
 		});
 	});
 
@@ -95,6 +104,10 @@ describe("parseSimArgs", () => {
 		[["--drivers-per-shard", "0"]],
 		[["--seed", "1.5"]],
 		[["--compare", "--bus", "nats"]],
+		[["--regions", "2"]],
+		// The spec grid is 500 cells wide and high.
+		[["--regions", "501x1"]],
+		[["--regions", "1x501"]],
 		[["--unknown"]],
 	])("rejects %p", (argv) => {
 		expect(parseSimArgs(argv)).toMatchObject({

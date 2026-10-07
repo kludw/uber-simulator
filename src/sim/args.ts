@@ -2,6 +2,7 @@
 import { parseArgs } from "node:util";
 import * as z from "zod";
 import { specGrid } from "../shared/grid.ts";
+import { RegionLayout } from "../shared/regions.ts";
 import type { Result } from "../shared/result.ts";
 import {
 	DemandName,
@@ -56,11 +57,17 @@ const Args = z
 		preferences: PreferencesName,
 		"requests-per-minute": integerArg.pipe(z.int().min(0)),
 		"drivers-per-shard": integerArg.pipe(z.int().positive()),
+		regions: RegionLayout,
 	})
 	.refine((args) => !(args.compare && args.bus === "nats"), {
 		error: "--compare runs in process only",
 		path: ["compare"],
-	});
+	})
+	.refine(
+		({ regions }) =>
+			regions.columns <= specGrid.width && regions.rows <= specGrid.height,
+		{ error: "more regions than grid cells across", path: ["regions"] },
+	);
 
 export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 	let values: ReturnType<typeof parseArgs>["values"];
@@ -81,6 +88,8 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 				preferences: { type: "string", default: "off" },
 				"requests-per-minute": { type: "string", default: "10" },
 				"drivers-per-shard": { type: "string", default: "50" },
+				// One dispatch instance (ADR 0050).
+				regions: { type: "string", default: "1x1" },
 			},
 			strict: true,
 		}).values;
@@ -120,6 +129,7 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 				demand: demandNamed(args.demand),
 				shifts: shiftsNamed(args.shifts),
 				preferences: preferencesNamed(args.preferences),
+				regions: args.regions,
 			},
 		},
 	};

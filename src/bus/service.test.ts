@@ -112,6 +112,34 @@ describe("startService", () => {
 		]);
 	});
 
+	// ADR 0050: dispatch k takes only region k's messages, and every tick.
+	test("a service with a region takes only that region's messages", () => {
+		const bus = createInMemoryBus();
+		const decided: Message[] = [];
+
+		startService(bus, {
+			start: { state: null, outputs: [] },
+			inputs: ["clock.ticked", "cancel_trip"],
+			region: Region.parse(1),
+			decide: (state: null, input) => {
+				decided.push(input);
+				return { state, outputs: [] };
+			},
+			random: createRandom(1),
+			log: () => {},
+		});
+		const inRegion: CancelTrip = {
+			...cancelTrip("t-2"),
+			region: Region.parse(1),
+		};
+		bus.publish(cancelTrip("t-1"));
+		bus.publish(inRegion);
+		bus.publish(ticked(1));
+		bus.drain();
+
+		expect(decided).toEqual([inRegion, ticked(1)]);
+	});
+
 	test("publishes outputs in order, except input_rejected", () => {
 		const bus = createInMemoryBus();
 		const published = recordAll(bus);
