@@ -1822,3 +1822,34 @@ Tried 2026-10-07 ([#266](https://github.com/kludw/uber-simulator/issues/266)) to
 - Test runs, each 1,000 drivers, greedy, `1x1`, 60 ticks: `ubuntu-latest` [37683184047](https://github.com/kludw/uber-simulator/actions/runs/37683184047) ran (Xeon Platinum 8370C, 4 CPUs = 2 cores × 2 threads, 1 socket). `ubuntu-latest-4-cores` [37683188873](https://github.com/kludw/uber-simulator/actions/runs/37683188873), `ubuntu-latest-8-cores` [37683193841](https://github.com/kludw/uber-simulator/actions/runs/37683193841) and `ubuntu-latest-16-cores` [37683197635](https://github.com/kludw/uber-simulator/actions/runs/37683197635) were queued at 20:35:49-51 UTC, still had no runner at 20:41, and were cancelled.
 
 To measure on more cores: move the repo to an organization on a plan with larger runners and add one (its label goes in `-f runner=`), or register a self-hosted runner with Docker and cgroup v2 ([docker skill](../.claude/skills/docker/SKILL.md)'s `loadtest` note) and pass its label.
+
+## Driver indexes in moves
+
+What sending driver indexes instead of driver IDs in `drivers.moved` would save its consumers, re-measured against master `8ea1925` (one-pass Zod, x and y on dispatch's record, 8-cell buckets; [Move handling cut](#move-handling-cut)) for [ADR 0052](adr/0052-driver-indexes-in-moves.md), [#268](https://github.com/kludw/uber-simulator/issues/268). Measured 2026-10-07.
+
+### Method
+
+- Micro-benchmark of one tick of `drivers.moved` (every driver moves one cell; 2 shards; chunks of 5,000: 80 per tick at 400k, 100 at 500k; one region), median of 29 ticks after one warm-up, one process, no NATS, Bun 1.4.2: unmerged branch `268-exp-index-bench`, `scratch/index-bench.ts`, workflow `index-bench`, run [37685252415](https://github.com/kludw/uber-simulator/actions/runs/37685252415): jobs 1 and 2 on AMD EPYC 7763, job 3 on Intel Xeon Platinum 8573C, 1-minute load average 0.5-2.5 at start.
+- **IDs** (today): payloads from the real `driversMoved`, decoded by JSON.parse and the real `parseMessage`, applied by the real `decideDispatch`.
+- **Indexes** (ADR 0052's shape): `{ type, tick, region, fleet, driverIndexes, xs, ys }`, the field named `fleet` here (`fleetSize` in the ADR; one number per message either way), checked by a one-pass Zod schema like today's (each array in one pass, then lengths and every index below the fleet size), applied by a prototype of `placeDriver` (same record and bucket upkeep, every driver idle) keeping records in an array by index. The same prototype keyed by a `Map` by ID runs within 5% of the real `decideDispatch` on the 7763 (72.0-92.2 against 74.2-88.7 ms at 400k), so the array and the real brain compare.
+- Also timed: reading every move with its driver ID (today `forEachMove`; with indexes, IDs from a table filled once per index, plus `cellAt`), what the UI and the invariant checker do; and `JSON.stringify` of each parsed message, the persister's row payload (`src/persister/rows.ts`).
+
+### Results
+
+ms per tick, jobs 1 / 2 (EPYC 7763) and 3 (Xeon 8573C):
+
+| Step | 400k IDs | 400k indexes | 500k IDs | 500k indexes |
+| --- | ---: | ---: | ---: | ---: |
+| JSON.parse | 74.1 / 61.4, 73.6 | 20.7 / 20.5, 22.5 | 106.0 / 82.9, 98.6 | 25.7 / 25.6, 28.0 |
+| Zod | 13.0 / 12.6, 12.3 | 4.1 / 4.7, 5.0 | 16.3 / 16.1, 15.6 | 5.9 / 6.3, 6.7 |
+| Apply in dispatch | 92.2 / 72.0, 91.3 | 14.2 / 13.4, 17.6 | 132.8 / 103.5, 124.9 | 18.8 / 16.9, 21.2 |
+| **Dispatch decode + apply** | **179.3 / 146.0, 177.2** | **39.0 / 38.6, 45.1** (-74 to -78%) | **255.1 / 202.5, 239.1** | **50.4 / 48.8, 55.9** (-76 to -80%) |
+| Read with driver IDs (UI, invariant checker) | 3.9 / 3.5, 3.5 | 2.8 / 2.8, 2.8 | 4.3 / 4.2, 4.3 | 3.5 / 3.6, 3.4 |
+| Persister: row payload (`JSON.stringify`) | 14.7 / 14.7, 13.4 | 13.9 / 13.8, 13.1 | 18.7 / 18.5, 17.2 | 17.4 / 17.3, 16.4 |
+| **Persister decode + payload** | **101.8 / 88.7, 99.3** | **38.7 / 39.0, 40.6** (-56 to -62%) | **141.0 / 117.5, 131.4** | **49.0 / 49.2, 51.1** (-58 to -65%) |
+| Bytes per tick | 7,429,312 | 5,719,722 (-23%) | 9,286,710 | 7,177,500 (-23%) |
+
+- **Indexes cut dispatch's decode + apply by 74-80%** at 400k-500k on both CPU models: JSON.parse by 67-76% (a number instead of a string per move), Zod by 57-68%, apply by 81-86% (an array slot instead of a `Map` lookup by a fresh string). Less than [Dispatch moves profile](#dispatch-moves-profile)'s 84-89%, because master has since taken that section's cheaper Zod and x and y numbers.
+- **Readers that want IDs lose nothing**: an ID from a table filled once per index costs no more than today's ID from JSON.parse.
+- **The persister's decode shrinks the same way**; its row payload stringify doesn't (the arrays have the same lengths).
+- Not measured here: the driver shards' build and stringify, and the live effect on settle, which [#269](https://github.com/kludw/uber-simulator/issues/269) measures with the load test at 450k and 500k.

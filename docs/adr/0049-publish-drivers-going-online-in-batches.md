@@ -1,6 +1,6 @@
 # 0049. Publish drivers going online in batches per shard and tick
 
-- Status: Accepted
+- Status: Accepted (`driverIds` superseded by 0052)
 - Date: 2026-10-07
 - No ADR is superseded: `driver.went_online` is defined in the `domain` skill and `src/shared/messages.ts` (ADR 0032 introduced going offline and back, not the message shape); the new subject follows 0028's scheme
 
