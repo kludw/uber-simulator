@@ -20,13 +20,13 @@ Independent processes, each owning its state, talking over NATS. Each service's 
 | Service | Owns | Does |
 | --- | --- | --- |
 | clock | tick counter | publishes `clock.ticked` every 1 s / speed |
-| driver (×2, 50 drivers each, fixed shard) | driver position, state | moves drivers each tick (one `drivers.moved` per up to 5,000 moves, as parallel arrays of driver IDs and coordinates, before its other events of the tick, 0045, 0047), answers offers, reports arrivals |
+| driver (×2, 50 drivers each, fixed shard) | driver position, state | announces drivers going online (one `drivers.went_online` per up to 5,000 drivers, first in the tick, 0049), moves drivers each tick (one `drivers.moved` per up to 5,000 moves, as parallel arrays of driver IDs and coordinates, before its other events of the tick, 0045, 0047), answers offers, reports arrivals |
 | rider | riders, demand generator | spawns riders (Poisson; pickups uniform or around hotspots, 0031), requests trips, cancels on lost patience |
 | dispatch (single) | trips | queues requests, matches, owns every trip transition |
 | persister | stream position (JetStream consumer) | writes all events to ClickHouse, at-least-once |
 | UI (browser) | — | renders a view built from events |
 
-Nobody owns "the world". Views (dispatch's driver positions, UI) are built from events. Dispatch learns a driver from its `driver.went_online` or, if it missed that (it subscribed after the shard started, 0043), from its first `drivers.moved` entry.
+Nobody owns "the world". Views (dispatch's driver positions, UI) are built from events. Dispatch learns a driver from its `drivers.went_online` entry or, if it missed that (it subscribed after the shard started, 0043), from its first `drivers.moved` entry.
 
 ## Trip lifecycle (0018)
 
@@ -38,7 +38,7 @@ Nobody owns "the world". Views (dispatch's driver positions, UI) are built from 
 6. Rider patience expires before pickup -> `cancel_trip` to dispatch -> reply `cancel_trip_accepted` + `trip.cancelled` (driverId = driver to free: the matched driver or the one holding a pending offer, null if none), that driver `idle`, rider removed. A pending offer is dropped; a late reply to it is ignored. Trip picked up, completed, already cancelled, or unknown -> reply `cancel_trip_rejected` (`invalid_transition` / `unknown_trip`), no event. Rider: completed or cancelled trip -> removed, even if riding (its trip event was lost); unknown trip -> cancelling rider removed (request lost); picked up -> waits for `trip.picked_up` / `trip.completed`.
 7. Races resolved by dispatch: whichever of arrival / cancel reaches dispatch first wins. Arrival first -> picked up, cancel rejected. Cancel first -> cancelled, arrival ignored.
 
-Idle drivers wander: pick a random target cell, drive there, repeat. By default (shifts off) all 100 drivers online the whole run. With shifts on (`--shifts on`, `SHIFTS=on`, 0032) each driver alternates online periods of 1200-2400 ticks and offline periods of 300-900 ticks, 80% start online (about 75% online on average); a driver goes offline (`driver.went_offline`) only when idle and comes back with `driver.went_online`; dispatch makes no new offers to it in between. Dispatch's view can be stale: an offer made on the tick a driver goes offline is declined, and a `trip.cancelled` / `trip.offer_expired` / `trip.offer_declined` naming an offline driver leaves it offline. By default (preferences off) idle drivers accept every offer. With picky preferences (`--preferences picky`, `PREFERENCES=picky`, 0035) each driver gets a max pickup distance of 20-80 cells (200-800 m) at start and declines farther pickups, plus 10% of the rest at random; each decline excludes that driver for the trip. A crashed driver shard's drivers just disappear.
+Idle drivers wander: pick a random target cell, drive there, repeat. By default (shifts off) all 100 drivers online the whole run. With shifts on (`--shifts on`, `SHIFTS=on`, 0032) each driver alternates online periods of 1200-2400 ticks and offline periods of 300-900 ticks, 80% start online (about 75% online on average); a driver goes offline (`driver.went_offline`) only when idle and comes back with a `drivers.went_online` entry; dispatch makes no new offers to it in between. Dispatch's view can be stale: an offer made on the tick a driver goes offline is declined, and a `trip.cancelled` / `trip.offer_expired` / `trip.offer_declined` naming an offline driver leaves it offline. By default (preferences off) idle drivers accept every offer. With picky preferences (`--preferences picky`, `PREFERENCES=picky`, 0035) each driver gets a max pickup distance of 20-80 cells (200-800 m) at start and declines farther pickups, plus 10% of the rest at random; each decline excludes that driver for the trip. A crashed driver shard's drivers just disappear.
 
 ## Invariants (system tests)
 
@@ -49,7 +49,7 @@ Idle drivers wander: pick a random target cell, drive there, repeat. By default 
 - Every completed trip was matched and picked up.
 - A `trip.cancelled` naming a driver comes after that trip's `trip.offered` to that driver (else the driver could get stuck).
 - A `trip.cancelled` names the driver to free: the matched driver, else the driver holding the pending offer, else null.
-- An offline driver (from `driver.went_offline` until `driver.went_online`) never moves and is never matched (`trip.matched`). Offers to it are allowed (stale view; it declines), and events freeing it (cancel, expiry, decline) don't bring it online.
+- An offline driver (from `driver.went_offline` until its `drivers.went_online` entry) never moves and is never matched (`trip.matched`). Offers to it are allowed (stale view; it declines), and events freeing it (cancel, expiry, decline) don't bring it online.
 - A driver goes offline only with no active trip.
 
 Checked from the event log alone, one message at a time, by `createInvariantChecker` (`checkInvariants` over a whole log; `src/sim/invariants.ts`), independent of brain code.

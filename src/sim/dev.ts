@@ -4,7 +4,7 @@
 // every service (ADR 0029); it replaces any RUN_ID in the environment.
 // The persister starts first and alone: the others start once it logs
 // service_started, i.e. its stream exists. Driver shards publish
-// driver.went_online as they start, so on a fresh NATS volume an earlier
+// drivers.went_online as they start, so on a fresh NATS volume an earlier
 // start would lose those events. Not ready within 30 s: stop, exit 1.
 import * as z from "zod";
 import { parseServiceConfig } from "./config.ts";

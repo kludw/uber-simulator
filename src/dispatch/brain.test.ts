@@ -291,7 +291,7 @@ describe("decideDispatch clock.ticked", () => {
 	});
 
 	// Over NATS, dispatch can subscribe after a shard published its start-up
-	// driver.went_online (ADR 0043).
+	// drivers.went_online (ADR 0043).
 	test("offers a trip to a driver first seen moving", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
