@@ -1,7 +1,6 @@
 import { type Cell, cellIn, distance, type Grid } from "../shared/grid.ts";
 import type {
 	DriverId,
-	DriverMove,
 	Message,
 	Tick,
 	TripCancelled,
@@ -157,7 +156,7 @@ function observe(
 		}
 		case "drivers.moved":
 			forEachMove(message, (driverId, cell) => {
-				observeMove(log, grid, violations, message.tick, { driverId, cell });
+				observeMove(log, grid, violations, message.tick, driverId, cell);
 			});
 			break;
 		case "trip.requested":
@@ -179,7 +178,8 @@ function observeMove(
 	grid: Grid,
 	violations: Violation[],
 	tick: Tick,
-	{ driverId, cell }: DriverMove,
+	driverId: DriverId,
+	cell: Cell,
 ): void {
 	if (log.offlineDrivers.has(driverId)) {
 		violations.push({ type: "offline_driver_moved", tick, driverId, cell });

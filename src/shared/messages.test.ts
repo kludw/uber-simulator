@@ -6,12 +6,12 @@ import type {
 	startDriverShard,
 } from "../driver/brain.ts";
 import type { decideRiders, RidersInput } from "../rider/brain.ts";
+import { DriverIndex } from "./fleet.ts";
 import { type Cell, cellIn } from "./grid.ts";
 import {
 	type ClockTicked,
 	DriverId,
 	type DriverMove,
-	type DriverOnline,
 	driversMoved,
 	driversWentOnline,
 	forEachDriverAt,
@@ -65,9 +65,9 @@ const dropoff = cell(3, 4);
 
 const samples: Message[] = [
 	{ type: "clock.ticked", tick },
-	driversWentOnline(tick, Region.parse(0), [
-		{ driverId, cell: pickup },
-		{ driverId: DriverId.parse("d-2"), cell: dropoff },
+	driversWentOnline(tick, Region.parse(0), 12, [
+		{ driverIndex: DriverIndex.parse(1), cell: pickup },
+		{ driverIndex: DriverIndex.parse(11), cell: dropoff },
 	]),
 	{
 		type: "driver.went_offline",
@@ -76,9 +76,9 @@ const samples: Message[] = [
 		cell: pickup,
 		region: Region.parse(0),
 	},
-	driversMoved(tick, Region.parse(0), [
-		{ driverId, cell: pickup },
-		{ driverId: DriverId.parse("d-2"), cell: dropoff },
+	driversMoved(tick, Region.parse(0), 12, [
+		{ driverIndex: DriverIndex.parse(1), cell: pickup },
+		{ driverIndex: DriverIndex.parse(11), cell: dropoff },
 	]),
 	{
 		type: "driver.arrived_at_pickup",
@@ -184,6 +184,16 @@ test.each(samples.map((message) => [message.type, message]))(
 	},
 );
 
+const oneMove = {
+	type: "drivers.moved",
+	tick: 1,
+	fleetSize: 10,
+	driverIndexes: [1],
+	xs: [0],
+	ys: [0],
+};
+const oneOnline = { ...oneMove, type: "drivers.went_online" };
+
 const invalidInputs: [string, unknown][] = [
 	["not an object", "clock.ticked"],
 	["unknown type", { type: "clock.stopped", tick: 1 }],
@@ -246,99 +256,98 @@ const invalidInputs: [string, unknown][] = [
 		},
 	],
 	[
-		"moves with fewer x than driver IDs",
+		"moves with fewer x than driver indexes",
 		{
 			type: "drivers.moved",
 			tick: 1,
-			driverIds: ["d-1", "d-2"],
+			fleetSize: 10,
+			driverIndexes: [1, 2],
 			xs: [0],
 			ys: [0, 0],
 		},
 	],
 	[
-		"moves with more y than driver IDs",
+		"moves with more y than driver indexes",
 		{
 			type: "drivers.moved",
 			tick: 1,
-			driverIds: ["d-1"],
+			fleetSize: 10,
+			driverIndexes: [1],
 			xs: [0],
 			ys: [0, 0],
 		},
 	],
 	[
 		"move with a non-integer x",
-		{ type: "drivers.moved", tick: 1, driverIds: ["d-1"], xs: [1.5], ys: [0] },
+		{ ...oneMove, xs: [1.5] },
 	],
 	[
 		"move with a negative y",
-		{ type: "drivers.moved", tick: 1, driverIds: ["d-1"], xs: [0], ys: [-1] },
+		{ ...oneMove, ys: [-1] },
 	],
 	[
 		"move with a string coordinate",
-		{ type: "drivers.moved", tick: 1, driverIds: ["d-1"], xs: ["0"], ys: [0] },
-	],
-	[
-		"move with a bad driver ID",
-		{ type: "drivers.moved", tick: 1, driverIds: ["d.1"], xs: [0], ys: [0] },
-	],
-	[
-		"moves with driver IDs not in an array",
-		{ type: "drivers.moved", tick: 1, driverIds: "d-1", xs: [0], ys: [0] },
-	],
-	[
-		"moves with coordinates not in an array",
-		{
-			type: "drivers.moved",
-			tick: 1,
-			driverIds: ["d-1"],
-			xs: { 0: 0 },
-			ys: [0],
-		},
-	],
-	[
-		"move with a numeric driver ID",
-		{ type: "drivers.moved", tick: 1, driverIds: [1], xs: [0], ys: [0] },
+		{ ...oneMove, xs: ["0"] },
 	],
 	[
 		"move with an unsafe integer x",
-		{
-			type: "drivers.moved",
-			tick: 1,
-			driverIds: ["d-1"],
-			xs: [2 ** 53],
-			ys: [0],
-		},
+		{ ...oneMove, xs: [2 ** 53] },
 	],
 	[
-		"moves without ys",
-		{ type: "drivers.moved", tick: 1, driverIds: ["d-1"], xs: [0] },
+		"moves with coordinates not in an array",
+		{ ...oneMove, xs: { 0: 0 } },
+	],
+	["moves without ys", { ...oneMove, ys: undefined }],
+	["move with a negative driver index", { ...oneMove, driverIndexes: [-1] }],
+	[
+		"move with a fractional driver index",
+		{ ...oneMove, driverIndexes: [1.5] },
 	],
 	[
-		"drivers online with fewer y than driver IDs",
+		"move with a string driver index",
+		{ ...oneMove, driverIndexes: ["1"] },
+	],
+	[
+		"move with a driver index outside the fleet",
+		{ ...oneMove, driverIndexes: [10] },
+	],
+	[
+		"moves with driver indexes not in an array",
+		{ ...oneMove, driverIndexes: 1 },
+	],
+	["moves without a fleet size", { ...oneMove, fleetSize: undefined }],
+	["moves in an empty fleet", { ...oneMove, driverIndexes: [], xs: [], ys: [], fleetSize: 0 }],
+	["moves in a fractional fleet", { ...oneMove, fleetSize: 10.5 }],
+	// Stored before ADR 0052: replay skips them (stored_event_skipped).
+	[
+		"moves by driver ID",
+		{ type: "drivers.moved", tick: 1, driverIds: ["d-1"], xs: [0], ys: [0] },
+	],
+	[
+		"drivers online with fewer y than driver indexes",
 		{
 			type: "drivers.went_online",
 			tick: 1,
-			driverIds: ["d-1", "d-2"],
+			fleetSize: 10,
+			driverIndexes: [1, 2],
 			xs: [0, 0],
 			ys: [0],
 		},
 	],
 	[
 		"driver online at a negative x",
+		{ ...oneOnline, xs: [-1] },
+	],
+	[
+		"driver online with a driver index outside the fleet",
+		{ ...oneOnline, driverIndexes: [10] },
+	],
+	[
+		"drivers online by driver ID",
 		{
 			type: "drivers.went_online",
 			tick: 1,
 			driverIds: ["d-1"],
-			xs: [-1],
-			ys: [0],
-		},
-	],
-	[
-		"driver online with a bad driver ID",
-		{
-			type: "drivers.went_online",
-			tick: 1,
-			driverIds: ["d 1"],
 			xs: [0],
 			ys: [0],
 		},
@@ -359,7 +368,7 @@ test("isSimEvent tells events from offers, replies, and commands", () => {
 	const messages: Message[] = [
 		{ type: "clock.ticked", tick: Tick.parse(1) },
 		{ type: "trip.matched", tick: Tick.parse(1), tripId, driverId },
-		driversMoved(Tick.parse(1), Region.parse(0), []),
+		driversMoved(Tick.parse(1), Region.parse(0), 1, []),
 		{ type: "offer_accepted", tripId, driverId, region: Region.parse(0) },
 		{ type: "cancel_trip", tripId, region: Region.parse(0) },
 		{ type: "cancel_trip_accepted", tripId },
@@ -375,54 +384,54 @@ test("isSimEvent tells events from offers, replies, and commands", () => {
 	]);
 });
 
-test("forEachMove visits a message's moves in order", () => {
-	const moves: DriverMove[] = [
-		{ driverId: DriverId.parse("d-2"), cell: cell(1, 2) },
-		{ driverId: DriverId.parse("d-1"), cell: cell(3, 4) },
-	];
-	const visited: DriverMove[] = [];
+// IDs from the fleet's size: indexes 10 and 1 of a fleet of 12 (ADR 0052).
+const moves: DriverMove[] = [
+	{ driverIndex: DriverIndex.parse(10), cell: cell(1, 2) },
+	{ driverIndex: DriverIndex.parse(1), cell: cell(3, 4) },
+];
 
-	forEachMove(driversMoved(tick, Region.parse(0), moves), (driverId, cell) => {
-		visited.push({ driverId, cell });
+test("forEachMove visits a message's moves in order, by driver ID", () => {
+	const visited: [string, Cell][] = [];
+
+	forEachMove(driversMoved(tick, Region.parse(0), 12, moves), (id, at) => {
+		visited.push([id, at]);
 	});
 
-	expect(visited).toEqual(moves);
+	expect(visited).toEqual([
+		["d-10", cell(1, 2)],
+		["d-01", cell(3, 4)],
+	]);
 });
 
-test("forEachWentOnline visits a message's drivers in order", () => {
-	const drivers: DriverOnline[] = [
-		{ driverId: DriverId.parse("d-2"), cell: cell(1, 2) },
-		{ driverId: DriverId.parse("d-1"), cell: cell(3, 4) },
-	];
-	const visited: DriverOnline[] = [];
+test("forEachWentOnline visits a message's drivers in order, by driver ID", () => {
+	const visited: [string, Cell][] = [];
 
 	forEachWentOnline(
-		driversWentOnline(tick, Region.parse(0), drivers),
-		(driverId, cell) => {
-			visited.push({ driverId, cell });
-		},
-	);
-
-	expect(visited).toEqual(drivers);
-});
-
-test("forEachDriverAt visits each driver's coordinates in order", () => {
-	const moves: DriverMove[] = [
-		{ driverId: DriverId.parse("d-2"), cell: cell(1, 2) },
-		{ driverId: DriverId.parse("d-1"), cell: cell(3, 4) },
-	];
-	const visited: [string, number, number][] = [];
-
-	forEachDriverAt(
-		driversMoved(tick, Region.parse(0), moves),
-		(driverId, x, y) => {
-			visited.push([driverId, x, y]);
+		driversWentOnline(tick, Region.parse(0), 12, moves),
+		(id, at) => {
+			visited.push([id, at]);
 		},
 	);
 
 	expect(visited).toEqual([
-		["d-2", 1, 2],
-		["d-1", 3, 4],
+		["d-10", cell(1, 2)],
+		["d-01", cell(3, 4)],
+	]);
+});
+
+test("forEachDriverAt visits each driver's ID and coordinates in order", () => {
+	const visited: [string, number, number][] = [];
+
+	forEachDriverAt(
+		driversMoved(tick, Region.parse(0), 12, moves),
+		(id, x, y) => {
+			visited.push([id, x, y]);
+		},
+	);
+
+	expect(visited).toEqual([
+		["d-10", 1, 2],
+		["d-01", 3, 4],
 	]);
 });
 
@@ -479,7 +488,8 @@ const storedWithoutRegion: Record<string, unknown>[] = [
 	{
 		type: "drivers.went_online",
 		tick: 1,
-		driverIds: ["d-1"],
+		fleetSize: 10,
+		driverIndexes: [1],
 		xs: [0],
 		ys: [0],
 	},
@@ -490,7 +500,14 @@ const storedWithoutRegion: Record<string, unknown>[] = [
 		cell: { x: 0, y: 0 },
 		region: Region.parse(0),
 	},
-	{ type: "drivers.moved", tick: 1, driverIds: ["d-1"], xs: [0], ys: [0] },
+	{
+		type: "drivers.moved",
+		tick: 1,
+		fleetSize: 10,
+		driverIndexes: [1],
+		xs: [0],
+		ys: [0],
+	},
 ];
 
 test.each(storedWithoutRegion.map((input) => [input.type, input]))(

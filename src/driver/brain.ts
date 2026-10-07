@@ -28,6 +28,7 @@ import type {
 	TripStatus,
 } from "../shared/messages.ts";
 import { driversMoved, driversWentOnline } from "../shared/messages.ts";
+import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import type { Random } from "../shared/random.ts";
 import {
 	oneRegion,
@@ -39,11 +40,18 @@ import {
 // region: the trip's, its pickup's region, from the offer until the trip
 // is over; the driver's trip messages go there (ADR 0050).
 type Driver =
-	| { state: "offline"; id: DriverId; cell: Cell }
-	| { state: "idle"; id: DriverId; cell: Cell; wanderTarget: Cell | null }
+	| { state: "offline"; id: DriverId; index: DriverIndex; cell: Cell }
+	| {
+			state: "idle";
+			id: DriverId;
+			index: DriverIndex;
+			cell: Cell;
+			wanderTarget: Cell | null;
+	  }
 	| {
 			state: "en_route";
 			id: DriverId;
+			index: DriverIndex;
 			cell: Cell;
 			tripId: TripId;
 			region: Region;
@@ -54,6 +62,7 @@ type Driver =
 	| {
 			state: "at_pickup";
 			id: DriverId;
+			index: DriverIndex;
 			tripId: TripId;
 			region: Region;
 			pickup: Cell;
@@ -63,6 +72,7 @@ type Driver =
 	| {
 			state: "on_trip";
 			id: DriverId;
+			index: DriverIndex;
 			cell: Cell;
 			tripId: TripId;
 			region: Region;
@@ -72,6 +82,7 @@ type Driver =
 	| {
 			state: "at_dropoff";
 			id: DriverId;
+			index: DriverIndex;
 			tripId: TripId;
 			region: Region;
 			dropoff: Cell;
@@ -126,6 +137,7 @@ type Schedule = {
 export type DriverShardState = {
 	grid: Grid;
 	regions: RegionLayout;
+	fleetSize: number;
 	drivers: Map<DriverId, Driver>;
 	schedule: Schedule | null;
 	picky: Picky | null;
@@ -143,7 +155,10 @@ export type DriverShardInput =
 export function startDriverShard(
 	config: {
 		grid: Grid;
-		driverIds: DriverId[];
+		// The shard's drivers: driverCount from firstIndex on (ADR 0052).
+		fleetSize: number;
+		firstIndex: DriverIndex;
+		driverCount: number;
 		tick: Tick;
 		shifts?: Shifts;
 		preferences?: Preferences;
@@ -156,17 +171,18 @@ export function startDriverShard(
 	assertValidShifts(shifts);
 	// Cells drawn first, in driver ID order, as before shifts existed: shift
 	// draws come only from shift streams.
-	const placed = config.driverIds.toSorted().map((id) => ({
-		id,
-		cell: randomCell(config.grid, random),
-	}));
+	const placed = Array.from({ length: config.driverCount }, (_, i) => {
+		const index = DriverIndex.parse(config.firstIndex + i);
+		const id = driverIdAt(config.fleetSize, index);
+		return { id, index, cell: randomCell(config.grid, random) };
+	});
 	const drivers = new Map<DriverId, Driver>();
 	let schedule: Schedule | null = null;
 	if (shifts.type === "always_online") {
-		for (const { id, cell } of placed) drivers.set(id, idle(id, cell));
+		for (const driver of placed) drivers.set(driver.id, idle(driver, driver.cell));
 	} else {
 		const periods = new Map<DriverId, Period>();
-		for (const { id, cell } of placed) {
+		for (const { id, index, cell } of placed) {
 			const stream = random.child(shiftStream(id, 0));
 			const online = stream.float() < shifts.startOnlineShare;
 			const range = online ? shifts.onlineTicks : shifts.offlineTicks;
@@ -175,7 +191,10 @@ export function startDriverShard(
 				startedAt: config.tick,
 				ticks: stream.int(range.min, range.max),
 			});
-			drivers.set(id, online ? idle(id, cell) : { state: "offline", id, cell });
+			drivers.set(
+				id,
+				online ? idle({ id, index }, cell) : { state: "offline", id, index, cell },
+			);
 		}
 		schedule = {
 			onlineTicks: shifts.onlineTicks,
@@ -183,10 +202,15 @@ export function startDriverShard(
 			periods,
 		};
 	}
-	const picky = startPicky(config.preferences, config.driverIds, random);
+	const picky = startPicky(
+		config.preferences,
+		placed.map((driver) => driver.id),
+		random,
+	);
 	const state: DriverShardState = {
 		grid: config.grid,
 		regions: config.regions ?? oneRegion,
+		fleetSize: config.fleetSize,
 		drivers,
 		schedule,
 		picky,
@@ -195,14 +219,14 @@ export function startDriverShard(
 	for (const driver of drivers.values()) {
 		if (driver.state !== "idle") continue;
 		inRegion(online, regionOf(state.regions, state.grid, driver.cell)).push({
-			driverId: driver.id,
+			driverIndex: driver.index,
 			cell: driver.cell,
 		});
 	}
 	return {
 		state,
 		outputs: inRegionChunks(online, (region, chunk) =>
-			driversWentOnline(config.tick, region, chunk),
+			driversWentOnline(config.tick, region, config.fleetSize, chunk),
 		),
 	};
 }
@@ -257,8 +281,8 @@ function assertValidShifts(shifts: Shifts): void {
 	}
 }
 
-function idle(id: DriverId, cell: Cell): IdleDriver {
-	return { state: "idle", id, cell, wanderTarget: null };
+function idle(driver: { id: DriverId; index: DriverIndex }, cell: Cell): IdleDriver {
+	return { state: "idle", id: driver.id, index: driver.index, cell, wanderTarget: null };
 }
 
 function shiftStream(driverId: DriverId, n: number): string {
@@ -355,6 +379,7 @@ function onOffer(
 	state.drivers.set(offered.id, {
 		state: "en_route",
 		id: offered.id,
+		index: offered.index,
 		cell: offered.cell,
 		tripId: offer.tripId,
 		region,
@@ -403,6 +428,7 @@ function onPickedUp(state: DriverShardState, pickedUp: TripPickedUp): Decision {
 	return replaceDriver(state, {
 		state: "on_trip",
 		id: addressed.id,
+		index: addressed.index,
 		cell: addressed.pickup,
 		tripId: addressed.tripId,
 		region: addressed.region,
@@ -425,6 +451,7 @@ function onCompleted(
 	return replaceDriver(state, {
 		state: "idle",
 		id: addressed.id,
+		index: addressed.index,
 		cell: addressed.dropoff,
 		wanderTarget: null,
 	});
@@ -471,6 +498,7 @@ function onTripEnded(
 	return replaceDriver(state, {
 		state: "idle",
 		id: addressed.id,
+		index: addressed.index,
 		cell,
 		wanderTarget: null,
 	});
@@ -489,12 +517,13 @@ function onTripStatus(state: DriverShardState, status: TripStatus): Decision {
 		status.stage === "pickup"
 	) {
 		if (status.status === "released") {
-			return replaceDriver(state, idle(addressed.id, addressed.pickup));
+			return replaceDriver(state, idle(addressed, addressed.pickup));
 		}
 		if (status.status !== "picked_up") return ignored;
 		return replaceDriver(state, {
 			state: "on_trip",
 			id: addressed.id,
+			index: addressed.index,
 			cell: addressed.pickup,
 			tripId: addressed.tripId,
 			region: addressed.region,
@@ -507,7 +536,7 @@ function onTripStatus(state: DriverShardState, status: TripStatus): Decision {
 		status.stage === "dropoff" &&
 		status.status !== "picked_up"
 	) {
-		return replaceDriver(state, idle(addressed.id, addressed.dropoff));
+		return replaceDriver(state, idle(addressed, addressed.dropoff));
 	}
 	return ignored;
 }
@@ -533,7 +562,7 @@ function onTick(
 			const { cell } = changed.driver;
 			const region = regionOf(state.regions, state.grid, cell);
 			if (changed.driver.state === "idle") {
-				inRegion(online, region).push({ driverId: driver.id, cell });
+				inRegion(online, region).push({ driverIndex: driver.index, cell });
 			} else {
 				outputs.push({
 					type: "driver.went_offline",
@@ -614,10 +643,10 @@ function onTick(
 		state,
 		outputs: [
 			...inRegionChunks(online, (region, chunk) =>
-				driversWentOnline(input.tick, region, chunk),
+				driversWentOnline(input.tick, region, state.fleetSize, chunk),
 			),
 			...inRegionChunks(moves, (region, chunk) =>
-				driversMoved(input.tick, region, chunk),
+				driversMoved(input.tick, region, state.fleetSize, chunk),
 			),
 			...outputs,
 		],
@@ -690,8 +719,13 @@ function changeShift(
 	};
 	return {
 		driver: goingOnline
-			? idle(driver.id, driver.cell)
-			: { state: "offline", id: driver.id, cell: driver.cell },
+			? idle(driver, driver.cell)
+			: {
+					state: "offline",
+					id: driver.id,
+					index: driver.index,
+					cell: driver.cell,
+				},
 		period: next,
 	};
 }
@@ -712,7 +746,7 @@ function wander(
 		return { ...driver, wanderTarget: null };
 	}
 	const cell = stepToward(driver.cell, wanderTarget);
-	moves.push({ driverId: driver.id, cell });
+	moves.push({ driverIndex: driver.index, cell });
 	const arrived = distance(cell, wanderTarget) === 0;
 	return { ...driver, cell, wanderTarget: arrived ? null : wanderTarget };
 }
@@ -726,7 +760,7 @@ function driveToPickup(
 	let cell = driver.cell;
 	if (distance(cell, driver.pickup) > 0) {
 		cell = stepToward(cell, driver.pickup);
-		moves.push({ driverId: driver.id, cell });
+		moves.push({ driverIndex: driver.index, cell });
 	}
 	if (distance(cell, driver.pickup) > 0) {
 		return { ...driver, cell };
@@ -742,6 +776,7 @@ function driveToPickup(
 	return {
 		state: "at_pickup",
 		id: driver.id,
+		index: driver.index,
 		tripId: driver.tripId,
 		region: driver.region,
 		pickup: driver.pickup,
@@ -759,7 +794,7 @@ function driveToDropoff(
 	let cell = driver.cell;
 	if (distance(cell, driver.dropoff) > 0) {
 		cell = stepToward(cell, driver.dropoff);
-		moves.push({ driverId: driver.id, cell });
+		moves.push({ driverIndex: driver.index, cell });
 	}
 	if (distance(cell, driver.dropoff) > 0) {
 		return { ...driver, cell };
@@ -775,6 +810,7 @@ function driveToDropoff(
 	return {
 		state: "at_dropoff",
 		id: driver.id,
+		index: driver.index,
 		tripId: driver.tripId,
 		region: driver.region,
 		dropoff: driver.dropoff,

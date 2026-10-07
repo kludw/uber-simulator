@@ -5,7 +5,11 @@ import type { Matching } from "../dispatch/brain.ts";
 import { cityDemand } from "../rider/demand.ts";
 import { Cell, cellAt, distance } from "../shared/grid.ts";
 import type { Message } from "../shared/messages.ts";
-import { forEachDriverAt, forEachMove } from "../shared/messages.ts";
+import {
+	forEachDriverAt,
+	forEachMove,
+	forEachWentOnline,
+} from "../shared/messages.ts";
 import { regionOf } from "../shared/regions.ts";
 import { preferencesNamed, shiftsNamed } from "./config.ts";
 import { checkInvariants } from "./invariants.ts";
@@ -515,11 +519,12 @@ describe("runInProcess", () => {
 
 		const start: unknown[][] = eventLog
 			.slice(0, 3)
-			.map((message) =>
-				message.type === "drivers.went_online"
-					? [message.type, message.tick, message.driverIds]
-					: [message.type],
-			);
+			.map((message) => {
+				if (message.type !== "drivers.went_online") return [message.type];
+				const driverIds: string[] = [];
+				forEachWentOnline(message, (driverId) => driverIds.push(driverId));
+				return [message.type, message.tick, driverIds];
+			});
 		expect(start).toEqual([
 			["drivers.went_online", 0, ["d-0", "d-1"]],
 			["drivers.went_online", 0, ["d-2", "d-3"]],
@@ -535,9 +540,11 @@ describe("runInProcess", () => {
 			driverShards: { count: 2, driversPerShard: 6 },
 		});
 
-		const driverIds = eventLog.flatMap((message) =>
-			message.type === "drivers.went_online" ? message.driverIds : [],
-		);
+		const driverIds: string[] = [];
+		for (const message of eventLog) {
+			if (message.type !== "drivers.went_online") continue;
+			forEachWentOnline(message, (driverId) => driverIds.push(driverId));
+		}
 		expect<string[]>(driverIds).toEqual([
 			"d-00",
 			"d-01",
