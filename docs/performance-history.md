@@ -1874,3 +1874,11 @@ Live greedy `1x1` after [ADR 0052](adr/0052-driver-indexes-in-moves.md)'s both s
 - **Greedy `1x1` keeps real time at 500k**, two of two, on both CPU models, the EPYC 7763 included (p95 461.9 ms, 148 ms under the bound); every run 600 of 600 ticks, persister drained in 2.1 s.
 - **Dispatch's moves are no longer most of its tick**: `drivers.moved` decode + handle is 81-118 ms per tick at 450k-500k (45-49% of dispatch's 166-263 ms), against 223-272 ms at 400k (73-78%) in [After milestone 20](#after-milestone-20). Live wall time, so it includes waiting for a CPU; not comparable one to one with [Driver indexes in moves](#driver-indexes-in-moves)' single-process 74-80%.
 - Dispatch peak RSS 488-535 MiB at 450k-500k (418-422 MiB at 400k, [After milestone 21](#after-milestone-21)); not split by cause (the array by index is 4 MB at 500k, ADR 0052).
+
+## After milestone 25
+
+Live limits after [ADR 0052](adr/0052-driver-indexes-in-moves.md) (driver indexes in moves, [#269](https://github.com/kludw/uber-simulator/issues/269); dispatch's drivers in an array by index, [#280](https://github.com/kludw/uber-simulator/issues/280)), judged by ADR 0037 with [ADR 0046](adr/0046-persister-pending-criterion.md)'s backlog bound, [#270](https://github.com/kludw/uber-simulator/issues/270). Measured 2026-10-07 at `5444965` (master after [#282](https://github.com/kludw/uber-simulator/pull/282)).
+
+### Method
+
+- `loadtest` workflow as in [After milestone 22](#after-milestone-22): one `ubuntu-latest` job per case (4 CPUs = 2 cores with SMT, [Runner topology](#runner-topology)), 2 driver shards, demand at the spec ratio, seed 1, 5-tick batch window, 600 ticks, drain bound 5 min. CPU model per run from the report's `host` line.
