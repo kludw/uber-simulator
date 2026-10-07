@@ -1,6 +1,6 @@
 # 0018. Dispatch matches trips via offers to drivers
 
-- Status: Accepted (offer transport superseded by 0028)
+- Status: Accepted (offer transport superseded by 0028; single instance superseded by 0050)
 - Date: 2026-10-02
 
 ## Context
