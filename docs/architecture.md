@@ -100,6 +100,8 @@ The UI only subscribes; it builds its view from events alone and joins mid-run (
 
 The start delay is what orders tick 1 after the other services subscribed; nothing waits for them explicitly. Nothing orders dispatch's subscriptions before the shards' start-up `drivers.went_online` either (one message per 5,000 drivers, [0049](adr/0049-publish-drivers-going-online-in-batches.md)): dispatch can miss some or all of them and learns those drivers from their tick-1 `drivers.moved` entries, before it can match the first requests on tick 2 ([0043](adr/0043-learn-drivers-from-moves.md), [Start-up race](performance.md#start-up-race)).
 
+Planned (milestone 21, [0050](adr/0050-split-dispatch-by-region.md), not built yet): one dispatch process per region (`dispatch-<k>`), each subscribed only to its region's subjects (`<subject>.region-<k>`) plus `clock.ticked`; riders and driver shards set the `region` of every message dispatch takes, and shards chunk `drivers.moved` per region.
+
 Services never call each other: commands (`request_trip`, `cancel_trip` from riders; `confirm_trip` from drivers waiting at a pickup or dropoff, [0041](adr/0041-confirm-trip-while-waiting.md)), offers, replies (incl. `trip_status` to `confirm_trip`), and events are all bus messages. Dispatch is the only source of `trip.*` events ([0018](adr/0018-dispatch-matching-via-offers.md)). Offers reach every shard (`sim.offers.*`); only the shard owning the driver passes them to its brain (its `accepts`).
 
 ## Local infra

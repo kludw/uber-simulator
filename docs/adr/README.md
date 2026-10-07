@@ -21,7 +21,7 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0015 | [NATS subject scheme](0015-nats-subject-scheme.md)                       | Superseded by 0028 |
 | 0016 | [Initial domain model](0016-initial-domain-model.md)                     | Accepted (driver states superseded by 0024, then 0025) |
 | 0017 | [Independent actor services with pure brains](0017-independent-actor-services-with-pure-brains.md) | Accepted |
-| 0018 | [Dispatch matching via offers](0018-dispatch-matching-via-offers.md)     | Accepted (offer transport superseded by 0028) |
+| 0018 | [Dispatch matching via offers](0018-dispatch-matching-via-offers.md)     | Accepted (offer transport superseded by 0028; single instance superseded by 0050) |
 | 0019 | [One package, entrypoint per service](0019-single-package-multiple-entrypoints.md) | Accepted |
 | 0020 | [Browser UI: canvas, NATS over WebSocket](0020-browser-ui-canvas-nats-websocket.md) | Accepted |
 | 0021 | [Development workflow](0021-development-workflow.md)                   | Accepted |
@@ -53,3 +53,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0047 | [Driver moves as parallel arrays](0047-driver-moves-as-parallel-arrays.md) | Accepted |
 | 0048 | [Keep idle drivers across ticks](0048-keep-idle-drivers-across-ticks.md) | Accepted |
 | 0049 | [Drivers going online in batches](0049-publish-drivers-going-online-in-batches.md) | Accepted |
+| 0050 | [Split dispatch by region](0050-split-dispatch-by-region.md) | Accepted |
