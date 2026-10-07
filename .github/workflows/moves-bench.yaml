@@ -3,7 +3,8 @@ name: moves-bench
 # Experiment for #232, not merged: dispatch's cost of a tick of drivers.moved
 # by step and candidate option (scratch/moves-bench.ts).
 on:
-  workflow_dispatch:
+  push:
+    branches: [232-exp-dispatch-profile]
 
 jobs:
   bench:
