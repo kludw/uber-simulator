@@ -1267,3 +1267,72 @@ Whether publishing drivers going online per shard in chunks of 5,000 ([ADR 0049]
 - **The observer is no longer late at tick 1**: its latest receipt against the clock's schedule is 32-42 ms at 400k and 141-263 ms at 500k, mid-run (ticks 434-508) on the EPYC 7763 runs that overrun, where dispatch's per-tick work is over 600 ms; #217's tick-1 warning (752-1,808 ms before) is not printed.
 - **The persister's startup is calmer**: no `fetch_failed` (13 of 20 greedy runs had one at startup before), ack pending max 9,394-12,935 at 400k (16,011-20,000 in 17 of 20 greedy runs before), 16,577-20,000 at 500k.
 - **Settle still fails first above 325k-350k**, set by dispatch's per-tick work (426-652 ms here; out of scope for #229): 400k passes every criterion on one EPYC 9V74 (p95 559.8 ms) and fails settle on another (731.0 ms; its dispatch took 22% longer per tick for the same messages), 500k fails settle and overruns on both EPYC 7763 runs. The live limit stays [After milestone 19](#after-milestone-19)'s 325k (not re-bracketed); what no longer limits it is the slow consumer.
+
+## Dispatch moves profile
+
+Where dispatch's time per tick goes at greedy 325k and 400k after [ADR 0047](adr/0047-driver-moves-as-parallel-arrays.md), [0048](adr/0048-keep-idle-drivers-across-ticks.md) and [0049](adr/0049-publish-drivers-going-online-in-batches.md), by function, and what each candidate cut would save, so milestone 20's cut is chosen from a profile, [#232](https://github.com/kludw/uber-simulator/issues/232). Measured 2026-10-07 at master `d99579d`.
+
+### Method
+
+- **Live**: `loadtest` workflow as in [After milestone 19](#after-milestone-19) (greedy, 2 driver shards, seed 1, 600 ticks) at 325k and 400k, on the unmerged branch `232-exp-dispatch-profile`, which starts dispatch with Bun's `--cpu-prof` as [Dispatch profile](#dispatch-profile) did (`src/` otherwise unchanged). Runs [37581359388](https://github.com/kludw/uber-simulator/actions/runs/37581359388) and [37581369874](https://github.com/kludw/uber-simulator/actions/runs/37581369874), one job per size each: 325k on an EPYC 9V45 in both, 400k on an EPYC 7763 in both.
+- **Counting**: as in [Dispatch profile](#dispatch-profile), sample counts only (one sample is about 1 ms of the JS thread running), classified by call stack under the NATS bus's message callback (`receive`, 98.5-98.8% of each profile's samples) by the branch's `scratch/dispatch-profile.ts`. ms per tick = share × the run's dispatch decode + handle ms per tick from its `messages_timed` entries (wall time; `scratch/dispatch-timing.ts`): 1.26 ms per sample at 325k, 1.38-1.39 at 400k. `forEachMove` and `forEachWentOnline` are one function, so "apply moves" includes `drivers.went_online`, 0.8-1.1 ms per tick averaged over a run ([Drivers online in batches](#drivers-online-in-batches)).
+- **Options**: micro-benchmark of one tick of `drivers.moved` at 325k and 400k (every driver moves one cell; 66 and 80 chunks of 5,000, as live), median of 29 ticks, one process, no NATS, the real `parseMessage`, `decideDispatch`, `placeDriver` and `nearestIdle` beside candidate variants (branch's `scratch/moves-bench.ts`, workflow `moves-bench`): [37582692016](https://github.com/kludw/uber-simulator/actions/runs/37582692016) (EPYC 9V45, Xeon Platinum 8573C; every option) and [37581808482](https://github.com/kludw/uber-simulator/actions/runs/37581808482) (EPYC 7763, Xeon Platinum 8573C; without the one-pass Zod, indexed shape and bucket rows), 1-minute load average under 0.7 at start.
+- **Caveats**: the profiler costs little here: profiled, dispatch's decode + handle is 518.4-525.0 ms per tick at 400k on the EPYC 7763 (483.4-555.5 unprofiled, [After milestone 19](#after-milestone-19)) and 287.0-294.6 at 325k on the 9V45 (no unprofiled 325k run on that model; 336.1-349.9 at 350k). Settle p95 380.7 / 393.6 ms at 325k (pass), 695.3 / 729.5 ms at 400k (fail settle, as unprofiled on the 7763). Per-line ticks put most of `placeDriver`'s self time on `driver.cell = cell` (40.6-41.8k of its 54.7-55.9k samples at 400k), less on the `byId.get` line before it; the JIT's line attribution inside inlined code isn't trusted to split the two, the micro-benchmark is.
+
+### Results
+
+Dispatch live, share of samples (ms per tick):
+
+| Part | Function, hot line | 325k [37581359388](https://github.com/kludw/uber-simulator/actions/runs/37581359388) EPYC 9V45 | 325k [37581369874](https://github.com/kludw/uber-simulator/actions/runs/37581369874) EPYC 9V45 | 400k [37581359388](https://github.com/kludw/uber-simulator/actions/runs/37581359388) EPYC 7763 | 400k [37581369874](https://github.com/kludw/uber-simulator/actions/runs/37581369874) EPYC 7763 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| **Decode** (92-95% of it `drivers.moved`, per `messages_timed`) | | **44.0% (126.4)** | **44.7% (131.7)** | **44.0% (228.1)** | **43.9% (230.5)** |
+| | JSON.parse | 30.6% (87.8) | 30.6% (90.2) | 26.7% (138.4) | 26.8% (140.9) |
+| | Zod per element: `z.array` runs `z.string()` / `z.number()` on every entry and copies the array (`$ZodArray`'s parse) | 10.9% (31.3) | 11.5% (33.9) | 13.1% (68.1) | 13.0% (68.0) |
+| | Zod refines: the ID pattern per driver ID (`messages.ts:46`); coordinates under 0.1% | 2.1% (6.1) | 2.1% (6.3) | 3.5% (18.2) | 3.5% (18.5) |
+| | payload to string | 0.4% (1.2) | 0.5% (1.3) | 0.7% (3.4) | 0.6% (3.1) |
+| **Apply moves** (`drivers.moved` handle) | | **33.8% (96.9)** | **33.4% (98.5)** | **28.3% (146.6)** | **27.6% (145.2)** |
+| | `placeDriver` self: `byId.get(driverId)`, `driver.cell = cell` | 31.5% (90.5) | 31.3% (92.3) | 24.8% (128.6) | 24.1% (126.7) |
+| | bucket swaps (`removeFromBucket`, `addToBucket`) | 1.1% (3.1) | 1.0% (2.9) | 1.4% (7.0) | 1.5% (7.8) |
+| | loop, `cellAt` per move | 1.2% (3.3) | 1.1% (3.3) | 2.1% (11.0) | 2.0% (10.7) |
+| **`clock.ticked` step** | | **18.8% (53.9)** | **18.5% (54.6)** | **23.1% (119.6)** | **24.1% (126.5)** |
+| | nearest search: `searchRings` (26.6-28.8k samples at 400k), hot line its loop over a bucket's drivers; `closer` (16.6-17.0k), `distance(driver.cell, pickup)` | 14.8% (42.5) | 14.7% (43.4) | 19.2% (99.5) | 20.3% (106.3) |
+| | rest: queued-trip and offer expiry scans (inlined in `onTick`), `storeTrip`, `markBusy` | 4.0% (11.4) | 3.8% (11.2) | 3.9% (20.1) | 3.8% (20.2) |
+| **Publishing** outputs | | 2.3% (6.5) | 2.2% (6.4) | 3.2% (16.8) | 3.0% (16.0) |
+| Other handlers, bus | | 1.1% (3.2) | 1.1% (3.3) | 1.4% (7.3) | 1.3% (6.7) |
+| Total | | 228.4 samples per tick (287.0) | 234.6 (294.6) | 375.2 (518.4) | 377.6 (525.0) |
+
+Per `messages_timed`, `drivers.moved` decode / handle is 120.5 / 92.9 and 125.3 / 94.5 ms per tick at 325k, 208.0 / 135.3 and 209.2 / 132.8 at 400k; `clock.ticked` 58.4-59.5 and 135.4-145.5.
+
+Options, micro-benchmark at 400k, ms per tick (bold: proposed below):
+
+| Step | Now | Option | EPYC 7763 [37581808482](https://github.com/kludw/uber-simulator/actions/runs/37581808482) | Xeon 8573C [37581808482](https://github.com/kludw/uber-simulator/actions/runs/37581808482) / [37582692016](https://github.com/kludw/uber-simulator/actions/runs/37582692016) | EPYC 9V45 [37582692016](https://github.com/kludw/uber-simulator/actions/runs/37582692016) |
+| --- | --- | --- | ---: | ---: | ---: |
+| Decode | JSON.parse | | 93.3 | 70.5 / 54.7 | 68.9 |
+| | Zod (`parseMessage`) | | 37.4 | 39.4 / 39.1 | 30.8 |
+| | | **Zod, each array checked in one pass** (`z.custom`; same rules, no schema per element) | | 10.4 | 8.2 |
+| | | driver indexes instead of IDs (message change): JSON.parse | | 18.6 | 13.2 |
+| | | driver indexes instead of IDs: Zod, one pass | | 3.6 | 3.4 |
+| Apply | `decideDispatch` | | 102.0 | 84.6 / 64.2 | 69.7 |
+| | | **Map lookup, x and y numbers on the record** (no `Cell` per move) | 59.6 | 48.6 / 39.2 | 47.7 |
+| | | dense index, x and y numbers (no Map lookup; needs indexes in the message) | 3.4 | 3.6 / 3.1 | 2.7 |
+| Nearest search (667 per tick, every driver idle) | 16-cell buckets | | | 15.3 | 32.7 |
+| | | **8-cell buckets** | | 5.6 | 11.0 |
+| | | 4-cell buckets | | 2.6 | 4.0 |
+| `placeDriver` by bucket size | 16 cells | 8 / 4 cells | | 51.4 → 51.6 / 72.0 | 69.2 → 74.5 / 82.0 |
+| Decode on a worker | in-thread JSON.parse + Zod above (93.8-130.7) | main thread's cost to receive the decoded chunks: arrays / coordinates as transferred typed arrays / indexes and coordinates only, transferred | 31.6 / 20.4 / 0.4 | 38.3 / 28.7 / 0.3, 33.4 / 25.2 / 0.3 | 25.3 / 18.2 / 0.3 |
+
+- **Decoding `drivers.moved` is still the largest part** (44% live: 126-132 ms per tick at 325k, 228-231 at 400k), JSON.parse about two thirds of it. **Zod's share is mostly `z.array`'s own per-element work, not the refines**: ADR 0047's arrays are `z.array(z.string()).refine(...)` and `z.array(z.number()).refine(...)`, so Zod still runs a `z.string()` or `z.number()` schema on every entry (15,000 per chunk) and copies each array before the one refine. Checking each array in one pass (`z.custom`: an array whose entries all match the rule) cuts Zod's time 73% in the micro-benchmark (30.8-39.1 → 8.2-10.4 ms per tick at 400k), same rules, same wire shape, same parsed type.
+- **Applying moves is the second part** (28-34% live: 97-99 ms at 325k, 145-147 at 400k), per-move upkeep every move pays: a Map lookup by a driver ID string fresh from JSON.parse, and a new `Cell` stored on the driver's record. Skipping drivers that didn't change bucket saves nothing more: `placeDriver` already returns before any bucket work for them, and the swaps for the 6.0% of moves that cross a 16-cell bucket are 1.0-1.5% of dispatch (3-8 ms). Keeping x and y as numbers on the record instead of a `Cell` per move is 32-43% cheaper (64.2-102.0 → 39.2-59.6 ms at 400k); the rest is the lookup, which only a dense driver index removes (2.7-3.4 ms), and that needs the index in the message.
+- **The `clock.ticked` step is now mostly the nearest search** (19-20% live at 400k, 99.5-106.3 ms; 15% at 325k), up from 4.1-4.2% at 200k in [Dispatch profile](#dispatch-profile): each search scans every idle driver in the pickup's 16 × 16-cell bucket (1,024 buckets, about 390 drivers each at 400k when all are idle), reading each driver's cell through a pointer. 16 cells were tuned at 50k ([Grid index tuning](#grid-index-tuning)). With 8-cell buckets searches are 63-66% cheaper (15.3-32.7 → 5.6-11.0 ms) and `placeDriver` 0-8% dearer (more moves cross a bucket); with 4-cell buckets searches are 83-88% cheaper and `placeDriver` 18-40% dearer. The micro-benchmark's searches are 3-7× cheaper than live (every driver idle, nothing excluded, warm cache, other CPU models), so the live saving below is estimated from the ratio, not the ms.
+- **Decoding on a worker** leaves the main thread only receiving decoded chunks: 18-38 ms per tick at 400k for arrays with IDs, against 94-131 ms decoding in-thread; 0.3-0.4 ms if only transferred typed arrays cross, which again needs indexes instead of IDs (or interning them on the worker). It takes a second thread (the runner has more than 2 cores to spare, [After milestone 19](#after-milestone-19)), and moves decoded off-thread reach the brain after messages the shard published after them, breaking the per-publisher order ADR 0042 and 0045 rely on (a driver's cell before its arrival): it needs a design.
+- **Driver indexes instead of IDs** in `drivers.moved` is the largest single saving (at 400k, JSON.parse 54.7-68.9 → 13.2-18.6 ms, Zod → 3.4-3.6, apply → 2.7-3.1: 84-89% of decode + apply), but it changes the message for every consumer (shards, dispatch, persister, UI, replay, invariant checker), and each consumer must learn an index's driver ID elsewhere (e.g. from `drivers.went_online`), so a `drivers.moved` no longer stands alone: an ADR and its own ticket.
+
+### Proposed cut (milestone 20's next ticket, #233)
+
+Proposal, not decided: three local changes, each exact (in-process outcomes unchanged), none changing a message or a module boundary:
+
+1. **Check each `drivers.moved` / `drivers.went_online` array in one Zod pass** (`src/shared/messages.ts`). Zod per element + refines: 86 ms per tick at 400k live (37-40 at 325k); -73% in the micro-benchmark, so about -63 ms at 400k. ADR 0047's rules are unchanged (every ID matches the pattern, every coordinate is a non-negative safe integer, one check per array); its text says Zod runs "four refines instead of 15,000 element schemas", which the merged `z.array(...)` doesn't do.
+2. **8-cell grid buckets** (`defaultSearch`, `src/dispatch/idle-drivers.ts`): nearest search 99.5-106.3 ms at 400k live; -63-66% in the micro-benchmark, so about -65 ms at 400k, less 0-10 ms more `placeDriver`. Retunes [Grid index tuning](#grid-index-tuning)'s constant; re-check 50k in process.
+3. **x and y numbers on dispatch's driver record**, a `Cell` built only where one is needed (`src/dispatch/idle-drivers.ts`): apply 145-147 ms at 400k live; -32-43% in the micro-benchmark, so about -46 to -63 ms; the nearest search then reads coordinates without a pointer chase.
+
+Together about -160 to -195 ms of the 518-525 ms per tick profiled at 400k on the EPYC 7763, which would put dispatch at 400k there below its time at 325k today (389.5-420.2 ms unprofiled, passing). If 400k still fails: driver indexes instead of IDs in `drivers.moved` (ADR), then decoding on a worker (ADR); splitting dispatch is milestone 21.
