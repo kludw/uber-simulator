@@ -6,6 +6,7 @@ import {
 } from "../bus/nats.ts";
 import { type Message, messageTypes, RunId, Tick } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
+import { oneRegion, Region } from "../shared/regions.ts";
 import type { Result } from "../shared/result.ts";
 import {
 	dispatchService,
@@ -174,11 +175,14 @@ async function settled(received: () => number): Promise<void> {
 }
 
 function allServices(config: SimConfig): SimService[] {
+	const { columns, rows } = config.regions ?? oneRegion;
 	return [
 		...Array.from({ length: config.driverShards.count }, (_, shard) =>
 			driverShardService(config, shard),
 		),
-		dispatchService(config),
+		...Array.from({ length: columns * rows }, (_, region) =>
+			dispatchService(config, Region.parse(region)),
+		),
 		ridersService(config),
 	];
 }

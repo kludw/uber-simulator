@@ -24,7 +24,7 @@ import {
 	Tick,
 } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
-import type { RegionLayout } from "../shared/regions.ts";
+import type { Region, RegionLayout } from "../shared/regions.ts";
 
 // What every service of one simulation must agree on, whether they share a
 // process (src/sim/run.ts) or not (src/*/main.ts).
@@ -140,6 +140,7 @@ export function driverShardService(
 						tick: startTick,
 						shifts: config.shifts,
 						preferences: config.preferences,
+						regions: config.regions,
 					},
 					random,
 				),
@@ -154,8 +155,9 @@ export function driverShardService(
 	};
 }
 
-export function dispatchService(config: SimConfig): SimService {
-	const name = "dispatch";
+// One instance per region of config.regions (ADR 0050).
+export function dispatchService(config: SimConfig, region: Region): SimService {
+	const name = `dispatch-${region}`;
 	return {
 		name,
 		inputs: dispatchInputs,
@@ -167,10 +169,13 @@ export function dispatchService(config: SimConfig): SimService {
 						grid: config.grid,
 						tick: startTick,
 						matching: config.matching,
+						regions: config.regions,
+						region,
 					}),
 					outputs: [],
 				},
 				inputs: dispatchInputs,
+				region,
 				decide: decideDispatch,
 				random: createRandom(config.seed).child(name),
 				log: logRejected,
@@ -191,6 +196,7 @@ export function ridersService(config: SimConfig): SimService {
 						grid: config.grid,
 						requestsPerMinute: config.requestsPerMinute,
 						demand: config.demand,
+						regions: config.regions,
 					}),
 					outputs: [],
 				},
