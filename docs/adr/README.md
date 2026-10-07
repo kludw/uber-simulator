@@ -54,3 +54,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0048 | [Keep idle drivers across ticks](0048-keep-idle-drivers-across-ticks.md) | Accepted |
 | 0049 | [Drivers going online in batches](0049-publish-drivers-going-online-in-batches.md) | Accepted |
 | 0050 | [Split dispatch by region](0050-split-dispatch-by-region.md) | Accepted |
+| 0051 | [Search untouched drivers in batched matching](0051-search-untouched-drivers-in-batched-matching.md) | Accepted |
