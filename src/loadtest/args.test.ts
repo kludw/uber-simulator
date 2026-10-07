@@ -11,6 +11,7 @@ describe("parseLoadtestArgs", () => {
 				// 10 requests/min per 100 drivers (docs/spec.md).
 				requestsPerMinute: 100,
 				matching: { type: "greedy" },
+				regions: { columns: 1, rows: 1 },
 				drainBoundMs: 300_000,
 				natsMonitoringUrl: "http://localhost:8222",
 			},
@@ -40,6 +41,23 @@ describe("parseLoadtestArgs", () => {
 			},
 		});
 	});
+
+	test("--regions splits dispatch into columns x rows regions", () => {
+		expect(parseLoadtestArgs(["--regions", "2x1"])).toMatchObject({
+			ok: true,
+			value: { regions: { columns: 2, rows: 1 } },
+		});
+	});
+
+	test.each([["2"], ["0x1"], ["501x1"]])(
+		"--regions %p is invalid",
+		(layout) => {
+			expect(parseLoadtestArgs(["--regions", layout])).toMatchObject({
+				ok: false,
+				error: { type: "invalid_args" },
+			});
+		},
+	);
 
 	test("a fleet that doesn't split evenly over the shards is invalid", () => {
 		expect(

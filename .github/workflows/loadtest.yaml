@@ -1,11 +1,11 @@
 name: loadtest
 
 # Manual only: `gh workflow run loadtest.yaml --ref master` runs `bun run
-# loadtest` (ADR 0037) for 1k drivers, greedy, 600 ticks; set the cases with
-# -f, e.g. `-f drivers="5000 10000" -f matching="greedy batched"`. One job
-# (own runner, NATS, ClickHouse) per drivers x matching case. Each case's
-# report, runner note, service logs, and NATS log are uploaded as one
-# artifact (`gh run download <run id>`).
+# loadtest` (ADR 0037) for 1k drivers, greedy, one region, 600 ticks; set the
+# cases with -f, e.g. `-f drivers="5000 10000" -f matching="greedy batched"
+# -f regions="1x1 2x1"`. One job (own runner, NATS, ClickHouse) per drivers x
+# matching x regions case. Each case's report, runner note, service logs, and
+# NATS log are uploaded as one artifact (`gh run download <run id>`).
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +17,10 @@ on:
         description: Matching strategies, space-separated (greedy, batched)
         type: string
         default: "greedy"
+      regions:
+        description: Region layouts, space-separated (<columns>x<rows>, ADR 0050)
+        type: string
+        default: "1x1"
       ticks:
         description: Ticks per run (ADR 0037 judges T >= 600; jobs stop at 60 min)
         type: number
@@ -39,11 +43,13 @@ jobs:
         env:
           DRIVERS: ${{ inputs.drivers }}
           MATCHING: ${{ inputs.matching }}
+          REGIONS: ${{ inputs.regions }}
         run: |
-          runs=$(jq -cn --arg d "$DRIVERS" --arg m "$MATCHING" \
+          runs=$(jq -cn --arg d "$DRIVERS" --arg m "$MATCHING" --arg r "$REGIONS" \
             '[($d | split(" ") | map(select(. != ""))[]) as $drivers
               | ($m | split(" ") | map(select(. != ""))[]) as $matching
-              | {drivers: $drivers, matching: $matching}]')
+              | ($r | split(" ") | map(select(. != ""))[]) as $regions
+              | {drivers: $drivers, matching: $matching, regions: $regions}]')
           echo "runs=$runs" >> "$GITHUB_OUTPUT"
 
   loadtest:
@@ -79,6 +85,7 @@ jobs:
       CLICKHOUSE_DB: sim
       DRIVERS: ${{ matrix.run.drivers }}
       MATCHING: ${{ matrix.run.matching }}
+      REGIONS: ${{ matrix.run.regions }}
       TICKS: ${{ inputs.ticks }}
       DRAIN_MINUTES: ${{ inputs.drain_minutes }}
     steps:
@@ -109,7 +116,7 @@ jobs:
           # load test, which then stops its services; SIGKILL 1 min later if
           # it hasn't exited.
           timeout -k 1m "${cap}m" bun src/loadtest/main.ts --drivers "$DRIVERS" --matching "$MATCHING" \
-            --ticks "$TICKS" --drain-minutes "$DRAIN_MINUTES" \
+            --regions "$REGIONS" --ticks "$TICKS" --drain-minutes "$DRAIN_MINUTES" \
             > out/report.txt 2> out/services.log
           code=$?
           set -e
@@ -136,5 +143,5 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: loadtest-${{ matrix.run.drivers }}-${{ matrix.run.matching }}
+          name: loadtest-${{ matrix.run.drivers }}-${{ matrix.run.matching }}-${{ matrix.run.regions }}
           path: out/

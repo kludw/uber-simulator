@@ -7,7 +7,9 @@
 // drivers.went_online as they start, so on a fresh NATS volume an earlier
 // start would lose those events. Not ready within 30 s: stop, exit 1.
 import * as z from "zod";
+import { oneRegion } from "../shared/regions.ts";
 import { parseServiceConfig } from "./config.ts";
+import { type ServiceProcess, serviceProcesses } from "./launch.ts";
 
 const persisterReadyTimeoutMs = 30_000;
 
@@ -18,30 +20,15 @@ if (!config.ok) {
 	process.exit(2);
 }
 console.log(`[dev] run id: ${config.value.runId}`);
+const regions = config.value.regions ?? oneRegion;
+console.log(`[dev] regions: ${regions.columns}x${regions.rows}`);
 
-type Service = {
-	name: string;
-	entrypoint: string;
-	env: Record<string, string>;
-};
-
-const persister: Service = {
+const persister: ServiceProcess = {
 	name: "persister",
 	entrypoint: "src/persister/main.ts",
 	env: {},
 };
-const others: Service[] = [
-	{ name: "dispatch", entrypoint: "src/dispatch/main.ts", env: {} },
-	{ name: "riders", entrypoint: "src/rider/main.ts", env: {} },
-	...Array.from({ length: config.value.driverShards.count }, (_, shard) => ({
-		name: `driver-shard-${shard}`,
-		entrypoint: "src/driver/main.ts",
-		env: { SHARD_INDEX: String(shard) },
-	})),
-	// Last, though its start delay is what keeps tick 1 after the others
-	// subscribe.
-	{ name: "clock", entrypoint: "src/clock/main.ts", env: {} },
-];
+const others = serviceProcesses(config.value);
 const nameWidth = Math.max(
 	...[persister, ...others].map((service) => service.name.length),
 );
@@ -61,7 +48,10 @@ function stopAll(): void {
 process.on("SIGINT", stopAll);
 process.on("SIGTERM", stopAll);
 
-function spawn(service: Service, onLine: (line: string) => void = () => {}) {
+function spawn(
+	service: ServiceProcess,
+	onLine: (line: string) => void = () => {},
+) {
 	const child = Bun.spawn(["bun", service.entrypoint], {
 		env: { ...runEnv, ...service.env },
 		stdout: "pipe",

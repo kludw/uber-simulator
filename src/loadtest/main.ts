@@ -12,6 +12,7 @@ import { simEvents } from "../persister/persister.ts";
 import { Tick } from "../shared/messages.ts";
 import { simEventSubjects, subjectFor } from "../shared/subjects.ts";
 import { parsePersisterConfig, parseServiceConfig } from "../sim/config.ts";
+import { type ServiceProcess, serviceProcesses } from "../sim/launch.ts";
 import { parseLoadtestArgs } from "./args.ts";
 import type { PersisterSample } from "./backlog.ts";
 import { createInfraReader, type InfraReading } from "./infra.ts";
@@ -30,8 +31,14 @@ const observerName = "loadtest-observer";
 
 const args = parseLoadtestArgs(Bun.argv.slice(2));
 if (!args.ok) fail(args.error.message, 2);
-const { ticks, driverShards, matching, drainBoundMs, natsMonitoringUrl } =
-	args.value;
+const {
+	ticks,
+	driverShards,
+	matching,
+	regions,
+	drainBoundMs,
+	natsMonitoringUrl,
+} = args.value;
 
 // Every service reads the same variables (src/sim/config.ts): this run's
 // fleet at real time, spec defaults for everything else.
@@ -49,6 +56,7 @@ const runEnv: Record<string, string | undefined> = {
 	DEMAND: "uniform",
 	SHIFTS: "off",
 	PREFERENCES: "off",
+	REGIONS: `${regions.columns}x${regions.rows}`,
 };
 const serviceConfig = parseServiceConfig(runEnv);
 if (!serviceConfig.ok) fail(JSON.stringify(serviceConfig.error), 2);
@@ -79,11 +87,6 @@ const jsm = await jetstreamManager(observer).catch((cause: unknown) =>
 	fail(`JetStream unavailable: ${String(cause)}`, 1),
 );
 
-type Service = {
-	name: string;
-	entrypoint: string;
-	env: Record<string, string>;
-};
 type Child = {
 	name: string;
 	subprocess: Bun.Subprocess<"ignore", "pipe", "inherit">;
@@ -97,7 +100,10 @@ const children: Child[] = [];
 const { promise: childFailed, resolve: markChildFailed } =
 	Promise.withResolvers<string>();
 
-function spawn(service: Service, onLine: (line: string) => void = () => {}) {
+function spawn(
+	service: ServiceProcess,
+	onLine: (line: string) => void = () => {},
+) {
 	const subprocess = Bun.spawn(["bun", service.entrypoint], {
 		env: { ...runEnv, ...service.env },
 		stdout: "pipe",
@@ -207,19 +213,7 @@ const observing = (async () => {
 	}
 })();
 
-const services: Service[] = [
-	{ name: "dispatch", entrypoint: "src/dispatch/main.ts", env: {} },
-	{ name: "riders", entrypoint: "src/rider/main.ts", env: {} },
-	...Array.from({ length: driverShards.count }, (_, shard) => ({
-		name: `driver-shard-${shard}`,
-		entrypoint: "src/driver/main.ts",
-		env: { SHARD_INDEX: String(shard) },
-	})),
-	// Last, though its start delay is what keeps tick 1 after the others
-	// subscribe.
-	{ name: "clock", entrypoint: "src/clock/main.ts", env: {} },
-];
-for (const service of services) spawn(service);
+for (const service of serviceProcesses(serviceConfig.value)) spawn(service);
 
 const persisterSamples: PersisterSample[] = [];
 const pendingBytes = { observerMax: 0, anyMax: 0 };
