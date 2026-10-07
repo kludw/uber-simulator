@@ -46,7 +46,7 @@ export type DriverWentOffline = z.infer<typeof DriverWentOffline>;
 // drivers.moved's and drivers.went_online's arrays are checked in one pass
 // each, not by a schema per element: z.array runs its element schema on every
 // entry and copies the array, most of drivers.moved's Zod time (ADR 0047,
-// 0049; docs/performance.md, Dispatch moves profile). Same rules as DriverId
+// 0049; docs/performance-history.md, Dispatch moves profile). Same rules as DriverId
 // and Coordinate, so the result is branded as they would brand it.
 const DriverIds = z.custom<DriverId[]>(
 	(ids) =>
@@ -139,7 +139,7 @@ function forEachDriverCell(
 }
 
 // forEachMove / forEachWentOnline without a Cell per driver, for a reader
-// that keeps only the coordinates (dispatch, docs/performance.md).
+// that keeps only the coordinates (dispatch, docs/performance-history.md).
 export function forEachDriverAt(
 	message: DriversMoved | DriversWentOnline,
 	visit: (driverId: DriverId, x: Coordinate, y: Coordinate) => void,

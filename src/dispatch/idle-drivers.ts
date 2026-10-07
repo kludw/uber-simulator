@@ -12,7 +12,7 @@ export type IdleDriver = { driverId: DriverId; cell: Cell };
 // Square buckets of cellsPerBucket x cellsPerBucket cells. Below
 // linearScanBelow idle drivers, a linear scan beats searching mostly empty
 // buckets (ADR 0036). linearScanBelow measured at 50k drivers, cellsPerBucket
-// retuned at 400k and re-checked at 50k (docs/performance.md, Dispatch moves
+// retuned at 400k and re-checked at 50k (docs/performance-history.md, Dispatch moves
 // profile, Move handling cut).
 type IdleDriverSearch = {
 	cellsPerBucket: number;
@@ -33,7 +33,7 @@ const internals: unique symbol = Symbol("idle drivers");
 export type IdleDrivers = { readonly [internals]: Drivers };
 
 // One record per driver, so a move costs one map lookup. Its cell as x and y
-// numbers, not a Cell, so a move allocates nothing (docs/performance.md,
+// numbers, not a Cell, so a move allocates nothing (docs/performance-history.md,
 // Dispatch moves profile). bucket is -1 unless idle; slot is its place in the
 // bucket, so leaving is a swap with the bucket's last entry, not a search. A
 // driver offline and not busy has none.
