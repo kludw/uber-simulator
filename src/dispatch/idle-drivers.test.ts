@@ -16,10 +16,12 @@ import {
 import {
 	type IdleDriver,
 	type IdleDrivers,
+	idleCount,
 	idleDriversById,
 	markBusy,
 	markFree,
 	nearestIdle,
+	nearestIdleSkipping,
 	placeDriver,
 	removeDriver,
 	startIdleDrivers,
@@ -203,6 +205,59 @@ describe("busy marks", () => {
 		const index = placed([driver("d-1", 3, 3)]);
 
 		expect(() => markFree(index, DriverId.parse("d-1"))).toThrow();
+	});
+});
+
+describe("idleCount", () => {
+	test("counts online drivers that are not busy", () => {
+		const index = placed([
+			driver("d-1", 1, 1),
+			driver("d-2", 2, 2),
+			driver("d-3", 3, 3),
+		]);
+		markBusy(index, DriverId.parse("d-1"));
+		removeDriver(index, DriverId.parse("d-2"));
+
+		expect(idleCount(index)).toBe(1);
+	});
+});
+
+describe("nearestIdleSkipping", () => {
+	test("returns the nearest idle driver the predicate keeps, with its cell", () => {
+		const index = placed([
+			driver("d-1", 15, 15),
+			driver("d-2", 6, 4),
+			driver("d-3", 4, 6),
+		]);
+
+		expect(
+			nearestIdleSkipping(
+				index,
+				cell(5, 5),
+				(driverId) => driverId === DriverId.parse("d-2"),
+			),
+		).toEqual(driver("d-3", 4, 6));
+	});
+
+	test("searching rings, skips drivers the predicate rejects", () => {
+		const index = placed(
+			[driver("d-1", 5, 6), driver("d-2", 9, 9), driver("d-3", 5, 2)],
+			searchGrid,
+		);
+
+		expect(
+			nearestIdleSkipping(
+				index,
+				cell(5, 5),
+				(driverId) => driverId === DriverId.parse("d-1"),
+			),
+		).toEqual(driver("d-3", 5, 2));
+	});
+
+	test("returns no driver when the predicate skips every idle driver", () => {
+		const index = placed([driver("d-1", 15, 15)]);
+
+		expect(nearestIdleSkipping(index, cell(5, 5), () => true)).toBeUndefined();
 	});
 });
 
