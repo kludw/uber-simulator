@@ -3,6 +3,8 @@ import {
 	distance,
 	type Grid,
 	randomCell,
+	spikeCounters,
+	spikeRegionOf,
 	stepToward,
 } from "../shared/grid.ts";
 import type {
@@ -305,8 +307,15 @@ function onOffer(
 	if (offered === undefined) {
 		throw new Error(`offer for driver ${offer.driverId} outside this shard`);
 	}
+	spikeCounters.offers++;
+	const outOfRegion =
+		offered.state === "idle" &&
+		spikeRegionOf(state.grid, offered.cell.x, offered.cell.y) !==
+			spikeRegionOf(state.grid, offer.pickup.x, offer.pickup.y);
+	if (outOfRegion) spikeCounters.regionDeclines++;
 	if (
 		offered.state !== "idle" ||
+		outOfRegion ||
 		declines(state.picky, offered, offer, random)
 	) {
 		return {
@@ -627,6 +636,13 @@ function wander(
 	}
 	const cell = stepToward(driver.cell, wanderTarget);
 	moves.push({ driverId: driver.id, cell });
+	spikeCounters.moves++;
+	if (
+		spikeRegionOf(grid, cell.x, cell.y) !==
+		spikeRegionOf(grid, driver.cell.x, driver.cell.y)
+	) {
+		spikeCounters.idleCrossings++;
+	}
 	const arrived = distance(cell, wanderTarget) === 0;
 	return { ...driver, cell, wanderTarget: arrived ? null : wanderTarget };
 }
@@ -639,8 +655,16 @@ function driveToPickup(
 ): Driver {
 	let cell = driver.cell;
 	if (distance(cell, driver.pickup) > 0) {
+		const before = cell;
 		cell = stepToward(cell, driver.pickup);
 		moves.push({ driverId: driver.id, cell });
+		spikeCounters.moves++;
+		if (
+			spikeRegionOf({ width: 500, height: 500 }, cell.x, cell.y) !==
+			spikeRegionOf({ width: 500, height: 500 }, before.x, before.y)
+		) {
+			spikeCounters.busyCrossings++;
+		}
 	}
 	if (distance(cell, driver.pickup) > 0) {
 		return { ...driver, cell };
@@ -670,8 +694,16 @@ function driveToDropoff(
 ): Driver {
 	let cell = driver.cell;
 	if (distance(cell, driver.dropoff) > 0) {
+		const before = cell;
 		cell = stepToward(cell, driver.dropoff);
 		moves.push({ driverId: driver.id, cell });
+		spikeCounters.moves++;
+		if (
+			spikeRegionOf({ width: 500, height: 500 }, cell.x, cell.y) !==
+			spikeRegionOf({ width: 500, height: 500 }, before.x, before.y)
+		) {
+			spikeCounters.busyCrossings++;
+		}
 	}
 	if (distance(cell, driver.dropoff) > 0) {
 		return { ...driver, cell };

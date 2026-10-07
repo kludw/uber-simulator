@@ -1,4 +1,9 @@
-import { distance, distanceToCoordinates, type Grid } from "../shared/grid.ts";
+import {
+	distance,
+	distanceToCoordinates,
+	type Grid,
+	spikeRegionOf,
+} from "../shared/grid.ts";
 import type {
 	CancelTrip,
 	CancelTripAccepted,
@@ -214,11 +219,20 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 		case "batched":
 			if (queued.length === 0) break;
 			if (ticked.tick % state.matching.windowTicks !== 0) break;
-			for (const { trip, driverId } of batchedPairs(
-				queued,
-				idleDriversById(state.drivers),
-			)) {
-				offer(trip, driverId);
+			{
+				// SPIKE: one batch per region, regions in index order.
+				const idle = idleDriversById(state.drivers);
+				const regionOfCell = (cell: { x: number; y: number }) =>
+					spikeRegionOf(state.grid, cell.x, cell.y);
+				const regions = new Set(queued.map((trip) => regionOfCell(trip.pickup)));
+				for (const region of [...regions].sort((a, b) => a - b)) {
+					for (const { trip, driverId } of batchedPairs(
+						queued.filter((trip) => regionOfCell(trip.pickup) === region),
+						idle.filter((driver) => regionOfCell(driver.cell) === region),
+					)) {
+						offer(trip, driverId);
+					}
+				}
 			}
 			break;
 		default: {

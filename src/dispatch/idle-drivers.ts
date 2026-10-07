@@ -1,4 +1,5 @@
 import {
+	spikeRegionOf,
 	type Cell,
 	type Coordinate,
 	cellAt,
@@ -238,9 +239,11 @@ function scanAll(
 	excluded: ReadonlySet<DriverId>,
 ): Driver | undefined {
 	let nearest: Nearest;
+	const region = spikeRegionOf(drivers.grid, pickup.x, pickup.y);
 	for (const bucket of drivers.buckets) {
 		for (const driver of bucket) {
 			if (excluded.has(driver.driverId)) continue;
+			if (spikeRegionOf(drivers.grid, driver.x, driver.y) !== region) continue;
 			nearest = closer(nearest, driver, pickup);
 		}
 	}
@@ -265,6 +268,7 @@ function searchRings(
 		drivers.rows - 1 - row,
 	);
 	let nearest: Nearest;
+	const region = spikeRegionOf(drivers.grid, pickup.x, pickup.y);
 	for (let ring = 0; ring <= lastRing; ring++) {
 		if (
 			nearest !== undefined &&
@@ -280,6 +284,9 @@ function searchRings(
 				if (x < 0 || x >= drivers.columns) continue;
 				for (const driver of drivers.buckets[y * drivers.columns + x] ?? []) {
 					if (excluded.has(driver.driverId)) continue;
+					if (spikeRegionOf(drivers.grid, driver.x, driver.y) !== region) {
+						continue;
+					}
 					nearest = closer(nearest, driver, pickup);
 				}
 			}

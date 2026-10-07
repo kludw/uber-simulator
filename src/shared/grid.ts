@@ -76,3 +76,34 @@ export function stepToward(from: Cell, target: Cell): Cell {
 	}
 	return { ...from, x: from.x + Math.sign(dx) } as Cell;
 }
+
+// SPIKE (#236, not for merge): region layout from SPIKE_REGIONS="<cols>x<rows>".
+const spikeLayout = (() => {
+	const raw = process.env.SPIKE_REGIONS ?? "1x1";
+	const [cols, rows] = raw.split("x").map(Number);
+	return { cols: cols ?? 1, rows: rows ?? 1 };
+})();
+export const spikeCounters = {
+	idleCrossings: 0,
+	busyCrossings: 0,
+	regionDeclines: 0,
+	offers: 0,
+	moves: 0,
+};
+export function spikeRegionOf(grid: Grid, x: number, y: number): number {
+	const col = Math.min(
+		Math.floor((x * spikeLayout.cols) / grid.width),
+		spikeLayout.cols - 1,
+	);
+	const row = Math.min(
+		Math.floor((y * spikeLayout.rows) / grid.height),
+		spikeLayout.rows - 1,
+	);
+	return row * spikeLayout.cols + col;
+}
+process.on("exit", () => {
+	if (process.env.SPIKE_REGIONS === undefined) return;
+	console.error(
+		JSON.stringify({ spike: process.env.SPIKE_REGIONS, ...spikeCounters }),
+	);
+});
