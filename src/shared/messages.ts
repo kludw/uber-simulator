@@ -155,14 +155,17 @@ function forEachDriverCell(
 	message: DriversMoved | DriversWentOnline,
 	visit: Visit,
 ): void {
-	forEachDriverAt(message, (driverId, x, y) => visit(driverId, cellAt(x, y)));
+	forEachDriverAt(message, (index, x, y) =>
+		visit(driverIdAt(message.fleetSize, index), cellAt(x, y)),
+	);
 }
 
-// forEachMove / forEachWentOnline without a Cell per driver, for a reader
-// that keeps only the coordinates (dispatch, docs/performance-history.md).
+// forEachMove / forEachWentOnline by driver index and without a Cell per
+// driver, for a reader that keeps drivers by index and only the coordinates
+// (dispatch, ADR 0052, docs/performance-history.md).
 export function forEachDriverAt(
 	message: DriversMoved | DriversWentOnline,
-	visit: (driverId: DriverId, x: Coordinate, y: Coordinate) => void,
+	visit: (driverIndex: DriverIndex, x: Coordinate, y: Coordinate) => void,
 ): void {
 	for (let i = 0; i < message.driverIndexes.length; i++) {
 		const index = message.driverIndexes[i];
@@ -172,7 +175,7 @@ export function forEachDriverAt(
 		if (index === undefined || x === undefined || y === undefined) {
 			throw new Error(`${message.type} arrays differ in length`);
 		}
-		visit(driverIdAt(message.fleetSize, index), x, y);
+		visit(index, x, y);
 	}
 }
 

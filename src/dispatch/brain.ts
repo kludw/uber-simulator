@@ -48,6 +48,7 @@ import {
 	nearestIdle,
 	nearestIdleSkipping,
 	placeDriver,
+	placeDriverAt,
 	removeDriver,
 	startIdleDrivers,
 } from "./idle-drivers.ts";
@@ -164,6 +165,7 @@ export function startDispatch(config: {
 		endedTrips: new Map(),
 		drivers: startIdleDrivers(
 			config.grid,
+			config.fleetSize,
 			regionBounds(
 				config.regions ?? oneRegion,
 				config.grid,
@@ -418,8 +420,8 @@ function onDriversAt(
 			],
 		};
 	}
-	forEachDriverAt(message, (driverId, x, y) => {
-		placeDriver(state.drivers, driverId, x, y);
+	forEachDriverAt(message, (driverIndex, x, y) => {
+		placeDriverAt(state.drivers, driverIndex, x, y);
 	});
 	return { state, outputs: [] };
 }
