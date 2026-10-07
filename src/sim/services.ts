@@ -50,10 +50,13 @@ export type Rejected = InputRejected<Message, string>;
 
 // One service wired for the bus. The name labels its seed stream and its logs.
 // inputs: every message type it subscribes to, known before it starts so a
-// NATS bus subscribes before anyone publishes (ADR 0042).
+// NATS bus subscribes before anyone publishes (ADR 0042). region: the one
+// region whose messages it takes (dispatch k, ADR 0050), known before it
+// starts for the same reason; every region's when unset.
 export type SimService = {
 	name: string;
 	inputs: readonly MessageType[];
+	region?: Region;
 	start(bus: Bus, logRejected: (rejected: Rejected) => void): void;
 };
 
@@ -161,6 +164,7 @@ export function dispatchService(config: SimConfig, region: Region): SimService {
 	return {
 		name,
 		inputs: dispatchInputs,
+		region,
 		start(bus, logRejected) {
 			startService(bus, {
 				// Bare-state start: dispatch publishes nothing when it starts.

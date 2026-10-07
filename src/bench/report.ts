@@ -1,3 +1,4 @@
+import { oneRegion } from "../shared/regions.ts";
 import type { RunConfig } from "../sim/run.ts";
 
 // What src/bench/main.ts measured over one run.
@@ -17,6 +18,7 @@ export function benchReport(
 ): string {
 	const { count, driversPerShard } = config.driverShards;
 	const matching = config.matching;
+	const regions = config.regions ?? oneRegion;
 	const { status } = measurement;
 	const finished = status.type === "finished";
 	return [
@@ -25,6 +27,7 @@ export function benchReport(
 		`drivers: ${count * driversPerShard} (${count} shards x ${driversPerShard})`,
 		`requests per minute: ${config.requestsPerMinute}`,
 		`matching: ${matching?.type === "batched" ? `batched (window ${matching.windowTicks} ticks)` : "greedy"}`,
+		`regions: ${regions.columns}x${regions.rows}`,
 		`wall ms per tick: mean ${mean(measurement.tickMs).toFixed(2)}, p95 ${p95(measurement.tickMs).toFixed(2)}`,
 		`total messages: ${measurement.messages}`,
 		`peak rss: ${mebibytes(measurement.peakRssBytes)} MiB`,

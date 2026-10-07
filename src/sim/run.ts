@@ -120,12 +120,16 @@ export async function runOverNats(
 	const buses: NatsBus[] = [];
 	// Runner first, so it is subscribed before any service publishes. It
 	// records every message type.
-	const connections = [{ name: "runner", inputs: messageTypes }, ...services];
-	for (const { name, inputs } of connections) {
+	const connections: Pick<SimService, "name" | "inputs" | "region">[] = [
+		{ name: "runner", inputs: messageTypes },
+		...services,
+	];
+	for (const { name, inputs, region } of connections) {
 		const connected = await connectNatsBus({
 			url: config.url,
 			runId,
 			inputs,
+			region,
 			log: (dropped) =>
 				console.warn(
 					JSON.stringify({

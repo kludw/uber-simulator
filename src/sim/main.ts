@@ -5,6 +5,7 @@
 // 3 NATS unreachable.
 import * as z from "zod";
 import type { Matching } from "../dispatch/brain.ts";
+import { oneRegion } from "../shared/regions.ts";
 import { parseSimArgs } from "./args.ts";
 import { type RunConfig, runInProcess, runOverNats } from "./run.ts";
 import {
@@ -30,12 +31,14 @@ const {
 	config,
 } = args.value;
 const { count, driversPerShard } = config.driverShards;
+const regions = config.regions ?? oneRegion;
 const loadLines = [
 	`demand: ${demandName}`,
 	`requests per minute: ${config.requestsPerMinute}`,
 	`driver shards: ${count} x ${driversPerShard}`,
 	`shifts: ${shiftsName}`,
 	`preferences: ${preferencesName}`,
+	`regions: ${regions.columns}x${regions.rows}`,
 ];
 const batched: Matching = { type: "batched", windowTicks };
 

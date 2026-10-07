@@ -8,6 +8,7 @@ const config = {
 	driverShards: { count: 2, driversPerShard: 500 },
 	requestsPerMinute: 100,
 	matching: { type: "batched", windowTicks: 5 },
+	regions: { columns: 2, rows: 1 },
 } as const;
 
 describe("benchReport", () => {
@@ -31,6 +32,7 @@ describe("benchReport", () => {
 				"drivers: 1000 (2 shards x 500)",
 				"requests per minute: 100",
 				"matching: batched (window 5 ticks)",
+				"regions: 2x1",
 				"wall ms per tick: mean 10.50, p95 19.00",
 				"total messages: 4321",
 				"peak rss: 256.0 MiB",
@@ -57,6 +59,7 @@ describe("benchReport", () => {
 				"drivers: 1000 (2 shards x 500)",
 				"requests per minute: 100",
 				"matching: batched (window 5 ticks)",
+				"regions: 2x1",
 				"wall ms per tick: mean 20.00, p95 30.00",
 				"total messages: 99",
 				"peak rss: 1.0 MiB",
