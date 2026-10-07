@@ -77,9 +77,11 @@ import {
 // Cells may be stale (ADR 0018): a driver offered a trip on the tick it went
 // offline declines (ADR 0032).
 // tick: last clock tick, stamped on events caused by non-tick inputs.
+// fleetSize: the run's fleet, from dispatch's own config (ADR 0052).
 // trips, endedTrips, and drivers are owned and updated in place (ADR 0033).
 export type DispatchState = {
 	grid: Grid;
+	fleetSize: number;
 	tick: Tick;
 	matching: Matching;
 	trips: Map<TripId, Trip>;
@@ -120,6 +122,7 @@ type DispatchOutput =
 	| TripCompleted
 	| TripCancelled
 	| TripStatus
+	| InputRejected<DriversWentOnline | DriversMoved, "fleet_size_mismatch">
 	| InputRejected<OfferAccepted | OfferDeclined, NoPendingOffer["type"]>
 	| InputRejected<
 			DriverArrivedAtPickup | DriverArrivedAtDropoff | ConfirmTrip,
@@ -131,10 +134,12 @@ type Decision = { state: DispatchState; outputs: DispatchOutput[] };
 // ADR 0018.
 const offerTimeoutTicks = 3;
 
+// fleetSize: driver shards' count × driversPerShard (ADR 0052).
 // regions, region: the layout and the region this instance owns (ADR 0050);
 // missing = one region.
 export function startDispatch(config: {
 	grid: Grid;
+	fleetSize: number;
 	tick: Tick;
 	matching?: Matching | undefined;
 	regions?: RegionLayout;
@@ -152,6 +157,7 @@ export function startDispatch(config: {
 	}
 	return {
 		grid: config.grid,
+		fleetSize: config.fleetSize,
 		tick: config.tick,
 		matching,
 		trips: new Map(),
@@ -181,10 +187,7 @@ export function decideDispatch(
 			return onCancelTrip(state, input);
 		case "drivers.went_online":
 		case "drivers.moved":
-			forEachDriverAt(input, (driverId, x, y) => {
-				placeDriver(state.drivers, driverId, x, y);
-			});
-			return { state, outputs: [] };
+			return onDriversAt(state, input);
 		case "driver.went_offline":
 			return onDriverWentOffline(state, input);
 		case "offer_accepted":
@@ -395,6 +398,30 @@ function onCancelTrip(state: DispatchState, command: CancelTrip): Decision {
 			},
 		],
 	};
+}
+
+// A message from a fleet of another size names other drivers by its indexes
+// (ADR 0052): rejected whole, its drivers unknown until a matching message.
+function onDriversAt(
+	state: DispatchState,
+	message: DriversWentOnline | DriversMoved,
+): Decision {
+	if (message.fleetSize !== state.fleetSize) {
+		return {
+			state,
+			outputs: [
+				{
+					type: "input_rejected",
+					reason: "fleet_size_mismatch",
+					input: message,
+				},
+			],
+		};
+	}
+	forEachDriverAt(message, (driverId, x, y) => {
+		placeDriver(state.drivers, driverId, x, y);
+	});
+	return { state, outputs: [] };
 }
 
 function onDriverWentOffline(

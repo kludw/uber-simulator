@@ -81,7 +81,12 @@ function ticked(n: number): DispatchInput {
 
 // Feeds inputs in order from a fresh dispatch; returns the last input's outputs.
 function run(inputs: DispatchInput[], matching?: Matching) {
-	let state: DispatchState = startDispatch({ grid, tick: tick(0), matching });
+	let state: DispatchState = startDispatch({
+		grid,
+		fleetSize,
+		tick: tick(0),
+		matching,
+	});
 	let outputs: unknown[] = [];
 	for (const input of inputs) {
 		({ state, outputs } = decideDispatch(state, input, random));
@@ -92,7 +97,7 @@ function run(inputs: DispatchInput[], matching?: Matching) {
 describe("decideDispatch request_trip", () => {
 	test("accepts a new trip request and announces it requested", () => {
 		const { outputs } = decideDispatch(
-			startDispatch({ grid, tick: tick(0) }),
+			startDispatch({ grid, fleetSize, tick: tick(0) }),
 			requestTrip(t1, 4),
 			random,
 		);
@@ -112,7 +117,7 @@ describe("decideDispatch request_trip", () => {
 
 	test("rejects a request reusing a known trip ID without announcing it", () => {
 		const first = decideDispatch(
-			startDispatch({ grid, tick: tick(0) }),
+			startDispatch({ grid, fleetSize, tick: tick(0) }),
 			requestTrip(t1, 4),
 			random,
 		);
@@ -364,6 +369,40 @@ function declined(
 		idleAt,
 	};
 }
+
+// ADR 0052: dispatch knows its fleet's size from its own config; a message
+// from a fleet of another size (a misconfigured or stale shard) is rejected
+// whole.
+describe("decideDispatch fleet size", () => {
+	const otherFleet = 13;
+
+	test.each([
+		driversMoved(tick(1), Region.parse(0), otherFleet, [
+			{ driverIndex: i1, cell: cell(1, 3) },
+		]),
+		driversWentOnline(tick(1), Region.parse(0), otherFleet, [
+			{ driverIndex: i1, cell: cell(1, 3) },
+		]),
+	])("rejects $type from a fleet of another size", (message) => {
+		const { outputs } = run([message]);
+
+		expect(outputs).toEqual([
+			{ type: "input_rejected", reason: "fleet_size_mismatch", input: message },
+		]);
+	});
+
+	test("does not offer a trip to a driver only a fleet of another size reported", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			driversMoved(tick(1), Region.parse(0), otherFleet, [
+				{ driverIndex: i1, cell: cell(1, 3) },
+			]),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+});
 
 describe("decideDispatch offer replies", () => {
 	test("matches the trip when the driver accepts its offer", () => {
@@ -1278,6 +1317,7 @@ describe("decideDispatch batched matching", () => {
 			expect(() =>
 				startDispatch({
 					grid,
+					fleetSize,
 					tick: tick(0),
 					matching: { type: "batched", windowTicks },
 				}),
@@ -1745,6 +1785,7 @@ describe.each<Matching>([
 	function runInRegion(inputs: DispatchInput[]) {
 		let state = startDispatch({
 			grid,
+			fleetSize,
 			tick: tick(0),
 			matching,
 			regions: RegionLayout.parse("2x1"),
