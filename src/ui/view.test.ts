@@ -3,6 +3,7 @@ import { Cell } from "../shared/grid.ts";
 import {
 	DriverId,
 	driversMoved,
+	driversWentOnline,
 	RiderId,
 	type SimEvent,
 	Tick,
@@ -27,7 +28,7 @@ function tick(n: number): Tick {
 const pickup = cell(3, 0);
 const dropoff = cell(3, 5);
 const trip: SimEvent[] = [
-	{ type: "driver.went_online", tick: tick(0), driverId: d1, cell: cell(0, 0) },
+	online(d1, 0, cell(0, 0)),
 	{
 		type: "trip.requested",
 		tick: tick(1),
@@ -60,21 +61,45 @@ function viewOf(events: SimEvent[]): View {
 }
 
 describe("drivers", () => {
-	test("a driver going online is idle at its cell", () => {
+	test("each driver one message announces online is idle at its cell", () => {
+		const d2 = DriverId.parse("d-2");
 		const view = viewOf([
-			{
-				type: "driver.went_online",
-				tick: tick(0),
-				driverId: d1,
-				cell: cell(2, 3),
-			},
+			driversWentOnline(tick(0), [
+				{ driverId: d1, cell: cell(2, 3) },
+				{ driverId: d2, cell: cell(5, 5) },
+			]),
 		]);
-		expect(view.drivers.get(d1)).toEqual({
-			state: "idle",
-			cell: cell(2, 3),
-			previousCell: cell(2, 3),
-			movedAt: tick(0),
-		});
+		expect([...view.drivers]).toEqual([
+			[
+				d1,
+				{
+					state: "idle",
+					cell: cell(2, 3),
+					previousCell: cell(2, 3),
+					movedAt: tick(0),
+				},
+			],
+			[
+				d2,
+				{
+					state: "idle",
+					cell: cell(5, 5),
+					previousCell: cell(5, 5),
+					movedAt: tick(0),
+				},
+			],
+		]);
+	});
+
+	test("drivers announced online in one message count as idle", () => {
+		const d2 = DriverId.parse("d-2");
+		const view = viewOf([
+			driversWentOnline(tick(0), [
+				{ driverId: d1, cell: cell(2, 3) },
+				{ driverId: d2, cell: cell(5, 5) },
+			]),
+		]);
+		expect(view.driversPerState.idle).toBe(2);
 	});
 
 	test("a move keeps the previous cell and the tick it moved at", () => {
@@ -380,7 +405,7 @@ describe("going offline", () => {
 });
 
 function online(driverId: DriverId, at: number, to: Cell): SimEvent {
-	return { type: "driver.went_online", tick: tick(at), driverId, cell: to };
+	return driversWentOnline(tick(at), [{ driverId, cell: to }]);
 }
 
 function moved(driverId: DriverId, at: number, to: Cell): SimEvent {

@@ -168,7 +168,7 @@ describe("runInProcess", () => {
 			);
 			const backOnline = eventLog.some(
 				(message) =>
-					message.type === "driver.went_online" &&
+					message.type === "drivers.went_online" &&
 					firstOffline !== undefined &&
 					message.tick > firstOffline.tick,
 			);
@@ -372,17 +372,15 @@ describe("runInProcess", () => {
 		const { eventLog } = runInProcess({ ...quietConfig, keepEventLog: true });
 
 		const start: unknown[][] = eventLog
-			.slice(0, 5)
+			.slice(0, 3)
 			.map((message) =>
-				message.type === "driver.went_online"
-					? [message.type, message.tick, message.driverId]
+				message.type === "drivers.went_online"
+					? [message.type, message.tick, message.driverIds]
 					: [message.type],
 			);
 		expect(start).toEqual([
-			["driver.went_online", 0, "d-0"],
-			["driver.went_online", 0, "d-1"],
-			["driver.went_online", 0, "d-2"],
-			["driver.went_online", 0, "d-3"],
+			["drivers.went_online", 0, ["d-0", "d-1"]],
+			["drivers.went_online", 0, ["d-2", "d-3"]],
 			["clock.ticked"],
 		]);
 	});
@@ -396,7 +394,7 @@ describe("runInProcess", () => {
 		});
 
 		const driverIds = eventLog.flatMap((message) =>
-			message.type === "driver.went_online" ? [message.driverId] : [],
+			message.type === "drivers.went_online" ? message.driverIds : [],
 		);
 		expect<string[]>(driverIds).toEqual([
 			"d-00",

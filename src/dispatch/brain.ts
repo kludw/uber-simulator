@@ -9,8 +9,8 @@ import type {
 	DriverArrivedAtPickup,
 	DriverId,
 	DriversMoved,
+	DriversWentOnline,
 	DriverWentOffline,
-	DriverWentOnline,
 	InputRejected,
 	Offer,
 	OfferAccepted,
@@ -30,7 +30,7 @@ import type {
 	TripRequested,
 	TripStatus,
 } from "../shared/messages.ts";
-import { forEachMove } from "../shared/messages.ts";
+import { forEachMove, forEachWentOnline } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 import {
 	type IdleDriver,
@@ -87,7 +87,7 @@ export type DispatchInput =
 	| ClockTicked
 	| RequestTrip
 	| CancelTrip
-	| DriverWentOnline
+	| DriversWentOnline
 	| DriverWentOffline
 	| DriversMoved
 	| OfferAccepted
@@ -159,8 +159,10 @@ export function decideDispatch(
 			return onRequestTrip(state, input);
 		case "cancel_trip":
 			return onCancelTrip(state, input);
-		case "driver.went_online":
-			placeDriver(state.drivers, input.driverId, input.cell);
+		case "drivers.went_online":
+			forEachWentOnline(input, (driverId, cell) => {
+				placeDriver(state.drivers, driverId, cell);
+			});
 			return { state, outputs: [] };
 		case "drivers.moved":
 			forEachMove(input, (driverId, cell) => {

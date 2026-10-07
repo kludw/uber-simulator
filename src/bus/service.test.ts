@@ -5,6 +5,7 @@ import {
 	type CancelTrip,
 	type ClockTicked,
 	DriverId,
+	driversWentOnline,
 	type InputRejected,
 	type Message,
 	messageTypes,
@@ -76,12 +77,7 @@ describe("startService", () => {
 		bus.drain();
 
 		expect(published).toEqual([
-			{
-				type: "driver.went_online",
-				tick: Tick.parse(0),
-				driverId: d1,
-				cell: origin,
-			},
+			driversWentOnline(Tick.parse(0), [{ driverId: d1, cell: origin }]),
 		]);
 	});
 
@@ -219,12 +215,7 @@ describe("startService", () => {
 
 		expect({ published, logged }).toEqual({
 			published: [
-				{
-					type: "driver.went_online",
-					tick: Tick.parse(0),
-					driverId: d1,
-					cell: origin,
-				},
+				driversWentOnline(Tick.parse(0), [{ driverId: d1, cell: origin }]),
 				pickedUp,
 				offer,
 				{ type: "offer_accepted", tripId: t1, driverId: d1 },

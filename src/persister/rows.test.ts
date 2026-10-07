@@ -3,6 +3,7 @@ import { Cell } from "../shared/grid.ts";
 import {
 	DriverId,
 	driversMoved,
+	driversWentOnline,
 	RiderId,
 	RunId,
 	type SimEvent,
@@ -32,9 +33,10 @@ describe("toRow", () => {
 			{ type: "clock.ticked", tick },
 			{ tripId: "", driverId: "", riderId: "" },
 		],
+		// One row per message, the drivers in the payload (ADR 0049).
 		[
-			{ type: "driver.went_online", tick, driverId, cell },
-			{ tripId: "", driverId: "d-7", riderId: "" },
+			driversWentOnline(tick, [{ driverId, cell }]),
+			{ tripId: "", driverId: "", riderId: "" },
 		],
 		[
 			{ type: "driver.went_offline", tick, driverId, cell },

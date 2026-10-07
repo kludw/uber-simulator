@@ -3,6 +3,7 @@ import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
 import {
 	DriverId,
 	driversMoved,
+	driversWentOnline,
 	type RequestTrip,
 	RiderId,
 	Tick,
@@ -51,7 +52,7 @@ function requestTripAt(tripId: TripId, pickup: Cell): DispatchInput {
 }
 
 function wentOnline(driverId: DriverId, at: Cell): DispatchInput {
-	return { type: "driver.went_online", tick: tick(0), driverId, cell: at };
+	return driversWentOnline(tick(0), [{ driverId, cell: at }]);
 }
 
 function wentOffline(driverId: DriverId, at: Cell): DispatchInput {
@@ -264,6 +265,28 @@ describe("decideDispatch clock.ticked", () => {
 				dropoff: cell(7, 8),
 			},
 			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d1 },
+		]);
+	});
+
+	test("offers to the nearest of the drivers one message announces online", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			driversWentOnline(tick(0), [
+				{ driverId: d1, cell: cell(9, 9) },
+				{ driverId: d2, cell: cell(1, 3) },
+			]),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d2,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d2 },
 		]);
 	});
 

@@ -9,7 +9,7 @@ import type {
 	TripId,
 	TripPickedUp,
 } from "../shared/messages.ts";
-import { forEachMove } from "../shared/messages.ts";
+import { forEachMove, forEachWentOnline } from "../shared/messages.ts";
 
 // The checker's own trip model, rebuilt from trip.* events alone: importing
 // dispatch's Trip would make the check agree with the code it checks.
@@ -91,7 +91,7 @@ type LogState = {
 	activeTrips: Map<DriverId, TripId>;
 	// Last reported position and the tick it was reported at.
 	driverPositions: Map<DriverId, { cell: Cell; tick: Tick }>;
-	// From driver.went_offline until driver.went_online; no trip event changes it.
+	// From driver.went_offline until drivers.went_online; no trip event changes it.
 	offlineDrivers: Set<DriverId>;
 };
 
@@ -135,9 +135,11 @@ function observe(
 	message: Message,
 ): void {
 	switch (message.type) {
-		case "driver.went_online":
-			log.offlineDrivers.delete(message.driverId);
-			log.driverPositions.set(message.driverId, message);
+		case "drivers.went_online":
+			forEachWentOnline(message, (driverId, cell) => {
+				log.offlineDrivers.delete(driverId);
+				log.driverPositions.set(driverId, { tick: message.tick, cell });
+			});
 			break;
 		case "driver.went_offline": {
 			const tripId = log.activeTrips.get(message.driverId);
