@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { DriverIndex, driverIdAt } from "./fleet.ts";
 import { Cell } from "./grid.ts";
 import {
-	DriverId,
 	driversMoved,
 	driversWentOnline,
 	type Message,
@@ -21,7 +21,10 @@ import {
 
 const tick = Tick.parse(1);
 const tripId = TripId.parse("t-1");
-const driverId = DriverId.parse("d-7");
+// Drivers of a fleet of 10: IDs d-0 to d-9 (ADR 0052).
+const fleetSize = 10;
+const driverIndex = DriverIndex.parse(7);
+const driverId = driverIdAt(fleetSize, driverIndex);
 const riderId = RiderId.parse("r-1");
 const cell = Cell.parse({ x: 0, y: 0 });
 const region = Region.parse(2);
@@ -31,7 +34,7 @@ describe("subjectFor", () => {
 	const cases: [Message, string][] = [
 		[{ type: "clock.ticked", tick }, "sim.events.clock.ticked"],
 		[
-			driversWentOnline(tick, region, [{ driverId, cell }]),
+			driversWentOnline(tick, region, fleetSize, [{ driverIndex, cell }]),
 			"sim.events.drivers.went_online.region-2",
 		],
 		[
@@ -45,7 +48,7 @@ describe("subjectFor", () => {
 			"sim.events.driver.went_offline.region-2",
 		],
 		[
-			driversMoved(tick, region, [{ driverId, cell }]),
+			driversMoved(tick, region, fleetSize, [{ driverIndex, cell }]),
 			"sim.events.drivers.moved.region-2",
 		],
 		[
@@ -234,7 +237,7 @@ test("replaySubject prefixes the live subject with replay and the run id", () =>
 	expect(
 		replaySubject(
 			RunId.parse("run-1"),
-			driversMoved(tick, region, [{ driverId, cell }]),
+			driversMoved(tick, region, fleetSize, [{ driverIndex, cell }]),
 		),
 	).toBe("replay.run-1.sim.events.drivers.moved.region-2");
 });

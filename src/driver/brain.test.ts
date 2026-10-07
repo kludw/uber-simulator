@@ -1783,8 +1783,12 @@ describe("decideDriverShard regions", () => {
 				[1, 0],
 			]).outputs,
 		).toEqual([
-			driversWentOnline(tick(0), region0, fleetSize, [{ driverIndex: i2, cell: cell(1, 0) }]),
-			driversWentOnline(tick(0), region1, fleetSize, [{ driverIndex: i1, cell: cell(6, 0) }]),
+			driversWentOnline(tick(0), region0, fleetSize, [
+				{ driverIndex: i2, cell: cell(1, 0) },
+			]),
+			driversWentOnline(tick(0), region1, fleetSize, [
+				{ driverIndex: i1, cell: cell(6, 0) },
+			]),
 		]);
 	});
 
@@ -1800,8 +1804,12 @@ describe("decideDriverShard regions", () => {
 			scriptedRandom([9, 0, 0, 0]),
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(1), region0, fleetSize, [{ driverIndex: i1, cell: cell(5, 0) }]),
-			driversMoved(tick(1), region1, fleetSize, [{ driverIndex: i2, cell: cell(4, 0) }]),
+			driversMoved(tick(1), region0, fleetSize, [
+				{ driverIndex: i1, cell: cell(5, 0) },
+			]),
+			driversMoved(tick(1), region1, fleetSize, [
+				{ driverIndex: i2, cell: cell(4, 0) },
+			]),
 		]);
 	});
 
@@ -1820,7 +1828,9 @@ describe("decideDriverShard regions", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(2), region1, fleetSize, [{ driverIndex: i1, cell: cell(6, 0) }]),
+			driversMoved(tick(2), region1, fleetSize, [
+				{ driverIndex: i1, cell: cell(6, 0) },
+			]),
 		]);
 	});
 
@@ -1833,7 +1843,9 @@ describe("decideDriverShard regions", () => {
 			{ type: "clock.ticked", tick: tick(2) },
 		]);
 		expect(outputs).toContainEqual(
-			driversMoved(tick(2), region1, fleetSize, [{ driverIndex: i1, cell: cell(4, 5) }]),
+			driversMoved(tick(2), region1, fleetSize, [
+				{ driverIndex: i1, cell: cell(4, 5) },
+			]),
 		);
 	});
 

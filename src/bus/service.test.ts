@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { decideDriverShard, startDriverShard } from "../driver/brain.ts";
+import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import { cellIn, type Grid } from "../shared/grid.ts";
 import {
 	type CancelTrip,
 	type ClockTicked,
-	DriverId,
 	driversWentOnline,
 	type InputRejected,
 	type Message,
@@ -26,7 +26,10 @@ const origin = (() => {
 	if (!result.ok) throw new Error("origin outside grid");
 	return result.value;
 })();
-const d1 = DriverId.parse("d-1");
+// The one driver of a fleet of one: d-0.
+const i0 = DriverIndex.parse(0);
+const d0 = driverIdAt(1, i0);
+const shardOfOne = { fleetSize: 1, firstIndex: i0, driverCount: 1 };
 
 function ticked(n: number): ClockTicked {
 	return { type: "clock.ticked", tick: Tick.parse(n) };
@@ -71,7 +74,7 @@ describe("startService", () => {
 
 		startService(bus, {
 			start: startDriverShard(
-				{ grid, driverIds: [d1], tick: Tick.parse(0) },
+				{ grid, ...shardOfOne, tick: Tick.parse(0) },
 				random,
 			),
 			inputs: [],
@@ -82,8 +85,8 @@ describe("startService", () => {
 		bus.drain();
 
 		expect(published).toEqual([
-			driversWentOnline(Tick.parse(0), Region.parse(0), [
-				{ driverId: d1, cell: origin },
+			driversWentOnline(Tick.parse(0), Region.parse(0), 1, [
+				{ driverIndex: i0, cell: origin },
 			]),
 		]);
 	});
@@ -223,7 +226,7 @@ describe("startService", () => {
 		const offer: Offer = {
 			type: "offer",
 			tripId: t1,
-			driverId: d1,
+			driverId: d0,
 			pickup: origin,
 			dropoff: origin,
 		};
@@ -231,12 +234,12 @@ describe("startService", () => {
 			type: "trip.picked_up",
 			tick: Tick.parse(1),
 			tripId: t1,
-			driverId: d1,
+			driverId: d0,
 		};
 
 		startService(bus, {
 			start: startDriverShard(
-				{ grid, driverIds: [d1], tick: Tick.parse(0) },
+				{ grid, ...shardOfOne, tick: Tick.parse(0) },
 				random,
 			),
 			inputs: ["offer", "trip.picked_up"],
@@ -250,15 +253,15 @@ describe("startService", () => {
 
 		expect({ published, logged }).toEqual({
 			published: [
-				driversWentOnline(Tick.parse(0), Region.parse(0), [
-					{ driverId: d1, cell: origin },
+				driversWentOnline(Tick.parse(0), Region.parse(0), 1, [
+					{ driverIndex: i0, cell: origin },
 				]),
 				pickedUp,
 				offer,
 				{
 					type: "offer_accepted",
 					tripId: t1,
-					driverId: d1,
+					driverId: d0,
 					region: Region.parse(0),
 				},
 			],

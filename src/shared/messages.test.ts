@@ -277,36 +277,15 @@ const invalidInputs: [string, unknown][] = [
 			ys: [0, 0],
 		},
 	],
-	[
-		"move with a non-integer x",
-		{ ...oneMove, xs: [1.5] },
-	],
-	[
-		"move with a negative y",
-		{ ...oneMove, ys: [-1] },
-	],
-	[
-		"move with a string coordinate",
-		{ ...oneMove, xs: ["0"] },
-	],
-	[
-		"move with an unsafe integer x",
-		{ ...oneMove, xs: [2 ** 53] },
-	],
-	[
-		"moves with coordinates not in an array",
-		{ ...oneMove, xs: { 0: 0 } },
-	],
+	["move with a non-integer x", { ...oneMove, xs: [1.5] }],
+	["move with a negative y", { ...oneMove, ys: [-1] }],
+	["move with a string coordinate", { ...oneMove, xs: ["0"] }],
+	["move with an unsafe integer x", { ...oneMove, xs: [2 ** 53] }],
+	["moves with coordinates not in an array", { ...oneMove, xs: { 0: 0 } }],
 	["moves without ys", { ...oneMove, ys: undefined }],
 	["move with a negative driver index", { ...oneMove, driverIndexes: [-1] }],
-	[
-		"move with a fractional driver index",
-		{ ...oneMove, driverIndexes: [1.5] },
-	],
-	[
-		"move with a string driver index",
-		{ ...oneMove, driverIndexes: ["1"] },
-	],
+	["move with a fractional driver index", { ...oneMove, driverIndexes: [1.5] }],
+	["move with a string driver index", { ...oneMove, driverIndexes: ["1"] }],
 	[
 		"move with a driver index outside the fleet",
 		{ ...oneMove, driverIndexes: [10] },
@@ -316,7 +295,10 @@ const invalidInputs: [string, unknown][] = [
 		{ ...oneMove, driverIndexes: 1 },
 	],
 	["moves without a fleet size", { ...oneMove, fleetSize: undefined }],
-	["moves in an empty fleet", { ...oneMove, driverIndexes: [], xs: [], ys: [], fleetSize: 0 }],
+	[
+		"moves in an empty fleet",
+		{ ...oneMove, driverIndexes: [], xs: [], ys: [], fleetSize: 0 },
+	],
 	["moves in a fractional fleet", { ...oneMove, fleetSize: 10.5 }],
 	// Stored before ADR 0052: replay skips them (stored_event_skipped).
 	[
@@ -334,10 +316,7 @@ const invalidInputs: [string, unknown][] = [
 			ys: [0],
 		},
 	],
-	[
-		"driver online at a negative x",
-		{ ...oneOnline, xs: [-1] },
-	],
+	["driver online at a negative x", { ...oneOnline, xs: [-1] }],
 	[
 		"driver online with a driver index outside the fleet",
 		{ ...oneOnline, driverIndexes: [10] },

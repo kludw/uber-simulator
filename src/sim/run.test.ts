@@ -517,14 +517,12 @@ describe("runInProcess", () => {
 	test("starts every driver of every shard online at tick 0, before the first tick", () => {
 		const { eventLog } = runInProcess({ ...quietConfig, keepEventLog: true });
 
-		const start: unknown[][] = eventLog
-			.slice(0, 3)
-			.map((message) => {
-				if (message.type !== "drivers.went_online") return [message.type];
-				const driverIds: string[] = [];
-				forEachWentOnline(message, (driverId) => driverIds.push(driverId));
-				return [message.type, message.tick, driverIds];
-			});
+		const start: unknown[][] = eventLog.slice(0, 3).map((message) => {
+			if (message.type !== "drivers.went_online") return [message.type];
+			const driverIds: string[] = [];
+			forEachWentOnline(message, (driverId) => driverIds.push(driverId));
+			return [message.type, message.tick, driverIds];
+		});
 		expect(start).toEqual([
 			["drivers.went_online", 0, ["d-0", "d-1"]],
 			["drivers.went_online", 0, ["d-2", "d-3"]],

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import { Cell } from "../shared/grid.ts";
 import {
-	DriverId,
 	driversMoved,
 	driversWentOnline,
 	RiderId,
@@ -15,7 +15,10 @@ import { toRow } from "./rows.ts";
 
 const tick = Tick.parse(12);
 const tripId = TripId.parse("t-3");
-const driverId = DriverId.parse("d-7");
+// Drivers of a fleet of 10: IDs d-0 to d-9 (ADR 0052).
+const fleetSize = 10;
+const driverIndex = DriverIndex.parse(7);
+const driverId = driverIdAt(fleetSize, driverIndex);
 const riderId = RiderId.parse("r-3");
 const cell = Cell.parse({ x: 4, y: 5 });
 const delivery = {
@@ -36,7 +39,9 @@ describe("toRow", () => {
 		],
 		// One row per message, the drivers in the payload (ADR 0049).
 		[
-			driversWentOnline(tick, Region.parse(0), [{ driverId, cell }]),
+			driversWentOnline(tick, Region.parse(0), fleetSize, [
+				{ driverIndex, cell },
+			]),
 			{ tripId: "", driverId: "", riderId: "" },
 		],
 		[
@@ -51,7 +56,7 @@ describe("toRow", () => {
 		],
 		// One row per message, the moves in the payload (ADR 0045).
 		[
-			driversMoved(tick, Region.parse(0), [{ driverId, cell }]),
+			driversMoved(tick, Region.parse(0), fleetSize, [{ driverIndex, cell }]),
 			{ tripId: "", driverId: "", riderId: "" },
 		],
 		[

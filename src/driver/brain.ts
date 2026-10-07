@@ -1,3 +1,4 @@
+import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import {
 	type Cell,
 	distance,
@@ -28,7 +29,6 @@ import type {
 	TripStatus,
 } from "../shared/messages.ts";
 import { driversMoved, driversWentOnline } from "../shared/messages.ts";
-import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import type { Random } from "../shared/random.ts";
 import {
 	oneRegion,
@@ -179,7 +179,8 @@ export function startDriverShard(
 	const drivers = new Map<DriverId, Driver>();
 	let schedule: Schedule | null = null;
 	if (shifts.type === "always_online") {
-		for (const driver of placed) drivers.set(driver.id, idle(driver, driver.cell));
+		for (const driver of placed)
+			drivers.set(driver.id, idle(driver, driver.cell));
 	} else {
 		const periods = new Map<DriverId, Period>();
 		for (const { id, index, cell } of placed) {
@@ -193,7 +194,9 @@ export function startDriverShard(
 			});
 			drivers.set(
 				id,
-				online ? idle({ id, index }, cell) : { state: "offline", id, index, cell },
+				online
+					? idle({ id, index }, cell)
+					: { state: "offline", id, index, cell },
 			);
 		}
 		schedule = {
@@ -281,8 +284,17 @@ function assertValidShifts(shifts: Shifts): void {
 	}
 }
 
-function idle(driver: { id: DriverId; index: DriverIndex }, cell: Cell): IdleDriver {
-	return { state: "idle", id: driver.id, index: driver.index, cell, wanderTarget: null };
+function idle(
+	driver: { id: DriverId; index: DriverIndex },
+	cell: Cell,
+): IdleDriver {
+	return {
+		state: "idle",
+		id: driver.id,
+		index: driver.index,
+		cell,
+		wanderTarget: null,
+	};
 }
 
 function shiftStream(driverId: DriverId, n: number): string {

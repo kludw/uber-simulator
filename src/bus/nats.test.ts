@@ -283,17 +283,18 @@ describe("connectNatsBus", () => {
 			client?.write(
 				`MSG ${subject}.region-0 ${sids.get(`${subject}.*`)} ${Buffer.byteLength(payload)}\r\n${payload}\r\n`,
 			);
-		const moved = (driverId: string) =>
+		const moved = (driverIndex: number) =>
 			JSON.stringify({
 				type: "drivers.moved",
 				tick: 1,
-				driverIds: [driverId],
+				fleetSize: 10,
+				driverIndexes: [driverIndex],
 				xs: [0],
 				ys: [0],
 			});
 
-		push("sim.events.drivers.moved", moved("d-1"));
-		push("sim.events.drivers.moved", moved("d-2"));
+		push("sim.events.drivers.moved", moved(1));
+		push("sim.events.drivers.moved", moved(2));
 		push(
 			"sim.commands.cancel_trip",
 			JSON.stringify({

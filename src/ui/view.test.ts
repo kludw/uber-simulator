@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import { Cell } from "../shared/grid.ts";
 import {
-	DriverId,
+	type DriverId,
 	driversMoved,
 	driversWentOnline,
 	RiderId,
@@ -12,7 +13,12 @@ import {
 import { Region } from "../shared/regions.ts";
 import { applyEvent, emptyView, type View } from "./view.ts";
 
-const d1 = DriverId.parse("d-1");
+// Drivers 1 and 2 of a fleet of 10: IDs d-1 and d-2 (ADR 0052).
+const fleetSize = 10;
+const i1 = DriverIndex.parse(1);
+const i2 = DriverIndex.parse(2);
+const d1 = driverIdAt(fleetSize, i1);
+const d2 = driverIdAt(fleetSize, i2);
 const r1 = RiderId.parse("r-1");
 const t1 = TripId.parse("t-1");
 
@@ -29,7 +35,7 @@ function tick(n: number): Tick {
 const pickup = cell(3, 0);
 const dropoff = cell(3, 5);
 const trip: SimEvent[] = [
-	online(d1, 0, cell(0, 0)),
+	online(i1, 0, cell(0, 0)),
 	{
 		type: "trip.requested",
 		tick: tick(1),
@@ -65,11 +71,10 @@ function viewOf(events: SimEvent[]): View {
 
 describe("drivers", () => {
 	test("each driver one message announces online is idle at its cell", () => {
-		const d2 = DriverId.parse("d-2");
 		const view = viewOf([
-			driversWentOnline(tick(0), Region.parse(0), [
-				{ driverId: d1, cell: cell(2, 3) },
-				{ driverId: d2, cell: cell(5, 5) },
+			driversWentOnline(tick(0), Region.parse(0), fleetSize, [
+				{ driverIndex: i1, cell: cell(2, 3) },
+				{ driverIndex: i2, cell: cell(5, 5) },
 			]),
 		]);
 		expect([...view.drivers]).toEqual([
@@ -95,18 +100,17 @@ describe("drivers", () => {
 	});
 
 	test("drivers announced online in one message count as idle", () => {
-		const d2 = DriverId.parse("d-2");
 		const view = viewOf([
-			driversWentOnline(tick(0), Region.parse(0), [
-				{ driverId: d1, cell: cell(2, 3) },
-				{ driverId: d2, cell: cell(5, 5) },
+			driversWentOnline(tick(0), Region.parse(0), fleetSize, [
+				{ driverIndex: i1, cell: cell(2, 3) },
+				{ driverIndex: i2, cell: cell(5, 5) },
 			]),
 		]);
 		expect(view.driversPerState.idle).toBe(2);
 	});
 
 	test("a move keeps the previous cell and the tick it moved at", () => {
-		const view = viewOf([online(d1, 0, cell(2, 3)), moved(d1, 4, cell(2, 4))]);
+		const view = viewOf([online(i1, 0, cell(2, 3)), moved(i1, 4, cell(2, 4))]);
 		expect(view.drivers.get(d1)).toEqual({
 			state: "idle",
 			cell: cell(2, 4),
@@ -116,13 +120,12 @@ describe("drivers", () => {
 	});
 
 	test("each move in one message moves its driver", () => {
-		const d2 = DriverId.parse("d-2");
 		const view = viewOf([
 			...trip.slice(0, 3),
-			online(d2, 0, cell(5, 5)),
-			driversMoved(tick(3), Region.parse(0), [
-				{ driverId: d1, cell: cell(1, 0) },
-				{ driverId: d2, cell: cell(5, 6) },
+			online(i2, 0, cell(5, 5)),
+			driversMoved(tick(3), Region.parse(0), fleetSize, [
+				{ driverIndex: i1, cell: cell(1, 0) },
+				{ driverIndex: i2, cell: cell(5, 6) },
 			]),
 		]);
 		expect([...view.drivers]).toEqual([
@@ -252,11 +255,10 @@ describe("counters", () => {
 	});
 
 	test("drivers are counted per state", () => {
-		const d2 = DriverId.parse("d-2");
 		const view = viewOf([
 			...trip.slice(0, 3),
-			online(d2, 0, cell(5, 5)),
-			moved(d2, 1, cell(5, 6)),
+			online(i2, 0, cell(5, 5)),
+			moved(i2, 1, cell(5, 6)),
 		]);
 		expect(view.driversPerState).toEqual({
 			idle: 1,
@@ -273,11 +275,10 @@ describe("counters", () => {
 
 	// t1 waits 4 ticks (1 -> 5), t2 waits 3 ticks (6 -> 9): mean 3.5.
 	test("mean ticks to pickup averages request to pickup", () => {
-		const d2 = DriverId.parse("d-2");
 		const t2 = TripId.parse("t-2");
 		const view = viewOf([
 			...trip,
-			online(d2, 0, cell(5, 5)),
+			online(i2, 0, cell(5, 5)),
 			requested(t2, 6, cell(5, 6), cell(5, 9)),
 			matched(t2, d2, 7),
 			{ type: "trip.picked_up", tick: tick(9), tripId: t2, driverId: d2 },
@@ -288,7 +289,7 @@ describe("counters", () => {
 
 describe("joining mid-run", () => {
 	test("a driver first seen moving is idle at its cell", () => {
-		const view = viewOf([moved(d1, 7, cell(4, 4))]);
+		const view = viewOf([moved(i1, 7, cell(4, 4))]);
 		expect(view.drivers.get(d1)).toEqual({
 			state: "idle",
 			cell: cell(4, 4),
@@ -374,12 +375,12 @@ describe("going offline", () => {
 	};
 
 	test("a driver going offline leaves the view", () => {
-		const view = viewOf([online(d1, 0, cell(2, 3)), wentOffline]);
+		const view = viewOf([online(i1, 0, cell(2, 3)), wentOffline]);
 		expect(view.drivers.has(d1)).toBe(false);
 	});
 
 	test("a driver going offline is no longer counted", () => {
-		const view = viewOf([online(d1, 0, cell(2, 3)), wentOffline]);
+		const view = viewOf([online(i1, 0, cell(2, 3)), wentOffline]);
 		expect(view.driversPerState.idle).toBe(0);
 	});
 
@@ -389,7 +390,7 @@ describe("going offline", () => {
 		{ type: "trip.offer_expired", tick: tick(5), tripId: t1, driverId: d1 },
 	])("$type naming an offline driver keeps it out of the view", (freed) => {
 		const view = viewOf([
-			online(d1, 0, cell(2, 3)),
+			online(i1, 0, cell(2, 3)),
 			requested(t1, 1, pickup, dropoff),
 			{ type: "trip.offered", tick: tick(4), tripId: t1, driverId: d1 },
 			wentOffline,
@@ -400,20 +401,24 @@ describe("going offline", () => {
 
 	test("a driver back online is idle at its cell", () => {
 		const view = viewOf([
-			online(d1, 0, cell(2, 3)),
+			online(i1, 0, cell(2, 3)),
 			wentOffline,
-			online(d1, 9, cell(2, 3)),
+			online(i1, 9, cell(2, 3)),
 		]);
 		expect(view.drivers.get(d1)?.state).toBe("idle");
 	});
 });
 
-function online(driverId: DriverId, at: number, to: Cell): SimEvent {
-	return driversWentOnline(tick(at), Region.parse(0), [{ driverId, cell: to }]);
+function online(driverIndex: DriverIndex, at: number, to: Cell): SimEvent {
+	return driversWentOnline(tick(at), Region.parse(0), fleetSize, [
+		{ driverIndex, cell: to },
+	]);
 }
 
-function moved(driverId: DriverId, at: number, to: Cell): SimEvent {
-	return driversMoved(tick(at), Region.parse(0), [{ driverId, cell: to }]);
+function moved(driverIndex: DriverIndex, at: number, to: Cell): SimEvent {
+	return driversMoved(tick(at), Region.parse(0), fleetSize, [
+		{ driverIndex, cell: to },
+	]);
 }
 
 function requested(
