@@ -24,10 +24,11 @@ const defaultSearch: IdleDriverSearch = {
 	linearScanBelow: 64,
 };
 
-// Dispatch's drivers across ticks (ADR 0048): each known or busy driver's
-// cell, whether it is online and busy, and the idle ones (online, not busy)
-// bucketed for the nearest search, updated in place as drivers report and
-// trips change (ADR 0033). Opaque: callers can't name `internals`.
+// Dispatch's drivers in its region across ticks (ADR 0048, 0050): each known
+// or busy driver's cell, whether it is online and busy, and the idle ones
+// (online, not busy) bucketed for the nearest search, updated in place as
+// drivers report and trips change (ADR 0033). Opaque: callers can't name
+// `internals`.
 const internals: unique symbol = Symbol("idle drivers");
 export type IdleDrivers = { readonly [internals]: Drivers };
 
@@ -93,9 +94,9 @@ export function startIdleDrivers(
 	};
 }
 
-// A driver went online or moved; a driver first seen moving is known from
-// then on. Outside the region, a driver is dropped unless busy: a busy one
-// keeps its record until freed.
+// A driver went online or moved; a driver first seen moving in the region is
+// known from then on. A known driver outside the region is dropped unless
+// busy (ADR 0050).
 export function placeDriver(
 	idle: IdleDrivers,
 	driverId: DriverId,
@@ -104,19 +105,9 @@ export function placeDriver(
 ): void {
 	const drivers = idle[internals];
 	const driver = drivers.byId.get(driverId);
-	if (!inRegion(drivers, x, y)) {
-		if (driver === undefined) return;
-		if (driver.busy) {
-			driver.x = x;
-			driver.y = y;
-			driver.online = true;
-			return;
-		}
-		if (driver.bucket !== notIdle) removeFromBucket(drivers, driver);
-		drivers.byId.delete(driverId);
-		return;
-	}
+	const inside = inRegion(drivers, x, y);
 	if (driver === undefined) {
+		if (!inside) return;
 		const placed: Driver = {
 			driverId,
 			x,
@@ -132,13 +123,18 @@ export function placeDriver(
 	}
 	driver.x = x;
 	driver.y = y;
-	// Only a busy driver keeps its record while offline; it stays out of the
-	// buckets until freed.
-	if (!driver.online) {
+	// A busy driver keeps its record, offline or outside the region, until
+	// freed, and stays out of the buckets until then. Any other known driver
+	// is online, in the region, and bucketed.
+	if (driver.busy) {
 		driver.online = true;
 		return;
 	}
-	if (driver.bucket === notIdle) return;
+	if (!inside) {
+		removeFromBucket(drivers, driver);
+		drivers.byId.delete(driverId);
+		return;
+	}
 	if (bucketOf(drivers, x, y) === driver.bucket) return;
 	removeFromBucket(drivers, driver);
 	addToBucket(drivers, driver);

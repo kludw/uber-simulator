@@ -45,7 +45,7 @@ function driver(id: string, x: number, y: number) {
 
 function placed(
 	drivers: readonly IdleDriver[],
-	search?: Parameters<typeof startIdleDrivers>[1],
+	search?: Parameters<typeof startIdleDrivers>[2],
 ): IdleDrivers {
 	const index = startIdleDrivers(grid, undefined, search);
 	for (const { driverId, cell: at } of drivers)

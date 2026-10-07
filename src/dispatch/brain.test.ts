@@ -1787,6 +1787,53 @@ describe.each<Matching>([
 		]);
 	});
 
+	// d1's moves to the dropoff were lost: dispatch last saw it at the pickup.
+	test.each<[string, DispatchInput]>([
+		["arrival", arrivedAtDropoff(t1, d1, cell(7, 8))],
+		["confirm", confirmTrip(t1, d1, "dropoff", cell(7, 8))],
+	])(
+		"does not offer a trip to a driver whose dropoff %s is outside the region",
+		(_case, atDropoff) => {
+			const { outputs } = runInRegion([
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(4, 2)),
+				ticked(2),
+				accepted(t1, d1),
+				arrivedAtPickup(t1, d1, cell(1, 2)),
+				atDropoff,
+				requestTrip(t2, 3),
+				ticked(4),
+			]);
+
+			expect(outputs).toEqual([]);
+		},
+	);
+
+	test("offers a trip to an idle driver named by a rejected arrival outside the region", () => {
+		const { outputs } = runInRegion([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(4, 2)),
+			ticked(2),
+			accepted(t1, d1),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+			wentOnline(d2, cell(3, 2)),
+			arrivedAtDropoff(t1, d2, cell(7, 8)),
+			requestTrip(t2, 3),
+			ticked(4),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d2,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(4), tripId: t2, driverId: d2 },
+		]);
+	});
+
 	test("does not offer a trip to a driver freed outside the region", () => {
 		const { outputs } = runInRegion([
 			requestTrip(t1, 1),

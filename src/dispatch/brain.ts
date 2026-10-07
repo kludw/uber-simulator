@@ -69,8 +69,9 @@ import {
 // requested trips without an offer, in that order (FIFO).
 // endedTrips: completed and cancelled trips, out of the per-tick scan but kept
 // to answer late and duplicate inputs for them.
-// drivers: online drivers' cells as last reported in events, and which are
-// busy (a pending offer or an active trip), kept across ticks (ADR 0048).
+// drivers: online drivers' cells in its region as last reported in events (busy
+// ones anywhere), and which are busy (a pending offer or an active trip), kept
+// across ticks (ADR 0048, 0050).
 // Cells may be stale (ADR 0018): a driver offered a trip on the tick it went
 // offline declines (ADR 0032).
 // tick: last clock tick, stamped on events caused by non-tick inputs.
@@ -490,6 +491,10 @@ function arrive(
 			outputs: [{ type: "input_rejected", reason: next.error.type, input }],
 		};
 	}
+	// The arrival's cell is the driver's latest before its trip frees it, so a
+	// lost last move can't leave it idle at a stale cell (ADR 0050). Only here:
+	// a rejected arrival may name an idle driver.
+	placeDriver(state.drivers, input.driverId, input.cell.x, input.cell.y);
 	storeTrip(state, next.value);
 	return {
 		state,
