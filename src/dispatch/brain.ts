@@ -30,7 +30,7 @@ import type {
 	TripRequested,
 	TripStatus,
 } from "../shared/messages.ts";
-import { forEachMove, forEachWentOnline } from "../shared/messages.ts";
+import { forEachDriverAt } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 import {
 	type IdleDriver,
@@ -160,13 +160,9 @@ export function decideDispatch(
 		case "cancel_trip":
 			return onCancelTrip(state, input);
 		case "drivers.went_online":
-			forEachWentOnline(input, (driverId, cell) => {
-				placeDriver(state.drivers, driverId, cell);
-			});
-			return { state, outputs: [] };
 		case "drivers.moved":
-			forEachMove(input, (driverId, cell) => {
-				placeDriver(state.drivers, driverId, cell);
+			forEachDriverAt(input, (driverId, x, y) => {
+				placeDriver(state.drivers, driverId, x, y);
 			});
 			return { state, outputs: [] };
 		case "driver.went_offline":

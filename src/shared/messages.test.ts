@@ -14,6 +14,7 @@ import {
 	type DriverOnline,
 	driversMoved,
 	driversWentOnline,
+	forEachDriverAt,
 	forEachMove,
 	forEachWentOnline,
 	isSimEvent,
@@ -333,4 +334,21 @@ test("forEachWentOnline visits a message's drivers in order", () => {
 	});
 
 	expect(visited).toEqual(drivers);
+});
+
+test("forEachDriverAt visits each driver's coordinates in order", () => {
+	const moves: DriverMove[] = [
+		{ driverId: DriverId.parse("d-2"), cell: cell(1, 2) },
+		{ driverId: DriverId.parse("d-1"), cell: cell(3, 4) },
+	];
+	const visited: [string, number, number][] = [];
+
+	forEachDriverAt(driversMoved(tick, moves), (driverId, x, y) => {
+		visited.push([driverId, x, y]);
+	});
+
+	expect(visited).toEqual([
+		["d-2", 1, 2],
+		["d-1", 3, 4],
+	]);
 });
