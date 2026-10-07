@@ -68,7 +68,7 @@ const dispatchInputs = [
 	"clock.ticked",
 	"request_trip",
 	"cancel_trip",
-	"driver.went_online",
+	"drivers.went_online",
 	"driver.went_offline",
 	"drivers.moved",
 	"driver.arrived_at_pickup",

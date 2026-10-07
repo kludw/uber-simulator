@@ -29,14 +29,6 @@ export const ClockTicked = z.object({
 });
 export type ClockTicked = z.infer<typeof ClockTicked>;
 
-export const DriverWentOnline = z.object({
-	type: z.literal("driver.went_online"),
-	tick: Tick,
-	driverId: DriverId,
-	cell: Cell,
-});
-export type DriverWentOnline = z.infer<typeof DriverWentOnline>;
-
 export const DriverWentOffline = z.object({
 	type: z.literal("driver.went_offline"),
 	tick: Tick,
@@ -45,10 +37,11 @@ export const DriverWentOffline = z.object({
 });
 export type DriverWentOffline = z.infer<typeof DriverWentOffline>;
 
-// drivers.moved's arrays are checked by one refine each, not a schema per
-// element, which was most of this message's Zod time (ADR 0047). Same rules
-// as DriverId and Coordinate, so the transforms only brand what passed.
-const MovedDriverIds = z
+// drivers.moved's and drivers.went_online's arrays are checked by one refine
+// each, not a schema per element, which was most of drivers.moved's Zod time
+// (ADR 0047, 0049). Same rules as DriverId and Coordinate, so the transforms
+// only brand what passed.
+const DriverIds = z
 	.array(z.string())
 	.refine((ids) => ids.every((id) => idPattern.test(id)))
 	.transform((ids) => ids as DriverId[]);
@@ -59,48 +52,83 @@ const Coordinates = z
 	)
 	.transform((coordinates) => coordinates as Coordinate[]);
 
-// Move i is driver driverIds[i] stepping to cell (xs[i], ys[i]): parallel
-// arrays decode faster than an object per move (ADR 0047). A shard publishes
-// its moves of a tick in chunks, before its other events of that tick
-// (ADR 0045). Build with driversMoved, read with forEachMove.
-export const DriversMoved = z
-	.object({
-		type: z.literal("drivers.moved"),
-		tick: Tick,
-		driverIds: MovedDriverIds,
-		xs: Coordinates,
-		ys: Coordinates,
-	})
-	.refine(
-		(moved) =>
-			moved.xs.length === moved.driverIds.length &&
-			moved.ys.length === moved.driverIds.length,
-		{ error: "driverIds, xs, and ys differ in length" },
-	);
+// Entry i is driver driverIds[i] at cell (xs[i], ys[i]): parallel arrays
+// decode faster than an object per driver (ADR 0047).
+function driverCells<Type extends string>(type: Type) {
+	return z
+		.object({
+			type: z.literal(type),
+			tick: Tick,
+			driverIds: DriverIds,
+			xs: Coordinates,
+			ys: Coordinates,
+		})
+		.refine(
+			(message) =>
+				message.xs.length === message.driverIds.length &&
+				message.ys.length === message.driverIds.length,
+			{ error: "driverIds, xs, and ys differ in length" },
+		);
+}
+
+// A shard's moves of a tick, in chunks, published after its drivers.went_online
+// and before its other events of that tick (ADR 0045, 0049). Build with
+// driversMoved, read with forEachMove.
+export const DriversMoved = driverCells("drivers.moved");
 export type DriversMoved = z.infer<typeof DriversMoved>;
 export type DriverMove = { driverId: DriverId; cell: Cell };
 
+// A shard's drivers going online in a tick (at start, or a shift change), in
+// chunks, published first in that tick (ADR 0049). Build with
+// driversWentOnline, read with forEachWentOnline.
+export const DriversWentOnline = driverCells("drivers.went_online");
+export type DriversWentOnline = z.infer<typeof DriversWentOnline>;
+export type DriverOnline = { driverId: DriverId; cell: Cell };
+
 export function driversMoved(tick: Tick, moves: DriverMove[]): DriversMoved {
+	return { type: "drivers.moved", tick, ...toArrays(moves) };
+}
+
+export function driversWentOnline(
+	tick: Tick,
+	drivers: DriverOnline[],
+): DriversWentOnline {
+	return { type: "drivers.went_online", tick, ...toArrays(drivers) };
+}
+
+function toArrays(entries: { driverId: DriverId; cell: Cell }[]): {
+	driverIds: DriverId[];
+	xs: Coordinate[];
+	ys: Coordinate[];
+} {
 	return {
-		type: "drivers.moved",
-		tick,
-		driverIds: moves.map((move) => move.driverId),
-		xs: moves.map((move) => move.cell.x),
-		ys: moves.map((move) => move.cell.y),
+		driverIds: entries.map((entry) => entry.driverId),
+		xs: entries.map((entry) => entry.cell.x),
+		ys: entries.map((entry) => entry.cell.y),
 	};
 }
 
-export function forEachMove(
-	moved: DriversMoved,
-	visit: (driverId: DriverId, cell: Cell) => void,
+type Visit = (driverId: DriverId, cell: Cell) => void;
+
+export const forEachMove: (moved: DriversMoved, visit: Visit) => void =
+	forEachDriverCell;
+
+export const forEachWentOnline: (
+	wentOnline: DriversWentOnline,
+	visit: Visit,
+) => void = forEachDriverCell;
+
+function forEachDriverCell(
+	message: DriversMoved | DriversWentOnline,
+	visit: Visit,
 ): void {
-	for (let i = 0; i < moved.driverIds.length; i++) {
-		const driverId = moved.driverIds[i];
-		const x = moved.xs[i];
-		const y = moved.ys[i];
-		// Equal lengths: checked by the schema, kept by driversMoved.
+	for (let i = 0; i < message.driverIds.length; i++) {
+		const driverId = message.driverIds[i];
+		const x = message.xs[i];
+		const y = message.ys[i];
+		// Equal lengths: checked by the schema, kept by the builders.
 		if (driverId === undefined || x === undefined || y === undefined) {
-			throw new Error("drivers.moved arrays differ in length");
+			throw new Error(`${message.type} arrays differ in length`);
 		}
 		visit(driverId, cellAt(x, y));
 	}
@@ -300,7 +328,7 @@ export type TripRequested = z.infer<typeof TripRequested>;
 // shells log it, never publish it.
 const Message = z.discriminatedUnion("type", [
 	ClockTicked,
-	DriverWentOnline,
+	DriversWentOnline,
 	DriverWentOffline,
 	DriversMoved,
 	DriverArrivedAtPickup,

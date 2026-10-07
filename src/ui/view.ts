@@ -4,11 +4,12 @@ import type {
 	DriverArrivedAtPickup,
 	DriverId,
 	DriversMoved,
+	DriversWentOnline,
 	SimEvent,
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
-import { forEachMove } from "../shared/messages.ts";
+import { forEachMove, forEachWentOnline } from "../shared/messages.ts";
 
 type DriverState = "idle" | "en_route" | "at_pickup" | "on_trip" | "at_dropoff";
 
@@ -64,13 +65,8 @@ export function applyEvent(view: View, event: SimEvent): View {
 	switch (event.type) {
 		case "clock.ticked":
 			return { ...view, tick: event.tick };
-		case "driver.went_online":
-			return withDriver(view, event.driverId, {
-				state: "idle",
-				cell: event.cell,
-				previousCell: event.cell,
-				movedAt: event.tick,
-			});
+		case "drivers.went_online":
+			return withWentOnline(view, event);
 		case "drivers.moved":
 			return withMoves(view, event);
 		case "trip.requested": {
@@ -177,8 +173,8 @@ function withArrival(
 	});
 }
 
-// withDriver, withMoves and withoutDriver are the only places drivers
-// change, so driversPerState always matches drivers.
+// withDriver, withWentOnline, withMoves and withoutDriver are the only places
+// drivers change, so driversPerState always matches drivers.
 function withDriver(view: View, driverId: DriverId, driver: DriverView): View {
 	const drivers = new Map(view.drivers);
 	const driversPerState = { ...view.driversPerState };
@@ -204,6 +200,25 @@ function withMoves(view: View, moved: DriversMoved): View {
 			cell,
 			previousCell: previous?.cell ?? cell,
 			movedAt: moved.tick,
+		});
+	});
+	return { ...view, drivers, driversPerState };
+}
+
+// One copy of drivers per message, as for moves: at start a message carries
+// up to 5,000 drivers (ADR 0049).
+function withWentOnline(view: View, wentOnline: DriversWentOnline): View {
+	const drivers = new Map(view.drivers);
+	const driversPerState = { ...view.driversPerState };
+	forEachWentOnline(wentOnline, (driverId, cell) => {
+		const previous = drivers.get(driverId);
+		if (previous !== undefined) driversPerState[previous.state]--;
+		driversPerState.idle++;
+		drivers.set(driverId, {
+			state: "idle",
+			cell,
+			previousCell: cell,
+			movedAt: wentOnline.tick,
 		});
 	});
 	return { ...view, drivers, driversPerState };

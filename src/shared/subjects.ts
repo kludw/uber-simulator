@@ -24,7 +24,7 @@ export function subscriptionSubject(type: MessageType): string {
 function kindPrefix(type: Exclude<MessageType, "offer">): string {
 	switch (type) {
 		case "clock.ticked":
-		case "driver.went_online":
+		case "drivers.went_online":
 		case "driver.went_offline":
 		case "drivers.moved":
 		case "driver.arrived_at_pickup":

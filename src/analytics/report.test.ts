@@ -132,7 +132,7 @@ describe.skipIf(!config)("run report", () => {
 		const run = "duration";
 		await succeeded(
 			clickhouse.insertEvents([
-				row(run, "driver.went_online", 0, 1),
+				row(run, "drivers.went_online", 0, 1),
 				row(run, "trip.requested", 0, 2, "t-1"),
 				row(run, "trip.requested", 5, 3, "t-2"),
 				row(run, "trip.requested", 6, 4, "t-3"),

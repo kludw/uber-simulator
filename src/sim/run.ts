@@ -138,7 +138,7 @@ export async function runOverNats(
 		result.eventLog.push(message);
 	});
 	// Every service is subscribed (connect flushes) before any starts, so
-	// dispatch sees every driver.went_online.
+	// dispatch sees every drivers.went_online.
 	services.forEach((service, i) => {
 		const bus = serviceBuses[i];
 		if (!bus) throw new Error(`no bus for ${service.name}`);

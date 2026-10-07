@@ -12,9 +12,10 @@ import type {
 	DriverArrivedAtPickup,
 	DriverId,
 	DriverMove,
+	DriverOnline,
 	DriversMoved,
+	DriversWentOnline,
 	DriverWentOffline,
-	DriverWentOnline,
 	InputRejected,
 	Offer,
 	OfferAccepted,
@@ -27,7 +28,7 @@ import type {
 	TripPickedUp,
 	TripStatus,
 } from "../shared/messages.ts";
-import { driversMoved } from "../shared/messages.ts";
+import { driversMoved, driversWentOnline } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 
 type Driver =
@@ -136,7 +137,7 @@ export function startDriverShard(
 		preferences?: Preferences;
 	},
 	random: Random,
-): { state: DriverShardState; outputs: DriverWentOnline[] } {
+): { state: DriverShardState; outputs: DriversWentOnline[] } {
 	const shifts = config.shifts ?? { type: "always_online" };
 	assertValidShifts(shifts);
 	// Cells drawn first, in driver ID order, as before shifts existed: shift
@@ -168,18 +169,16 @@ export function startDriverShard(
 			periods,
 		};
 	}
-	const outputs: DriverWentOnline[] = [];
+	const online: DriverOnline[] = [];
 	for (const driver of drivers.values()) {
 		if (driver.state !== "idle") continue;
-		outputs.push({
-			type: "driver.went_online",
-			tick: config.tick,
-			driverId: driver.id,
-			cell: driver.cell,
-		});
+		online.push({ driverId: driver.id, cell: driver.cell });
 	}
 	const picky = startPicky(config.preferences, config.driverIds, random);
-	return { state: { grid: config.grid, drivers, schedule, picky }, outputs };
+	return {
+		state: { grid: config.grid, drivers, schedule, picky },
+		outputs: inChunks(online, (chunk) => driversWentOnline(config.tick, chunk)),
+	};
 }
 
 // accept_all takes no preference streams, so default runs stay unchanged.
@@ -241,7 +240,7 @@ function shiftStream(driverId: DriverId, n: number): string {
 }
 
 type DriverShardOutput =
-	| DriverWentOnline
+	| DriversWentOnline
 	| DriverWentOffline
 	| DriversMoved
 	| DriverArrivedAtPickup
@@ -482,6 +481,7 @@ function onTick(
 	input: ClockTicked,
 	random: Random,
 ): Decision {
+	const online: DriverOnline[] = [];
 	const moves: DriverMove[] = [];
 	const outputs: DriverShardOutput[] = [];
 	const { drivers, schedule } = state;
@@ -494,7 +494,16 @@ function onTick(
 		if (schedule !== null && changed !== null) {
 			drivers.set(driver.id, changed.driver);
 			schedule.periods.set(driver.id, changed.period);
-			outputs.push(changed.output);
+			if (changed.driver.state === "idle") {
+				online.push({ driverId: driver.id, cell: changed.driver.cell });
+			} else {
+				outputs.push({
+					type: "driver.went_offline",
+					tick: input.tick,
+					driverId: driver.id,
+					cell: changed.driver.cell,
+				});
+			}
 			continue;
 		}
 		switch (driver.state) {
@@ -541,20 +550,29 @@ function onTick(
 			}
 		}
 	}
-	return { state, outputs: [...movedChunks(input.tick, moves), ...outputs] };
+	// Drivers going online first, then moves, so a subscriber has a driver's
+	// cell before its arrival or going offline (ADR 0045, 0049).
+	return {
+		state,
+		outputs: [
+			...inChunks(online, (chunk) => driversWentOnline(input.tick, chunk)),
+			...inChunks(moves, (chunk) => driversMoved(input.tick, chunk)),
+			...outputs,
+		],
+	};
 }
 
 // ADR 0045: keeps a message well under NATS's default 1 MB max_payload.
-const maxMovesPerMessage = 5000;
+const maxDriversPerMessage = 5000;
 
-// First in a tick's outputs, so a subscriber has a driver's cell before its
-// arrival or going offline (ADR 0045). None when no driver moved.
-function movedChunks(tick: Tick, moves: DriverMove[]): DriversMoved[] {
-	const chunks: DriversMoved[] = [];
-	for (let start = 0; start < moves.length; start += maxMovesPerMessage) {
-		chunks.push(
-			driversMoved(tick, moves.slice(start, start + maxMovesPerMessage)),
-		);
+// None when there are no entries.
+function inChunks<Entry, Batch>(
+	entries: Entry[],
+	batch: (chunk: Entry[]) => Batch,
+): Batch[] {
+	const chunks: Batch[] = [];
+	for (let start = 0; start < entries.length; start += maxDriversPerMessage) {
+		chunks.push(batch(entries.slice(start, start + maxDriversPerMessage)));
 	}
 	return chunks;
 }
@@ -567,11 +585,7 @@ function changeShift(
 	schedule: Schedule,
 	tick: Tick,
 	random: Random,
-): {
-	driver: Driver;
-	period: Period;
-	output: DriverWentOnline | DriverWentOffline;
-} | null {
+): { driver: IdleDriver | OfflineDriver; period: Period } | null {
 	const period = schedule.periods.get(driver.id);
 	if (period === undefined) {
 		throw new Error(`driver ${driver.id} without a shift period`);
@@ -588,22 +602,16 @@ function changeShift(
 		startedAt: tick,
 		ticks: random.child(shiftStream(driver.id, n)).int(min, max),
 	};
-	const event = { tick, driverId: driver.id, cell: driver.cell };
-	if (goingOnline) {
-		return {
-			driver: idle(driver.id, driver.cell),
-			period: next,
-			output: { type: "driver.went_online", ...event },
-		};
-	}
 	return {
-		driver: { state: "offline", id: driver.id, cell: driver.cell },
+		driver: goingOnline
+			? idle(driver.id, driver.cell)
+			: { state: "offline", id: driver.id, cell: driver.cell },
 		period: next,
-		output: { type: "driver.went_offline", ...event },
 	};
 }
 
 type IdleDriver = Extract<Driver, { state: "idle" }>;
+type OfflineDriver = Extract<Driver, { state: "offline" }>;
 type EnRouteDriver = Extract<Driver, { state: "en_route" }>;
 type OnTripDriver = Extract<Driver, { state: "on_trip" }>;
 

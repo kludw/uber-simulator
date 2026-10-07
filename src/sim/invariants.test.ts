@@ -3,6 +3,7 @@ import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
 import {
 	DriverId,
 	driversMoved,
+	driversWentOnline,
 	type Message,
 	RiderId,
 	Tick,
@@ -54,7 +55,7 @@ function tripEvent(
 }
 
 function wentOnline(driverId: DriverId, at: Cell): Message {
-	return { type: "driver.went_online", tick: tick(0), driverId, cell: at };
+	return driversWentOnline(tick(0), [{ driverId, cell: at }]);
 }
 
 function wentOffline(driverId: DriverId, at: Cell, when: number): Message {
@@ -374,13 +375,27 @@ describe("checkInvariants driver shifts", () => {
 			wentOffline(d1, cell(2, 0), 4),
 			tripEvent("trip.offered", t2, d1, 4),
 			tripEvent("trip.offer_declined", t2, d1, 4),
-			{
-				type: "driver.went_online",
-				tick: tick(8),
-				driverId: d1,
-				cell: cell(2, 0),
-			},
+			driversWentOnline(tick(8), [{ driverId: d1, cell: cell(2, 0) }]),
 			moved(d1, cell(2, 1), 9),
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([]);
+	});
+
+	test("every driver one message announces online may move again", () => {
+		const log: Message[] = [
+			wentOnline(d1, cell(0, 0)),
+			wentOnline(d2, cell(5, 5)),
+			wentOffline(d1, cell(0, 0), 1),
+			wentOffline(d2, cell(5, 5), 1),
+			driversWentOnline(tick(4), [
+				{ driverId: d1, cell: cell(0, 0) },
+				{ driverId: d2, cell: cell(5, 5) },
+			]),
+			driversMoved(tick(5), [
+				{ driverId: d1, cell: cell(1, 0) },
+				{ driverId: d2, cell: cell(5, 6) },
+			]),
 		];
 
 		expect(checkInvariants(log, grid)).toEqual([]);

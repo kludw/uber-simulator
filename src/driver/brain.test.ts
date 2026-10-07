@@ -3,7 +3,9 @@ import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
 import {
 	DriverId,
 	driversMoved,
+	driversWentOnline,
 	forEachMove,
+	forEachWentOnline,
 	type Offer,
 	Tick,
 	TripId,
@@ -113,19 +115,28 @@ describe("startDriverShard", () => {
 			scriptedRandom([3, 4, 7, 8]),
 		);
 		expect(outputs).toEqual([
-			{
-				type: "driver.went_online",
-				tick: tick(5),
-				driverId: d1,
-				cell: cell(3, 4),
-			},
-			{
-				type: "driver.went_online",
-				tick: tick(5),
-				driverId: d2,
-				cell: cell(7, 8),
-			},
+			driversWentOnline(tick(5), [
+				{ driverId: d1, cell: cell(3, 4) },
+				{ driverId: d2, cell: cell(7, 8) },
+			]),
 		]);
+	});
+
+	test("announces drivers online in messages of at most 5,000 drivers", () => {
+		const driverIds = Array.from({ length: 5001 }, (_, i) =>
+			DriverId.parse(`d-${i}`),
+		);
+		const { outputs } = startDriverShard(
+			{ grid: { width: 500, height: 500 }, driverIds, tick: tick(0) },
+			createRandom(1),
+		);
+		const driversPerMessage = outputs.map((output) => {
+			let drivers = 0;
+			forEachWentOnline(output, () => drivers++);
+			return drivers;
+		});
+
+		expect(driversPerMessage).toEqual([5000, 1]);
 	});
 });
 
@@ -139,12 +150,7 @@ describe("startDriverShard with shifts", () => {
 			}),
 		);
 		expect(outputs).toEqual([
-			{
-				type: "driver.went_online",
-				tick: tick(5),
-				driverId: d2,
-				cell: cell(7, 8),
-			},
+			driversWentOnline(tick(5), [{ driverId: d2, cell: cell(7, 8) }]),
 		]);
 	});
 });
@@ -181,12 +187,25 @@ describe("decideDriverShard with shifts", () => {
 		);
 		const { outputs } = runTicks(started.state, 1, 4, random);
 		expect(outputs).toEqual([
-			{
-				type: "driver.went_online",
-				tick: tick(4),
-				driverId: d1,
-				cell: cell(3, 4),
-			},
+			driversWentOnline(tick(4), [{ driverId: d1, cell: cell(3, 4) }]),
+		]);
+	});
+
+	test("drivers going online come before the shard's moves of that tick", () => {
+		const random = shiftRandom([3, 4, 7, 8, 0, 8], {
+			"shift:d-1:0": [0.7, 3],
+			"shift:d-1:1": [5],
+			"shift:d-2:0": [0.2, 9],
+		});
+		const started = startDriverShard(
+			{ grid, driverIds: [d1, d2], tick: tick(0), shifts },
+			random,
+		);
+		const before = runTicks(started.state, 1, 2, random);
+		const { outputs } = runTicks(before.state, 3, 3, random);
+		expect(outputs).toEqual([
+			driversWentOnline(tick(3), [{ driverId: d1, cell: cell(3, 4) }]),
+			driversMoved(tick(3), [{ driverId: d2, cell: cell(4, 8) }]),
 		]);
 	});
 
@@ -238,12 +257,7 @@ describe("decideDriverShard with shifts", () => {
 				driverId: d1,
 				cell: cell(1, 1),
 			},
-			{
-				type: "driver.went_online",
-				tick: tick(6),
-				driverId: d1,
-				cell: cell(1, 1),
-			},
+			driversWentOnline(tick(6), [{ driverId: d1, cell: cell(1, 1) }]),
 		]);
 	});
 
@@ -333,12 +347,7 @@ describe("startDriverShard shift config", () => {
 			scriptedRandom([3, 4]),
 		);
 		expect(outputs).toEqual([
-			{
-				type: "driver.went_online",
-				tick: tick(0),
-				driverId: d1,
-				cell: cell(3, 4),
-			},
+			driversWentOnline(tick(0), [{ driverId: d1, cell: cell(3, 4) }]),
 		]);
 	});
 
