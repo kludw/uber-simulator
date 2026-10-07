@@ -7,9 +7,9 @@ import {
 	migrate,
 } from "../persistence/clickhouse.ts";
 import { toRow } from "../persister/rows.ts";
+import { DriverIndex } from "../shared/fleet.ts";
 import { Cell } from "../shared/grid.ts";
 import {
-	DriverId,
 	driversMoved,
 	isSimEvent,
 	RunId,
@@ -188,12 +188,14 @@ describe.skipIf(!config)("readRunEvents", () => {
 	});
 });
 
-const d1 = DriverId.parse("d-1");
+// Driver 1 of a fleet of 10 (ADR 0052).
+const fleetSize = 10;
+const i1 = DriverIndex.parse(1);
 const ingestedAt = new Date("2026-10-03T12:00:00Z");
 
 function moved(tick: number): SimEvent {
-	return driversMoved(Tick.parse(tick), Region.parse(0), [
-		{ driverId: d1, cell: Cell.parse({ x: tick, y: 0 }) },
+	return driversMoved(Tick.parse(tick), Region.parse(0), fleetSize, [
+		{ driverIndex: i1, cell: Cell.parse({ x: tick, y: 0 }) },
 	]);
 }
 

@@ -1,4 +1,5 @@
 import * as z from "zod";
+import { type DriverIndex, driverIdAt } from "./fleet.ts";
 import { Cell, type Coordinate, cellAt } from "./grid.ts";
 import { Region } from "./regions.ts";
 import type { Result } from "./result.ts";
@@ -46,12 +47,12 @@ export type DriverWentOffline = z.infer<typeof DriverWentOffline>;
 // drivers.moved's and drivers.went_online's arrays are checked in one pass
 // each, not by a schema per element: z.array runs its element schema on every
 // entry and copies the array, most of drivers.moved's Zod time (ADR 0047,
-// 0049; docs/performance-history.md, Dispatch moves profile). Same rules as DriverId
-// and Coordinate, so the result is branded as they would brand it.
-const DriverIds = z.custom<DriverId[]>(
-	(ids) =>
-		Array.isArray(ids) &&
-		ids.every((id) => typeof id === "string" && idPattern.test(id)),
+// 0049; docs/performance-history.md, Dispatch moves profile). Same rules as
+// DriverIndex and Coordinate, so the result is branded as they would brand it.
+const DriverIndexes = z.custom<DriverIndex[]>(
+	(indexes) =>
+		Array.isArray(indexes) &&
+		indexes.every((index) => Number.isSafeInteger(index) && index >= 0),
 );
 const Coordinates = z.custom<Coordinate[]>(
 	(coordinates) =>
@@ -59,23 +60,31 @@ const Coordinates = z.custom<Coordinate[]>(
 		coordinates.every((c) => Number.isSafeInteger(c) && c >= 0),
 );
 
-// Entry i is driver driverIds[i] at cell (xs[i], ys[i]): parallel arrays
-// decode faster than an object per driver (ADR 0047).
+// Entry i is the driver with index driverIndexes[i] at cell (xs[i], ys[i]):
+// parallel arrays decode faster than an object per driver (ADR 0047), and an
+// index faster than a driver ID (ADR 0052). fleetSize names the IDs, so each
+// message reads alone.
 function driverCells<Type extends string>(type: Type) {
 	return z
 		.object({
 			type: z.literal(type),
 			tick: Tick,
 			region: OwningRegion,
-			driverIds: DriverIds,
+			fleetSize: z.int().positive(),
+			driverIndexes: DriverIndexes,
 			xs: Coordinates,
 			ys: Coordinates,
 		})
 		.refine(
 			(message) =>
-				message.xs.length === message.driverIds.length &&
-				message.ys.length === message.driverIds.length,
-			{ error: "driverIds, xs, and ys differ in length" },
+				message.xs.length === message.driverIndexes.length &&
+				message.ys.length === message.driverIndexes.length,
+			{ error: "driverIndexes, xs, and ys differ in length" },
+		)
+		.refine(
+			(message) =>
+				message.driverIndexes.every((index) => index < message.fleetSize),
+			{ error: "driver index outside the fleet" },
 		);
 }
 
@@ -84,38 +93,49 @@ function driverCells<Type extends string>(type: Type) {
 // driversMoved, read with forEachMove.
 export const DriversMoved = driverCells("drivers.moved");
 export type DriversMoved = z.infer<typeof DriversMoved>;
-export type DriverMove = { driverId: DriverId; cell: Cell };
+export type DriverMove = { driverIndex: DriverIndex; cell: Cell };
 
 // A shard's drivers going online in a tick (at start, or a shift change), in
 // chunks, published first in that tick (ADR 0049). Build with
 // driversWentOnline, read with forEachWentOnline.
 export const DriversWentOnline = driverCells("drivers.went_online");
 export type DriversWentOnline = z.infer<typeof DriversWentOnline>;
-export type DriverOnline = { driverId: DriverId; cell: Cell };
 
 export function driversMoved(
 	tick: Tick,
 	region: Region,
+	fleetSize: number,
 	moves: DriverMove[],
 ): DriversMoved {
-	return { type: "drivers.moved", tick, region, ...toArrays(moves) };
+	return { type: "drivers.moved", tick, region, ...toArrays(fleetSize, moves) };
 }
 
 export function driversWentOnline(
 	tick: Tick,
 	region: Region,
-	drivers: DriverOnline[],
+	fleetSize: number,
+	drivers: DriverMove[],
 ): DriversWentOnline {
-	return { type: "drivers.went_online", tick, region, ...toArrays(drivers) };
+	return {
+		type: "drivers.went_online",
+		tick,
+		region,
+		...toArrays(fleetSize, drivers),
+	};
 }
 
-function toArrays(entries: { driverId: DriverId; cell: Cell }[]): {
-	driverIds: DriverId[];
+function toArrays(
+	fleetSize: number,
+	entries: DriverMove[],
+): {
+	fleetSize: number;
+	driverIndexes: DriverIndex[];
 	xs: Coordinate[];
 	ys: Coordinate[];
 } {
 	return {
-		driverIds: entries.map((entry) => entry.driverId),
+		fleetSize,
+		driverIndexes: entries.map((entry) => entry.driverIndex),
 		xs: entries.map((entry) => entry.cell.x),
 		ys: entries.map((entry) => entry.cell.y),
 	};
@@ -144,15 +164,15 @@ export function forEachDriverAt(
 	message: DriversMoved | DriversWentOnline,
 	visit: (driverId: DriverId, x: Coordinate, y: Coordinate) => void,
 ): void {
-	for (let i = 0; i < message.driverIds.length; i++) {
-		const driverId = message.driverIds[i];
+	for (let i = 0; i < message.driverIndexes.length; i++) {
+		const index = message.driverIndexes[i];
 		const x = message.xs[i];
 		const y = message.ys[i];
 		// Equal lengths: checked by the schema, kept by the builders.
-		if (driverId === undefined || x === undefined || y === undefined) {
+		if (index === undefined || x === undefined || y === undefined) {
 			throw new Error(`${message.type} arrays differ in length`);
 		}
-		visit(driverId, x, y);
+		visit(driverIdAt(message.fleetSize, index), x, y);
 	}
 }
 

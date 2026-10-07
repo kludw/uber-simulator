@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
 import {
-	DriverId,
+	type DriverId,
 	driversMoved,
 	driversWentOnline,
 	type Message,
@@ -13,8 +14,12 @@ import { Region } from "../shared/regions.ts";
 import { checkInvariants, createInvariantChecker } from "./invariants.ts";
 
 const grid: Grid = { width: 10, height: 10 };
-const d1 = DriverId.parse("d-1");
-const d2 = DriverId.parse("d-2");
+// Drivers of a fleet of 10: IDs d-0 to d-9 (ADR 0052).
+const fleetSize = 10;
+const i1 = DriverIndex.parse(1);
+const d1 = driverIdAt(fleetSize, i1);
+const i2 = DriverIndex.parse(2);
+const d2 = driverIdAt(fleetSize, i2);
 const t1 = TripId.parse("t-1");
 const t2 = TripId.parse("t-2");
 const r1 = RiderId.parse("r-1");
@@ -55,8 +60,10 @@ function tripEvent(
 	return { type, tick: tick(at), tripId, driverId };
 }
 
-function wentOnline(driverId: DriverId, at: Cell): Message {
-	return driversWentOnline(tick(0), Region.parse(0), [{ driverId, cell: at }]);
+function wentOnline(driverIndex: DriverIndex, at: Cell): Message {
+	return driversWentOnline(tick(0), Region.parse(0), fleetSize, [
+		{ driverIndex, cell: at },
+	]);
 }
 
 function wentOffline(driverId: DriverId, at: Cell, when: number): Message {
@@ -69,20 +76,22 @@ function wentOffline(driverId: DriverId, at: Cell, when: number): Message {
 	};
 }
 
-function moved(driverId: DriverId, to: Cell, at: number): Message {
-	return driversMoved(tick(at), Region.parse(0), [{ driverId, cell: to }]);
+function moved(driverIndex: DriverIndex, to: Cell, at: number): Message {
+	return driversMoved(tick(at), Region.parse(0), fleetSize, [
+		{ driverIndex, cell: to },
+	]);
 }
 
 // d1 starts at (0,0); t1 picks up at (1,0), drops off at (2,0).
 const cleanTrip: Message[] = [
-	wentOnline(d1, cell(0, 0)),
+	wentOnline(i1, cell(0, 0)),
 	{ type: "clock.ticked", tick: tick(1) },
 	requested(t1, 1),
 	tripEvent("trip.offered", t1, d1, 1),
 	tripEvent("trip.matched", t1, d1, 1),
-	moved(d1, cell(1, 0), 2),
+	moved(i1, cell(1, 0), 2),
 	tripEvent("trip.picked_up", t1, d1, 2),
-	moved(d1, cell(2, 0), 3),
+	moved(i1, cell(2, 0), 3),
 	tripEvent("trip.completed", t1, d1, 3),
 ];
 
@@ -121,7 +130,7 @@ describe("checkInvariants", () => {
 
 	test("a matched trip completed without a pickup is flagged", () => {
 		const log = [
-			wentOnline(d1, cell(2, 0)),
+			wentOnline(i1, cell(2, 0)),
 			requested(t1, 1),
 			tripEvent("trip.offered", t1, d1, 1),
 			tripEvent("trip.matched", t1, d1, 1),
@@ -270,7 +279,7 @@ describe("checkInvariants", () => {
 
 	test("a trip picked up while its driver is away from the pickup is flagged", () => {
 		const log = [
-			wentOnline(d1, cell(0, 0)),
+			wentOnline(i1, cell(0, 0)),
 			requested(t1, 1),
 			tripEvent("trip.offered", t1, d1, 1),
 			tripEvent("trip.matched", t1, d1, 1),
@@ -290,7 +299,7 @@ describe("checkInvariants", () => {
 
 	test("a trip completed while its driver is away from the dropoff is flagged", () => {
 		const log = [
-			wentOnline(d1, cell(1, 0)),
+			wentOnline(i1, cell(1, 0)),
 			requested(t1, 1),
 			tripEvent("trip.offered", t1, d1, 1),
 			tripEvent("trip.matched", t1, d1, 1),
@@ -310,7 +319,7 @@ describe("checkInvariants", () => {
 	});
 
 	test("a driver moving two cells in one tick is flagged", () => {
-		const log = [wentOnline(d1, cell(0, 0)), moved(d1, cell(2, 0), 1)];
+		const log = [wentOnline(i1, cell(0, 0)), moved(i1, cell(2, 0), 1)];
 
 		expect(checkInvariants(log, grid)).toEqual([
 			{
@@ -325,9 +334,9 @@ describe("checkInvariants", () => {
 
 	test("a driver moving twice in the same tick is flagged", () => {
 		const log = [
-			wentOnline(d1, cell(0, 0)),
-			moved(d1, cell(1, 0), 1),
-			moved(d1, cell(2, 0), 1),
+			wentOnline(i1, cell(0, 0)),
+			moved(i1, cell(1, 0), 1),
+			moved(i1, cell(2, 0), 1),
 		];
 
 		expect(checkInvariants(log, grid)).toEqual([
@@ -343,11 +352,11 @@ describe("checkInvariants", () => {
 
 	test("each move in one message is checked", () => {
 		const log: Message[] = [
-			wentOnline(d1, cell(0, 0)),
-			wentOnline(d2, cell(5, 5)),
-			driversMoved(tick(1), Region.parse(0), [
-				{ driverId: d1, cell: cell(1, 0) },
-				{ driverId: d2, cell: cell(7, 5) },
+			wentOnline(i1, cell(0, 0)),
+			wentOnline(i2, cell(5, 5)),
+			driversMoved(tick(1), Region.parse(0), fleetSize, [
+				{ driverIndex: i1, cell: cell(1, 0) },
+				{ driverIndex: i2, cell: cell(7, 5) },
 			]),
 		];
 
@@ -365,7 +374,7 @@ describe("checkInvariants", () => {
 	test("a driver moving off the grid is flagged", () => {
 		// Built by hand: cellIn refuses cells outside the grid.
 		const offGrid = { x: 10, y: 0 } as Cell;
-		const log = [wentOnline(d1, cell(9, 0)), moved(d1, offGrid, 1)];
+		const log = [wentOnline(i1, cell(9, 0)), moved(i1, offGrid, 1)];
 
 		expect(checkInvariants(log, grid)).toEqual([
 			{ type: "driver_left_grid", tick: tick(1), driverId: d1, cell: offGrid },
@@ -382,10 +391,10 @@ describe("checkInvariants driver shifts", () => {
 			wentOffline(d1, cell(2, 0), 4),
 			tripEvent("trip.offered", t2, d1, 4),
 			tripEvent("trip.offer_declined", t2, d1, 4),
-			driversWentOnline(tick(8), Region.parse(0), [
-				{ driverId: d1, cell: cell(2, 0) },
+			driversWentOnline(tick(8), Region.parse(0), fleetSize, [
+				{ driverIndex: i1, cell: cell(2, 0) },
 			]),
-			moved(d1, cell(2, 1), 9),
+			moved(i1, cell(2, 1), 9),
 		];
 
 		expect(checkInvariants(log, grid)).toEqual([]);
@@ -393,17 +402,17 @@ describe("checkInvariants driver shifts", () => {
 
 	test("every driver one message announces online may move again", () => {
 		const log: Message[] = [
-			wentOnline(d1, cell(0, 0)),
-			wentOnline(d2, cell(5, 5)),
+			wentOnline(i1, cell(0, 0)),
+			wentOnline(i2, cell(5, 5)),
 			wentOffline(d1, cell(0, 0), 1),
 			wentOffline(d2, cell(5, 5), 1),
-			driversWentOnline(tick(4), Region.parse(0), [
-				{ driverId: d1, cell: cell(0, 0) },
-				{ driverId: d2, cell: cell(5, 5) },
+			driversWentOnline(tick(4), Region.parse(0), fleetSize, [
+				{ driverIndex: i1, cell: cell(0, 0) },
+				{ driverIndex: i2, cell: cell(5, 5) },
 			]),
-			driversMoved(tick(5), Region.parse(0), [
-				{ driverId: d1, cell: cell(1, 0) },
-				{ driverId: d2, cell: cell(5, 6) },
+			driversMoved(tick(5), Region.parse(0), fleetSize, [
+				{ driverIndex: i1, cell: cell(1, 0) },
+				{ driverIndex: i2, cell: cell(5, 6) },
 			]),
 		];
 
@@ -412,9 +421,9 @@ describe("checkInvariants driver shifts", () => {
 
 	test("an offline driver moving is flagged", () => {
 		const log = [
-			wentOnline(d1, cell(0, 0)),
+			wentOnline(i1, cell(0, 0)),
 			wentOffline(d1, cell(0, 0), 1),
-			moved(d1, cell(1, 0), 2),
+			moved(i1, cell(1, 0), 2),
 		];
 
 		expect(checkInvariants(log, grid)).toEqual([
@@ -429,7 +438,7 @@ describe("checkInvariants driver shifts", () => {
 
 	test("a trip matched to an offline driver is flagged", () => {
 		const log = [
-			wentOnline(d1, cell(0, 0)),
+			wentOnline(i1, cell(0, 0)),
 			requested(t1, 1),
 			tripEvent("trip.offered", t1, d1, 1),
 			wentOffline(d1, cell(0, 0), 1),
@@ -448,7 +457,7 @@ describe("checkInvariants driver shifts", () => {
 
 	test("a driver going offline with an active trip is flagged", () => {
 		const log = [
-			wentOnline(d1, cell(0, 0)),
+			wentOnline(i1, cell(0, 0)),
 			requested(t1, 1),
 			tripEvent("trip.offered", t1, d1, 1),
 			tripEvent("trip.matched", t1, d1, 1),
@@ -471,12 +480,12 @@ describe("checkInvariants driver shifts", () => {
 		tripEvent("trip.offer_expired", t1, d1, 2),
 	])("$type naming an offline driver keeps it offline", (freed) => {
 		const log = [
-			wentOnline(d1, cell(0, 0)),
+			wentOnline(i1, cell(0, 0)),
 			requested(t1, 1),
 			tripEvent("trip.offered", t1, d1, 1),
 			wentOffline(d1, cell(0, 0), 1),
 			freed,
-			moved(d1, cell(1, 0), 3),
+			moved(i1, cell(1, 0), 3),
 		];
 
 		expect(checkInvariants(log, grid)).toEqual([
@@ -499,7 +508,7 @@ describe("createInvariantChecker", () => {
 		for (const message of [
 			...cleanTrip,
 			tripEvent("trip.completed", t1, d1, 4),
-			moved(d1, cell(5, 0), 5),
+			moved(i1, cell(5, 0), 5),
 		]) {
 			checker.observe(message);
 			found.push(checker.violations().length);

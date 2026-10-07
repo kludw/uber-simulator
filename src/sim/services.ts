@@ -15,9 +15,9 @@ import {
 } from "../driver/brain.ts";
 import { decideRiders, type RidersInput, startRiders } from "../rider/brain.ts";
 import type { Demand } from "../rider/demand.ts";
+import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import type { Grid } from "../shared/grid.ts";
 import {
-	DriverId,
 	type InputRejected,
 	type Message,
 	type MessageType,
@@ -121,15 +121,15 @@ export function driverShardService(
 		throw new Error(`shard ${shard} outside 0..${count - 1}`);
 	}
 	const name = `driver-shard-${shard}`;
-	// Same IDs in every process: fixed by shard index and shard sizes, and
-	// zero-padded so plain string order (ordered by ID) is numeric order.
-	const idWidth = String(count * driversPerShard - 1).length;
-	const driverIds = Array.from({ length: driversPerShard }, (_, i) =>
-		DriverId.parse(
-			`d-${String(shard * driversPerShard + i).padStart(idWidth, "0")}`,
+	// Same drivers in every process: fixed by shard index and shard sizes
+	// (ADR 0052).
+	const fleetSize = count * driversPerShard;
+	const firstIndex = DriverIndex.parse(shard * driversPerShard);
+	const owned = new Set<string>(
+		Array.from({ length: driversPerShard }, (_, i) =>
+			driverIdAt(fleetSize, DriverIndex.parse(firstIndex + i)),
 		),
 	);
-	const owned = new Set<string>(driverIds);
 	return {
 		name,
 		inputs: driverShardInputs,
@@ -139,7 +139,9 @@ export function driverShardService(
 				start: startDriverShard(
 					{
 						grid: config.grid,
-						driverIds,
+						fleetSize,
+						firstIndex,
+						driverCount: driversPerShard,
 						tick: startTick,
 						shifts: config.shifts,
 						preferences: config.preferences,

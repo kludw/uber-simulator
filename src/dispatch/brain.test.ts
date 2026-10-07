@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
 import {
-	DriverId,
+	type DriverId,
 	driversMoved,
 	driversWentOnline,
 	type RequestTrip,
@@ -20,8 +21,13 @@ import {
 } from "./brain.ts";
 
 const grid: Grid = { width: 10, height: 10 };
-const d1 = DriverId.parse("d-1");
-const d2 = DriverId.parse("d-2");
+// Drivers 1, 2 and 10 of a fleet of 12: IDs d-01, d-02 and index 10 (ADR 0052).
+const fleetSize = 12;
+const i1 = DriverIndex.parse(1);
+const i2 = DriverIndex.parse(2);
+const i10 = DriverIndex.parse(10);
+const d1 = driverIdAt(fleetSize, i1);
+const d2 = driverIdAt(fleetSize, i2);
 const t1 = TripId.parse("t-1");
 const t2 = TripId.parse("t-2");
 const r1 = RiderId.parse("r-1");
@@ -53,8 +59,10 @@ function requestTripAt(tripId: TripId, pickup: Cell): DispatchInput {
 	return { ...requestTrip(tripId, 1), pickup };
 }
 
-function wentOnline(driverId: DriverId, at: Cell): DispatchInput {
-	return driversWentOnline(tick(0), Region.parse(0), [{ driverId, cell: at }]);
+function wentOnline(driverIndex: DriverIndex, at: Cell): DispatchInput {
+	return driversWentOnline(tick(0), Region.parse(0), fleetSize, [
+		{ driverIndex, cell: at },
+	]);
 }
 
 function wentOffline(driverId: DriverId, at: Cell): DispatchInput {
@@ -125,7 +133,7 @@ describe("decideDispatch clock.ticked", () => {
 	test("offers a queued trip to an online driver", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 		]);
 
@@ -144,8 +152,8 @@ describe("decideDispatch clock.ticked", () => {
 	test("offers the trip to the driver nearest its pickup", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(9, 9)),
-			wentOnline(d2, cell(2, 2)),
+			wentOnline(i1, cell(9, 9)),
+			wentOnline(i2, cell(2, 2)),
 			ticked(2),
 		]);
 
@@ -161,12 +169,11 @@ describe("decideDispatch clock.ticked", () => {
 		]);
 	});
 
-	test("breaks a distance tie by lowest driver ID in string order", () => {
-		const d10 = DriverId.parse("d-10");
+	test("breaks a distance tie by lowest driver ID", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d2, cell(1, 4)),
-			wentOnline(d10, cell(3, 2)),
+			wentOnline(i10, cell(3, 2)),
+			wentOnline(i2, cell(1, 4)),
 			ticked(2),
 		]);
 
@@ -174,11 +181,11 @@ describe("decideDispatch clock.ticked", () => {
 			{
 				type: "offer",
 				tripId: t1,
-				driverId: d10,
+				driverId: d2,
 				pickup: cell(1, 2),
 				dropoff: cell(7, 8),
 			},
-			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d10 },
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d2 },
 		]);
 	});
 
@@ -186,7 +193,7 @@ describe("decideDispatch clock.ticked", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
 			requestTrip(t2, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 		]);
 
@@ -205,9 +212,9 @@ describe("decideDispatch clock.ticked", () => {
 	test("does not offer a trip again while its offer is pending", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
-			wentOnline(d2, cell(4, 4)),
+			wentOnline(i2, cell(4, 4)),
 			ticked(3),
 		]);
 
@@ -217,7 +224,7 @@ describe("decideDispatch clock.ticked", () => {
 	test("does not offer another trip to a driver with a pending offer", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			requestTrip(t2, 2),
 			ticked(3),
@@ -236,7 +243,7 @@ describe("decideDispatch clock.ticked", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
 			ticked(2),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(3),
 		]);
 
@@ -255,11 +262,11 @@ describe("decideDispatch clock.ticked", () => {
 	test("offers by the cell each driver last moved to", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(9, 9)),
-			wentOnline(d2, cell(5, 5)),
-			driversMoved(tick(1), Region.parse(0), [
-				{ driverId: d2, cell: cell(5, 6) },
-				{ driverId: d1, cell: cell(1, 3) },
+			wentOnline(i1, cell(9, 9)),
+			wentOnline(i2, cell(5, 5)),
+			driversMoved(tick(1), Region.parse(0), fleetSize, [
+				{ driverIndex: i2, cell: cell(5, 6) },
+				{ driverIndex: i1, cell: cell(1, 3) },
 			]),
 			ticked(2),
 		]);
@@ -279,9 +286,9 @@ describe("decideDispatch clock.ticked", () => {
 	test("offers to the nearest of the drivers one message announces online", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			driversWentOnline(tick(0), Region.parse(0), [
-				{ driverId: d1, cell: cell(9, 9) },
-				{ driverId: d2, cell: cell(1, 3) },
+			driversWentOnline(tick(0), Region.parse(0), fleetSize, [
+				{ driverIndex: i1, cell: cell(9, 9) },
+				{ driverIndex: i2, cell: cell(1, 3) },
 			]),
 			ticked(2),
 		]);
@@ -303,8 +310,8 @@ describe("decideDispatch clock.ticked", () => {
 	test("offers a trip to a driver first seen moving", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			driversMoved(tick(1), Region.parse(0), [
-				{ driverId: d1, cell: cell(1, 3) },
+			driversMoved(tick(1), Region.parse(0), fleetSize, [
+				{ driverIndex: i1, cell: cell(1, 3) },
 			]),
 			ticked(2),
 		]);
@@ -324,7 +331,7 @@ describe("decideDispatch clock.ticked", () => {
 	test("rejects a duplicate request for a trip already offered", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			requestTrip(t1, 3),
 		]);
@@ -362,7 +369,7 @@ describe("decideDispatch offer replies", () => {
 	test("matches the trip when the driver accepts its offer", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 		]);
@@ -375,7 +382,7 @@ describe("decideDispatch offer replies", () => {
 	test("does not offer another trip to a driver matched to a trip", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			requestTrip(t2, 2),
@@ -388,7 +395,7 @@ describe("decideDispatch offer replies", () => {
 	test("announces the offer declined when the driver declines", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			declined(t1, d1, cell(3, 3)),
 		]);
@@ -401,8 +408,8 @@ describe("decideDispatch offer replies", () => {
 	test("offers a declined trip next tick to the nearest other driver", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
-			wentOnline(d2, cell(9, 9)),
+			wentOnline(i1, cell(3, 3)),
+			wentOnline(i2, cell(9, 9)),
 			ticked(2),
 			declined(t1, d1, cell(3, 3)),
 			ticked(3),
@@ -424,10 +431,10 @@ describe("decideDispatch offer replies", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
 			requestTrip(t2, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			declined(t1, d1, cell(3, 3)),
-			wentOnline(d2, cell(9, 9)),
+			wentOnline(i2, cell(9, 9)),
 			ticked(3),
 		]);
 
@@ -456,7 +463,7 @@ describe("decideDispatch offer expiry", () => {
 	test("expires an offer with no reply three ticks after it was made", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			ticked(3),
 			ticked(4),
@@ -471,7 +478,7 @@ describe("decideDispatch offer expiry", () => {
 	test("keeps an offer pending two ticks after it was made", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			ticked(3),
 			ticked(4),
@@ -483,8 +490,8 @@ describe("decideDispatch offer expiry", () => {
 	test("offers an expired trip next tick to the nearest other driver", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
-			wentOnline(d2, cell(9, 9)),
+			wentOnline(i1, cell(3, 3)),
+			wentOnline(i2, cell(9, 9)),
 			ticked(2),
 			ticked(5),
 			ticked(6),
@@ -507,7 +514,7 @@ describe("decideDispatch stale and invalid offer replies", () => {
 	test("ignores an accept arriving after its offer expired", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			ticked(5),
 			accepted(t1, d1),
@@ -525,7 +532,7 @@ describe("decideDispatch stale and invalid offer replies", () => {
 	test("rejects a second accept for an already matched trip", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			accepted(t1, d1),
@@ -543,7 +550,7 @@ describe("decideDispatch stale and invalid offer replies", () => {
 	test("rejects a reply from a driver never offered the trip", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			declined(t1, d2, cell(9, 9)),
 		]);
@@ -593,7 +600,7 @@ describe("decideDispatch driver arrivals", () => {
 	test("picks up a matched trip when its driver arrives at the pickup", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			ticked(4),
@@ -608,7 +615,7 @@ describe("decideDispatch driver arrivals", () => {
 	test("rejects a pickup arrival by a driver not matched to the trip", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			arrivedAtPickup(t1, d2, cell(1, 2)),
@@ -626,7 +633,7 @@ describe("decideDispatch driver arrivals", () => {
 	test("rejects a pickup arrival away from the trip's pickup cell", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			arrivedAtPickup(t1, d1, cell(2, 2)),
@@ -644,7 +651,7 @@ describe("decideDispatch driver arrivals", () => {
 	test("rejects a pickup arrival for a trip not yet matched", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			arrivedAtPickup(t1, d1, cell(1, 2)),
 		]);
@@ -661,7 +668,7 @@ describe("decideDispatch driver arrivals", () => {
 	test("does not offer another trip to a driver carrying a rider", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			arrivedAtPickup(t1, d1, cell(1, 2)),
@@ -675,7 +682,7 @@ describe("decideDispatch driver arrivals", () => {
 	test("completes a picked-up trip when its driver arrives at the dropoff", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			arrivedAtPickup(t1, d1, cell(1, 2)),
@@ -691,7 +698,7 @@ describe("decideDispatch driver arrivals", () => {
 	test("offers a queued trip to a driver whose trip completed", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			arrivedAtPickup(t1, d1, cell(1, 2)),
@@ -715,7 +722,7 @@ describe("decideDispatch driver arrivals", () => {
 	test("rejects a dropoff arrival for a trip not yet picked up", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			arrivedAtDropoff(t1, d1, cell(7, 8)),
@@ -733,7 +740,7 @@ describe("decideDispatch driver arrivals", () => {
 	test("rejects a dropoff arrival by a driver not carrying the trip", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			arrivedAtPickup(t1, d1, cell(1, 2)),
@@ -752,7 +759,7 @@ describe("decideDispatch driver arrivals", () => {
 	test("rejects a dropoff arrival away from the trip's dropoff cell", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			arrivedAtPickup(t1, d1, cell(1, 2)),
@@ -771,7 +778,7 @@ describe("decideDispatch driver arrivals", () => {
 	test("rejects a second dropoff arrival for a completed trip", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			arrivedAtPickup(t1, d1, cell(1, 2)),
@@ -799,7 +806,7 @@ describe("decideDispatch driver arrivals", () => {
 	test("ignores a pickup arrival by a driver whose offer expired", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			ticked(5),
 			accepted(t1, d1),
@@ -812,8 +819,8 @@ describe("decideDispatch driver arrivals", () => {
 	test("ignores a pickup arrival by a driver whose offer expired after the trip matched another driver", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
-			wentOnline(d2, cell(9, 9)),
+			wentOnline(i1, cell(3, 3)),
+			wentOnline(i2, cell(9, 9)),
 			ticked(2),
 			ticked(5),
 			ticked(6),
@@ -843,7 +850,7 @@ describe("decideDispatch cancel_trip", () => {
 	test("cancels a trip with a pending offer and names the offered driver", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			cancelTrip(t1),
 		]);
@@ -857,7 +864,7 @@ describe("decideDispatch cancel_trip", () => {
 	test("ignores an accept arriving after its trip was cancelled", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			cancelTrip(t1),
 			accepted(t1, d1),
@@ -869,7 +876,7 @@ describe("decideDispatch cancel_trip", () => {
 	test("cancels a matched trip and names its driver", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			ticked(3),
@@ -885,7 +892,7 @@ describe("decideDispatch cancel_trip", () => {
 	test("offers a queued trip to a driver whose matched trip was cancelled", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			requestTrip(t2, 3),
@@ -908,7 +915,7 @@ describe("decideDispatch cancel_trip", () => {
 	test("rejects cancelling a picked-up trip without announcing it", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			arrivedAtPickup(t1, d1, cell(1, 2)),
@@ -927,7 +934,7 @@ describe("decideDispatch cancel_trip", () => {
 	test("rejects cancelling a completed trip without announcing it", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			arrivedAtPickup(t1, d1, cell(1, 2)),
@@ -959,7 +966,7 @@ describe("decideDispatch cancel_trip", () => {
 	test("ignores a pickup arrival losing the race to a cancel", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 3)),
+			wentOnline(i1, cell(3, 3)),
 			ticked(2),
 			accepted(t1, d1),
 			cancelTrip(t1),
@@ -975,7 +982,7 @@ describe("decideDispatch batched matching", () => {
 
 	test("makes no offer on a tick outside the batch window", () => {
 		const { outputs } = run(
-			[requestTrip(t1, 1), wentOnline(d1, cell(3, 3)), ticked(3)],
+			[requestTrip(t1, 1), wentOnline(i1, cell(3, 3)), ticked(3)],
 			batched,
 		);
 
@@ -987,8 +994,8 @@ describe("decideDispatch batched matching", () => {
 	const contested: DispatchInput[] = [
 		requestTripAt(t1, cell(2, 0)),
 		requestTripAt(t2, cell(0, 0)),
-		wentOnline(d1, cell(1, 0)),
-		wentOnline(d2, cell(4, 0)),
+		wentOnline(i1, cell(1, 0)),
+		wentOnline(i2, cell(4, 0)),
 		ticked(2),
 	];
 
@@ -1069,7 +1076,7 @@ describe("decideDispatch batched matching", () => {
 		const { outputs } = run(
 			[
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(3, 3)),
+				wentOnline(i1, cell(3, 3)),
 				ticked(2),
 				accepted(t1, d1),
 			],
@@ -1085,7 +1092,7 @@ describe("decideDispatch batched matching", () => {
 		const { outputs } = run(
 			[
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(3, 3)),
+				wentOnline(i1, cell(3, 3)),
 				ticked(2),
 				accepted(t1, d1),
 				requestTrip(t2, 3),
@@ -1101,8 +1108,8 @@ describe("decideDispatch batched matching", () => {
 		const { outputs } = run(
 			[
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(3, 3)),
-				wentOnline(d2, cell(9, 9)),
+				wentOnline(i1, cell(3, 3)),
+				wentOnline(i2, cell(9, 9)),
 				ticked(2),
 				declined(t1, d1, cell(3, 3)),
 				ticked(3),
@@ -1127,8 +1134,8 @@ describe("decideDispatch batched matching", () => {
 		const { outputs } = run(
 			[
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(3, 3)),
-				wentOnline(d2, cell(9, 9)),
+				wentOnline(i1, cell(3, 3)),
+				wentOnline(i2, cell(9, 9)),
 				ticked(2),
 				declined(t1, d1, cell(3, 3)),
 				ticked(3),
@@ -1143,7 +1150,7 @@ describe("decideDispatch batched matching", () => {
 		const { outputs } = run(
 			[
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(3, 3)),
+				wentOnline(i1, cell(3, 3)),
 				ticked(2),
 				declined(t1, d1, cell(3, 3)),
 				ticked(4),
@@ -1160,7 +1167,7 @@ describe("decideDispatch batched matching", () => {
 			[
 				requestTripAt(t1, cell(2, 0)),
 				requestTripAt(t2, cell(6, 0)),
-				wentOnline(d1, cell(1, 0)),
+				wentOnline(i1, cell(1, 0)),
 				ticked(2),
 				declined(t1, d1, cell(1, 0)),
 				ticked(4),
@@ -1184,8 +1191,8 @@ describe("decideDispatch batched matching", () => {
 		const { outputs } = run(
 			[
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(3, 3)),
-				wentOnline(d2, cell(9, 9)),
+				wentOnline(i1, cell(3, 3)),
+				wentOnline(i2, cell(9, 9)),
 				ticked(2),
 				ticked(5),
 			],
@@ -1201,8 +1208,8 @@ describe("decideDispatch batched matching", () => {
 		const { outputs } = run(
 			[
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(3, 3)),
-				wentOnline(d2, cell(9, 9)),
+				wentOnline(i1, cell(3, 3)),
+				wentOnline(i2, cell(9, 9)),
 				ticked(2),
 				ticked(5),
 				ticked(6),
@@ -1226,7 +1233,7 @@ describe("decideDispatch batched matching", () => {
 		const { outputs } = run(
 			[
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(3, 3)),
+				wentOnline(i1, cell(3, 3)),
 				ticked(2),
 				cancelTrip(t1),
 			],
@@ -1243,7 +1250,7 @@ describe("decideDispatch batched matching", () => {
 		const { outputs } = run(
 			[
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(3, 3)),
+				wentOnline(i1, cell(3, 3)),
 				ticked(2),
 				accepted(t1, d1),
 				requestTrip(t2, 3),
@@ -1288,7 +1295,7 @@ describe.each<Matching>([
 		const { outputs } = run(
 			[
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(3, 3)),
+				wentOnline(i1, cell(3, 3)),
 				wentOffline(d1, cell(3, 3)),
 				ticked(2),
 			],
@@ -1302,10 +1309,10 @@ describe.each<Matching>([
 		const { outputs } = run(
 			[
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(3, 3)),
+				wentOnline(i1, cell(3, 3)),
 				wentOffline(d1, cell(3, 3)),
 				ticked(2),
-				wentOnline(d1, cell(3, 3)),
+				wentOnline(i1, cell(3, 3)),
 				ticked(4),
 			],
 			matching,
@@ -1335,12 +1342,12 @@ describe.each<Matching>([
 		const { outputs } = run(
 			[
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(9, 9)),
+				wentOnline(i1, cell(9, 9)),
 				ticked(2),
 				accepted(t1, d1),
-				wentOnline(d2, cell(5, 5)),
-				driversMoved(tick(2), Region.parse(0), [
-					{ driverId: d1, cell: cell(1, 3) },
+				wentOnline(i2, cell(5, 5)),
+				driversMoved(tick(2), Region.parse(0), fleetSize, [
+					{ driverIndex: i1, cell: cell(1, 3) },
 				]),
 				requestTrip(t2, 3),
 				cancelTrip(t1),
@@ -1365,7 +1372,7 @@ describe.each<Matching>([
 		const { outputs } = run(
 			[
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(3, 3)),
+				wentOnline(i1, cell(3, 3)),
 				ticked(2),
 				accepted(t1, d1),
 				wentOffline(d1, cell(3, 3)),
@@ -1383,12 +1390,12 @@ describe.each<Matching>([
 		const { outputs } = run(
 			[
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(3, 3)),
+				wentOnline(i1, cell(3, 3)),
 				ticked(2),
 				wentOffline(d1, cell(3, 3)),
 				ticked(6),
 				requestTrip(t2, 7),
-				wentOnline(d1, cell(4, 4)),
+				wentOnline(i1, cell(4, 4)),
 				ticked(8),
 			],
 			matching,
@@ -1411,8 +1418,8 @@ describe.each<Matching>([
 describe("decideDispatch ended trips", () => {
 	const completedT1: DispatchInput[] = [
 		requestTrip(t1, 1),
-		wentOnline(d1, cell(3, 3)),
-		wentOnline(d2, cell(9, 9)),
+		wentOnline(i1, cell(3, 3)),
+		wentOnline(i2, cell(9, 9)),
 		ticked(2),
 		ticked(5),
 		ticked(6),
@@ -1548,7 +1555,7 @@ describe("decideDispatch confirm_trip", () => {
 
 	const matchedT1: DispatchInput[] = [
 		requestTrip(t1, 1),
-		wentOnline(d1, cell(3, 3)),
+		wentOnline(i1, cell(3, 3)),
 		ticked(2),
 		accepted(t1, d1),
 		ticked(4),
@@ -1647,7 +1654,7 @@ describe("decideDispatch confirm_trip", () => {
 
 	const offeredT1: DispatchInput[] = [
 		requestTrip(t1, 1),
-		wentOnline(d1, cell(3, 3)),
+		wentOnline(i1, cell(3, 3)),
 		ticked(2),
 	];
 
@@ -1680,7 +1687,7 @@ describe("decideDispatch confirm_trip", () => {
 	const matchedToD2: DispatchInput[] = [
 		...offeredT1,
 		ticked(5),
-		wentOnline(d2, cell(9, 9)),
+		wentOnline(i2, cell(9, 9)),
 		ticked(6),
 		accepted(t1, d2),
 	];
@@ -1690,7 +1697,7 @@ describe("decideDispatch confirm_trip", () => {
 		["is waiting without an offer", [requestTrip(t1, 1)]],
 		[
 			"is offered to another driver",
-			[requestTrip(t1, 1), wentOnline(d2, cell(1, 1)), ticked(2)],
+			[requestTrip(t1, 1), wentOnline(i2, cell(1, 1)), ticked(2)],
 		],
 		["was cancelled", [requestTrip(t1, 1), cancelTrip(t1)]],
 		["was cancelled while matched to it", [...matchedT1, cancelTrip(t1)]],
@@ -1753,8 +1760,10 @@ describe.each<Matching>([
 	test("does not offer a trip to a driver that moved out of the region", () => {
 		const { outputs } = runInRegion([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(4, 2)),
-			driversMoved(tick(1), region0, [{ driverId: d1, cell: cell(5, 2) }]),
+			wentOnline(i1, cell(4, 2)),
+			driversMoved(tick(1), region0, fleetSize, [
+				{ driverIndex: i1, cell: cell(5, 2) },
+			]),
 			ticked(2),
 		]);
 
@@ -1766,7 +1775,7 @@ describe.each<Matching>([
 	test("does not offer a trip to a driver whose decline says it is idle outside the region", () => {
 		const { outputs } = runInRegion([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 2)),
+			wentOnline(i1, cell(3, 2)),
 			ticked(2),
 			declined(t1, d1, cell(5, 2)),
 			requestTrip(t2, 3),
@@ -1780,7 +1789,7 @@ describe.each<Matching>([
 	test("does not offer a trip to a driver whose decline says it is not idle", () => {
 		const { outputs } = runInRegion([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(3, 2)),
+			wentOnline(i1, cell(3, 2)),
 			ticked(2),
 			declined(t1, d1, null),
 			requestTrip(t2, 3),
@@ -1793,11 +1802,11 @@ describe.each<Matching>([
 	test("offers a trip to a declining driver by the cell its decline says it is idle at", () => {
 		const { outputs } = runInRegion([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(4, 9)),
+			wentOnline(i1, cell(4, 9)),
 			ticked(2),
 			declined(t1, d1, cell(1, 3)),
 			cancelTrip(t1),
-			wentOnline(d2, cell(3, 2)),
+			wentOnline(i2, cell(3, 2)),
 			requestTrip(t2, 3),
 			ticked(4),
 		]);
@@ -1823,7 +1832,7 @@ describe.each<Matching>([
 		(_case, atDropoff) => {
 			const { outputs } = runInRegion([
 				requestTrip(t1, 1),
-				wentOnline(d1, cell(4, 2)),
+				wentOnline(i1, cell(4, 2)),
 				ticked(2),
 				accepted(t1, d1),
 				arrivedAtPickup(t1, d1, cell(1, 2)),
@@ -1839,11 +1848,11 @@ describe.each<Matching>([
 	test("offers a trip to an idle driver named by a rejected arrival outside the region", () => {
 		const { outputs } = runInRegion([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(4, 2)),
+			wentOnline(i1, cell(4, 2)),
 			ticked(2),
 			accepted(t1, d1),
 			arrivedAtPickup(t1, d1, cell(1, 2)),
-			wentOnline(d2, cell(3, 2)),
+			wentOnline(i2, cell(3, 2)),
 			arrivedAtDropoff(t1, d2, cell(7, 8)),
 			requestTrip(t2, 3),
 			ticked(4),
@@ -1864,10 +1873,12 @@ describe.each<Matching>([
 	test("does not offer a trip to a driver freed outside the region", () => {
 		const { outputs } = runInRegion([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(4, 2)),
+			wentOnline(i1, cell(4, 2)),
 			ticked(2),
 			accepted(t1, d1),
-			driversMoved(tick(2), region0, [{ driverId: d1, cell: cell(5, 2) }]),
+			driversMoved(tick(2), region0, fleetSize, [
+				{ driverIndex: i1, cell: cell(5, 2) },
+			]),
 			cancelTrip(t1),
 			requestTrip(t2, 3),
 			ticked(4),
@@ -1879,11 +1890,15 @@ describe.each<Matching>([
 	test("offers a trip to a driver freed back inside the region", () => {
 		const { outputs } = runInRegion([
 			requestTrip(t1, 1),
-			wentOnline(d1, cell(4, 2)),
+			wentOnline(i1, cell(4, 2)),
 			ticked(2),
 			accepted(t1, d1),
-			driversMoved(tick(2), region0, [{ driverId: d1, cell: cell(5, 2) }]),
-			driversMoved(tick(3), region0, [{ driverId: d1, cell: cell(4, 2) }]),
+			driversMoved(tick(2), region0, fleetSize, [
+				{ driverIndex: i1, cell: cell(5, 2) },
+			]),
+			driversMoved(tick(3), region0, fleetSize, [
+				{ driverIndex: i1, cell: cell(4, 2) },
+			]),
 			cancelTrip(t1),
 			requestTrip(t2, 3),
 			ticked(4),

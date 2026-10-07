@@ -20,7 +20,7 @@ Independent processes, each owning its state, talking over NATS. Each service's 
 | Service | Owns | Does |
 | --- | --- | --- |
 | clock | tick counter | publishes `clock.ticked` every 1 s / speed |
-| driver (×2, 50 drivers each, fixed shard) | driver position, state | announces drivers going online (one `drivers.went_online` per region per up to 5,000 drivers, first in the tick, 0049, 0050), moves drivers each tick (one `drivers.moved` per region owning the moving drivers per up to 5,000 moves: an idle driver's cell before the move, a busy driver's trip's, 0050; as parallel arrays of driver IDs and coordinates, before its other events of the tick, 0045, 0047), answers offers, reports arrivals |
+| driver (×2, 50 drivers each, fixed shard) | driver position, state | announces drivers going online (one `drivers.went_online` per region per up to 5,000 drivers, first in the tick, 0049, 0050), moves drivers each tick (one `drivers.moved` per region owning the moving drivers per up to 5,000 moves: an idle driver's cell before the move, a busy driver's trip's, 0050; as parallel arrays of driver indexes and coordinates with the fleet size, before its other events of the tick, 0045, 0047, 0052), answers offers, reports arrivals |
 | rider | riders, demand generator | spawns riders (Poisson; pickups uniform or around hotspots, 0031), requests trips, cancels on lost patience |
 | dispatch (one per region, one region by default, 0050) | its region's trips (a trip's region is its pickup's) and idle drivers | queues requests, matches within its region, owns every transition of its trips |
 | persister | stream position (JetStream consumer) | writes all events to ClickHouse, at-least-once |

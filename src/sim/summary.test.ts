@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
 import {
-	DriverId,
 	driversMoved,
 	driversWentOnline,
 	type Message,
@@ -19,7 +19,10 @@ import {
 } from "./summary.ts";
 
 const grid: Grid = { width: 10, height: 10 };
-const d1 = DriverId.parse("d-1");
+// Drivers of a fleet of 10: IDs d-0 to d-9 (ADR 0052).
+const fleetSize = 10;
+const i1 = DriverIndex.parse(1);
+const d1 = driverIdAt(fleetSize, i1);
 const r1 = RiderId.parse("r-1");
 const t1 = TripId.parse("t-1");
 const t2 = TripId.parse("t-2");
@@ -66,15 +69,19 @@ function tripEvent(
 // t2 requested at 4, cancelled before any offer. t3 requested at 6, still
 // waiting at the end.
 const eventLog: Message[] = [
-	driversWentOnline(tick(0), Region.parse(0), [
-		{ driverId: d1, cell: cell(0, 0) },
+	driversWentOnline(tick(0), Region.parse(0), fleetSize, [
+		{ driverIndex: i1, cell: cell(0, 0) },
 	]),
 	requested(t1, 1),
 	tripEvent("trip.offered", t1, 1),
 	tripEvent("trip.matched", t1, 1),
-	driversMoved(tick(2), Region.parse(0), [{ driverId: d1, cell: cell(1, 0) }]),
+	driversMoved(tick(2), Region.parse(0), fleetSize, [
+		{ driverIndex: i1, cell: cell(1, 0) },
+	]),
 	tripEvent("trip.picked_up", t1, 2),
-	driversMoved(tick(3), Region.parse(0), [{ driverId: d1, cell: cell(2, 0) }]),
+	driversMoved(tick(3), Region.parse(0), fleetSize, [
+		{ driverIndex: i1, cell: cell(2, 0) },
+	]),
 	tripEvent("trip.completed", t1, 3),
 	requested(t2, 4),
 	{ type: "trip.cancelled", tick: tick(5), tripId: t2, driverId: null },

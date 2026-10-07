@@ -129,7 +129,8 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 		publish(nc, source, {
 			type: "drivers.moved",
 			tick: 3,
-			driverIds: ["d-1"],
+			fleetSize: 10,
+			driverIndexes: [1],
 			xs: [0],
 			ys: [1],
 		});
