@@ -22,6 +22,8 @@ export const waitingRiderColor = "#ff7b72";
 export const activeTripColor = "rgba(88, 166, 255, 0.35)";
 const driverRadius = 3;
 const waitingRiderSize = 5;
+let rasterCanvas: OffscreenCanvas | null = null;
+let rasterImage: ImageData | null = null;
 
 // Scales the grid uniformly to fit the canvas and centers it (letterboxed),
 // so cells stay square whatever the canvas shape.
@@ -167,6 +169,41 @@ function draw(
 		);
 	}
 
+	// Spike #272: above 20k drivers, one pixel per cell (grid-sized raster,
+	// scaled up), busy states drawn over idle; no interpolation.
+	if (view.drivers.size > 20_000) {
+		rasterCanvas ??= new OffscreenCanvas(grid.width, grid.height);
+		const raster = rasterCanvas.getContext("2d");
+		if (raster === null) throw new Error("no raster context");
+		rasterImage ??= raster.createImageData(grid.width, grid.height);
+		const pixels = new Uint32Array(rasterImage.data.buffer);
+		pixels.fill(0);
+		const rank = { idle: 1, en_route: 2, at_pickup: 3, on_trip: 4, at_dropoff: 5 };
+		const abgr = {
+			idle: 0xff9e948b,
+			en_route: 0xff41b3e3,
+			at_pickup: 0xff3e88f0,
+			on_trip: 0xff50b93f,
+			at_dropoff: 0xffffa658,
+		};
+		const ranks = new Uint8Array(grid.width * grid.height);
+		for (const driver of view.drivers.values()) {
+			const i = driver.cell.y * grid.width + driver.cell.x;
+			if (rank[driver.state] <= (ranks[i] ?? 0)) continue;
+			ranks[i] = rank[driver.state];
+			pixels[i] = abgr[driver.state];
+		}
+		raster.putImageData(rasterImage, 0, 0);
+		context.imageSmoothingEnabled = false;
+		context.drawImage(
+			rasterCanvas,
+			cityTopLeft.x,
+			cityTopLeft.y,
+			cityBottomRight.x - cityTopLeft.x,
+			cityBottomRight.y - cityTopLeft.y,
+		);
+		return;
+	}
 	for (const driver of view.drivers.values()) {
 		const position = toPixel(driverPosition(driver, view.tick, fraction));
 		context.fillStyle = driverColors[driver.state];

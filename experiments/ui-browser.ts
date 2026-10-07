@@ -24,6 +24,11 @@ page.on("pageerror", (e: Error) => console.error("pageerror", e.message));
 await page.goto(url);
 await page.waitForTimeout(warmupS * 1000);
 
+const profiling = process.env.PROFILE === "1";
+if (profiling) {
+	await cdp.send("Profiler.enable");
+	await cdp.send("Profiler.start");
+}
 const before = await metrics();
 const result = await page.evaluate(async (ms: number) => {
 	type Stats = { drawMs: number[]; applyMs: number; messages: number; bytes: number };
@@ -66,6 +71,31 @@ const result = await page.evaluate(async (ms: number) => {
 	};
 }, sampleS * 1000);
 const after = await metrics();
+if (profiling) {
+	type Node = {
+		id: number;
+		callFrame: { functionName: string; url: string; lineNumber: number };
+	};
+	const { profile } = await cdp.send("Profiler.stop");
+	const nodes = new Map<number, Node>(
+		profile.nodes.map((n: Node) => [n.id, n]),
+	);
+	const selfMs = new Map<string, number>();
+	const samples: number[] = profile.samples;
+	const deltas: number[] = profile.timeDeltas;
+	for (let i = 0; i < samples.length; i++) {
+		const node = nodes.get(samples[i] ?? -1);
+		if (node === undefined) continue;
+		const { functionName, url, lineNumber } = node.callFrame;
+		const key = `${functionName || "(anon)"} ${url.split("/").at(-1)}:${lineNumber}`;
+		selfMs.set(key, (selfMs.get(key) ?? 0) + (deltas[i] ?? 0) / 1000);
+	}
+	const top = [...selfMs]
+		.toSorted((a, b) => b[1] - a[1])
+		.slice(0, 25)
+		.map(([k, v]) => `${(v / sampleS).toFixed(1).padStart(7)} ms/s  ${k}`);
+	console.log(top.join("\n"));
+}
 const busy = (after.TaskDuration - before.TaskDuration) / sampleS;
 console.log(
 	JSON.stringify({

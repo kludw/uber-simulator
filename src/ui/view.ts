@@ -176,7 +176,7 @@ function withArrival(
 // withDriver, withWentOnline, withMoves and withoutDriver are the only places
 // drivers change, so driversPerState always matches drivers.
 function withDriver(view: View, driverId: DriverId, driver: DriverView): View {
-	const drivers = new Map(view.drivers);
+	const drivers = view.drivers as Map<DriverId, DriverView>; // spike #272: in place
 	const driversPerState = { ...view.driversPerState };
 	const previous = drivers.get(driverId);
 	if (previous !== undefined) driversPerState[previous.state]--;
@@ -190,7 +190,7 @@ function withDriver(view: View, driverId: DriverId, driver: DriverView): View {
 // (the UI joined mid-run) is idle, the most common state, until its next
 // state event.
 function withMoves(view: View, moved: DriversMoved): View {
-	const drivers = new Map(view.drivers);
+	const drivers = view.drivers as Map<DriverId, DriverView>; // spike #272: in place
 	const driversPerState = { ...view.driversPerState };
 	forEachMove(moved, (driverId, cell) => {
 		const previous = drivers.get(driverId);
@@ -208,7 +208,7 @@ function withMoves(view: View, moved: DriversMoved): View {
 // One copy of drivers per message, as for moves: at start a message carries
 // up to 5,000 drivers (ADR 0049).
 function withWentOnline(view: View, wentOnline: DriversWentOnline): View {
-	const drivers = new Map(view.drivers);
+	const drivers = view.drivers as Map<DriverId, DriverView>; // spike #272: in place
 	const driversPerState = { ...view.driversPerState };
 	forEachWentOnline(wentOnline, (driverId, cell) => {
 		const previous = drivers.get(driverId);
@@ -227,7 +227,7 @@ function withWentOnline(view: View, wentOnline: DriversWentOnline): View {
 function withoutDriver(view: View, driverId: DriverId): View {
 	const previous = view.drivers.get(driverId);
 	if (previous === undefined) return view;
-	const drivers = new Map(view.drivers);
+	const drivers = view.drivers as Map<DriverId, DriverView>; // spike #272: in place
 	const driversPerState = { ...view.driversPerState };
 	driversPerState[previous.state]--;
 	drivers.delete(driverId);
