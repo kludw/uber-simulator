@@ -214,6 +214,38 @@ const invalidInputs: [string, unknown][] = [
 		{ type: "drivers.moved", tick: 1, driverIds: ["d.1"], xs: [0], ys: [0] },
 	],
 	[
+		"moves with driver IDs not in an array",
+		{ type: "drivers.moved", tick: 1, driverIds: "d-1", xs: [0], ys: [0] },
+	],
+	[
+		"moves with coordinates not in an array",
+		{
+			type: "drivers.moved",
+			tick: 1,
+			driverIds: ["d-1"],
+			xs: { 0: 0 },
+			ys: [0],
+		},
+	],
+	[
+		"move with a numeric driver ID",
+		{ type: "drivers.moved", tick: 1, driverIds: [1], xs: [0], ys: [0] },
+	],
+	[
+		"move with an unsafe integer x",
+		{
+			type: "drivers.moved",
+			tick: 1,
+			driverIds: ["d-1"],
+			xs: [2 ** 53],
+			ys: [0],
+		},
+	],
+	[
+		"moves without ys",
+		{ type: "drivers.moved", tick: 1, driverIds: ["d-1"], xs: [0] },
+	],
+	[
 		"drivers online with fewer y than driver IDs",
 		{
 			type: "drivers.went_online",

@@ -37,20 +37,21 @@ export const DriverWentOffline = z.object({
 });
 export type DriverWentOffline = z.infer<typeof DriverWentOffline>;
 
-// drivers.moved's and drivers.went_online's arrays are checked by one refine
-// each, not a schema per element, which was most of drivers.moved's Zod time
-// (ADR 0047, 0049). Same rules as DriverId and Coordinate, so the transforms
-// only brand what passed.
-const DriverIds = z
-	.array(z.string())
-	.refine((ids) => ids.every((id) => idPattern.test(id)))
-	.transform((ids) => ids as DriverId[]);
-const Coordinates = z
-	.array(z.number())
-	.refine((coordinates) =>
+// drivers.moved's and drivers.went_online's arrays are checked in one pass
+// each, not by a schema per element: z.array runs its element schema on every
+// entry and copies the array, most of drivers.moved's Zod time (ADR 0047,
+// 0049; docs/performance.md, Dispatch moves profile). Same rules as DriverId
+// and Coordinate, so the result is branded as they would brand it.
+const DriverIds = z.custom<DriverId[]>(
+	(ids) =>
+		Array.isArray(ids) &&
+		ids.every((id) => typeof id === "string" && idPattern.test(id)),
+);
+const Coordinates = z.custom<Coordinate[]>(
+	(coordinates) =>
+		Array.isArray(coordinates) &&
 		coordinates.every((c) => Number.isSafeInteger(c) && c >= 0),
-	)
-	.transform((coordinates) => coordinates as Coordinate[]);
+);
 
 // Entry i is driver driverIds[i] at cell (xs[i], ys[i]): parallel arrays
 // decode faster than an object per driver (ADR 0047).
