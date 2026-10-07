@@ -30,8 +30,15 @@ import type {
 } from "../shared/messages.ts";
 import { driversMoved, driversWentOnline } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
-import { Region } from "../shared/regions.ts";
+import {
+	oneRegion,
+	type Region,
+	type RegionLayout,
+	regionOf,
+} from "../shared/regions.ts";
 
+// region: the trip's, its pickup's region, from the offer until the trip
+// is over; the driver's trip messages go there (ADR 0050).
 type Driver =
 	| { state: "offline"; id: DriverId; cell: Cell }
 	| { state: "idle"; id: DriverId; cell: Cell; wanderTarget: Cell | null }
@@ -40,6 +47,7 @@ type Driver =
 			id: DriverId;
 			cell: Cell;
 			tripId: TripId;
+			region: Region;
 			pickup: Cell;
 			dropoff: Cell;
 	  }
@@ -48,6 +56,7 @@ type Driver =
 			state: "at_pickup";
 			id: DriverId;
 			tripId: TripId;
+			region: Region;
 			pickup: Cell;
 			dropoff: Cell;
 			arrivedAt: Tick;
@@ -57,6 +66,7 @@ type Driver =
 			id: DriverId;
 			cell: Cell;
 			tripId: TripId;
+			region: Region;
 			dropoff: Cell;
 	  }
 	// Position is the dropoff: no separate cell.
@@ -64,6 +74,7 @@ type Driver =
 			state: "at_dropoff";
 			id: DriverId;
 			tripId: TripId;
+			region: Region;
 			dropoff: Cell;
 			arrivedAt: Tick;
 	  };
@@ -115,6 +126,7 @@ type Schedule = {
 // schedule: null when always online. picky: null when accepting all.
 export type DriverShardState = {
 	grid: Grid;
+	regions: RegionLayout;
 	drivers: Map<DriverId, Driver>;
 	schedule: Schedule | null;
 	picky: Picky | null;
@@ -136,6 +148,8 @@ export function startDriverShard(
 		tick: Tick;
 		shifts?: Shifts;
 		preferences?: Preferences;
+		// Missing = one region.
+		regions?: RegionLayout;
 	},
 	random: Random,
 ): { state: DriverShardState; outputs: DriversWentOnline[] } {
@@ -176,10 +190,17 @@ export function startDriverShard(
 		online.push({ driverId: driver.id, cell: driver.cell });
 	}
 	const picky = startPicky(config.preferences, config.driverIds, random);
+	const state: DriverShardState = {
+		grid: config.grid,
+		regions: config.regions ?? oneRegion,
+		drivers,
+		schedule,
+		picky,
+	};
 	return {
-		state: { grid: config.grid, drivers, schedule, picky },
-		outputs: inChunks(online, (chunk) =>
-			driversWentOnline(config.tick, Region.parse(0), chunk),
+		state,
+		outputs: inRegionChunks(state, online, (region, chunk) =>
+			driversWentOnline(config.tick, region, chunk),
 		),
 	};
 }
@@ -308,6 +329,7 @@ function onOffer(
 	if (offered === undefined) {
 		throw new Error(`offer for driver ${offer.driverId} outside this shard`);
 	}
+	const region = regionOf(state.regions, state.grid, offer.pickup);
 	if (
 		offered.state !== "idle" ||
 		declines(state.picky, offered, offer, random)
@@ -319,6 +341,8 @@ function onOffer(
 					type: "offer_declined",
 					tripId: offer.tripId,
 					driverId: offer.driverId,
+					region,
+					idleAt: offered.state === "idle" ? offered.cell : null,
 				},
 			],
 		};
@@ -328,6 +352,7 @@ function onOffer(
 		id: offered.id,
 		cell: offered.cell,
 		tripId: offer.tripId,
+		region,
 		pickup: offer.pickup,
 		dropoff: offer.dropoff,
 	});
@@ -338,6 +363,7 @@ function onOffer(
 				type: "offer_accepted",
 				tripId: offer.tripId,
 				driverId: offer.driverId,
+				region,
 			},
 		],
 	};
@@ -374,6 +400,7 @@ function onPickedUp(state: DriverShardState, pickedUp: TripPickedUp): Decision {
 		id: addressed.id,
 		cell: addressed.pickup,
 		tripId: addressed.tripId,
+		region: addressed.region,
 		dropoff: addressed.dropoff,
 	});
 }
@@ -465,6 +492,7 @@ function onTripStatus(state: DriverShardState, status: TripStatus): Decision {
 			id: addressed.id,
 			cell: addressed.pickup,
 			tripId: addressed.tripId,
+			region: addressed.region,
 			dropoff: addressed.dropoff,
 		});
 	}
@@ -505,6 +533,7 @@ function onTick(
 					tick: input.tick,
 					driverId: driver.id,
 					cell: changed.driver.cell,
+					region: regionOf(state.regions, state.grid, changed.driver.cell),
 				});
 			}
 			continue;
@@ -527,6 +556,7 @@ function onTick(
 					driverId: driver.id,
 					stage: "pickup",
 					cell: driver.pickup,
+					region: driver.region,
 				});
 				break;
 			case "at_dropoff":
@@ -537,6 +567,7 @@ function onTick(
 					driverId: driver.id,
 					stage: "dropoff",
 					cell: driver.dropoff,
+					region: driver.region,
 				});
 				break;
 			case "offline":
@@ -558,11 +589,11 @@ function onTick(
 	return {
 		state,
 		outputs: [
-			...inChunks(online, (chunk) =>
-				driversWentOnline(input.tick, Region.parse(0), chunk),
+			...inRegionChunks(state, online, (region, chunk) =>
+				driversWentOnline(input.tick, region, chunk),
 			),
-			...inChunks(moves, (chunk) =>
-				driversMoved(input.tick, Region.parse(0), chunk),
+			...inRegionChunks(state, moves, (region, chunk) =>
+				driversMoved(input.tick, region, chunk),
 			),
 			...outputs,
 		],
@@ -571,6 +602,27 @@ function onTick(
 
 // ADR 0045: keeps a message well under NATS's default 1 MB max_payload.
 const maxDriversPerMessage = 5000;
+
+// Chunks per region of the entries' cells, regions in index order, entry
+// order kept within each (ADR 0050). None when there are no entries.
+function inRegionChunks<Batch>(
+	state: DriverShardState,
+	entries: DriverMove[],
+	batch: (region: Region, chunk: DriverMove[]) => Batch,
+): Batch[] {
+	const byRegion = new Map<Region, DriverMove[]>();
+	for (const entry of entries) {
+		const region = regionOf(state.regions, state.grid, entry.cell);
+		const inRegion = byRegion.get(region);
+		if (inRegion === undefined) byRegion.set(region, [entry]);
+		else inRegion.push(entry);
+	}
+	return [...byRegion]
+		.toSorted(([a], [b]) => a - b)
+		.flatMap(([region, inRegion]) =>
+			inChunks(inRegion, (chunk) => batch(region, chunk)),
+		);
+}
 
 // None when there are no entries.
 function inChunks<Entry, Batch>(
@@ -658,11 +710,13 @@ function driveToPickup(
 		driverId: driver.id,
 		tripId: driver.tripId,
 		cell,
+		region: driver.region,
 	});
 	return {
 		state: "at_pickup",
 		id: driver.id,
 		tripId: driver.tripId,
+		region: driver.region,
 		pickup: driver.pickup,
 		dropoff: driver.dropoff,
 		arrivedAt: tick,
@@ -689,11 +743,13 @@ function driveToDropoff(
 		driverId: driver.id,
 		tripId: driver.tripId,
 		cell,
+		region: driver.region,
 	});
 	return {
 		state: "at_dropoff",
 		id: driver.id,
 		tripId: driver.tripId,
+		region: driver.region,
 		dropoff: driver.dropoff,
 		arrivedAt: tick,
 	};

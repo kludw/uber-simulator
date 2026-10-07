@@ -91,10 +91,10 @@ describe.skipIf(!natsUrl || !config)("bun run replay", () => {
 			exitCode: 0,
 			replayed: [
 				[`replay.${runId}.sim.events.clock.ticked`, run[0]],
-				[`replay.${runId}.sim.events.drivers.moved`, run[1]],
+				[`replay.${runId}.sim.events.drivers.moved.region-0`, run[1]],
 				[`replay.${runId}.sim.events.trip.requested`, run[2]],
 				[`replay.${runId}.sim.events.clock.ticked`, run[3]],
-				[`replay.${runId}.sim.events.drivers.moved`, run[4]],
+				[`replay.${runId}.sim.events.drivers.moved.region-0`, run[4]],
 				[`replay.${runId}.sim.events.clock.ticked`, run[5]],
 			],
 			live: [],
