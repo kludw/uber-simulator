@@ -3,6 +3,7 @@
 import { parseArgs } from "node:util";
 import * as z from "zod";
 import { specGrid } from "../shared/grid.ts";
+import { RegionLayout } from "../shared/regions.ts";
 import type { Result } from "../shared/result.ts";
 import type { RunConfig } from "../sim/run.ts";
 
@@ -33,11 +34,17 @@ const Args = z
 			.transform(Number)
 			.pipe(z.number().positive())
 			.optional(),
+		regions: RegionLayout,
 	})
 	.refine((args) => args.drivers % args.shards === 0, {
 		error: "--drivers must split evenly over --shards",
 		path: ["drivers"],
-	});
+	})
+	.refine(
+		({ regions }) =>
+			regions.columns <= specGrid.width && regions.rows <= specGrid.height,
+		{ error: "more regions than grid cells across", path: ["regions"] },
+	);
 
 export type BenchArgs = {
 	config: RunConfig;
@@ -60,6 +67,8 @@ export function parseBenchArgs(argv: string[]): Result<BenchArgs, InvalidArgs> {
 				shards: { type: "string", default: "2" },
 				// No limit when unset.
 				"max-minutes": { type: "string" },
+				// One dispatch instance (ADR 0050).
+				regions: { type: "string", default: "1x1" },
 			},
 			strict: true,
 		}).values;
@@ -98,6 +107,7 @@ export function parseBenchArgs(argv: string[]): Result<BenchArgs, InvalidArgs> {
 						: { type: "greedy" },
 				demand: { type: "uniform" },
 				shifts: { type: "always_online" },
+				regions: args.regions,
 			},
 			maxMinutes: args["max-minutes"],
 		},

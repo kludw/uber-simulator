@@ -24,6 +24,7 @@ import {
 	Tick,
 } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
+import type { RegionLayout } from "../shared/regions.ts";
 
 // What every service of one simulation must agree on, whether they share a
 // process (src/sim/run.ts) or not (src/*/main.ts).
@@ -40,6 +41,9 @@ export type SimConfig = {
 	shifts?: Shifts | undefined;
 	// Driver shards' offer preferences (ADR 0035); accept all when unset.
 	preferences?: Preferences | undefined;
+	// Region layout, one dispatch instance per region (ADR 0050); one region
+	// when unset.
+	regions?: RegionLayout | undefined;
 };
 
 export type Rejected = InputRejected<Message, string>;

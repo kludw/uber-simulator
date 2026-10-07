@@ -25,6 +25,7 @@ describe("parseBenchArgs", () => {
 					matching: { type: "greedy" },
 					demand: { type: "uniform" },
 					shifts: { type: "always_online" },
+					regions: { columns: 1, rows: 1 },
 				},
 				maxMinutes: undefined,
 			},
@@ -59,6 +60,25 @@ describe("parseBenchArgs", () => {
 			parseBenchArgs(["--drivers", "1001", "--shards", "2"]),
 		).toMatchObject({ ok: false, error: { type: "invalid_args" } });
 	});
+
+	// ADR 0050: one dispatch instance per region.
+	test("--regions splits dispatch into columns x rows regions", () => {
+		expect(parseBenchArgs(["--regions", "2x1"])).toMatchObject({
+			ok: true,
+			value: { config: { regions: { columns: 2, rows: 1 } } },
+		});
+	});
+
+	// The spec grid is 500 cells wide and high.
+	test.each([["0x1"], ["501x1"], ["1x501"]])(
+		"a region layout %p is invalid",
+		(layout) => {
+			expect(parseBenchArgs(["--regions", layout])).toMatchObject({
+				ok: false,
+				error: { type: "invalid_args" },
+			});
+		},
+	);
 
 	test("the time limit may be a fraction of a minute", () => {
 		expect(parseBenchArgs(["--max-minutes", "0.05"])).toMatchObject({
