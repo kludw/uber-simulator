@@ -13,6 +13,12 @@ import {
 	parseMessage,
 } from "../src/shared/messages.ts";
 import { createRandom } from "../src/shared/random.ts";
+import * as z from "zod";
+import {
+	nearestIdle,
+	placeDriver,
+	startIdleDrivers,
+} from "../src/dispatch/idle-drivers.ts";
 
 const drivers = Number(process.argv[2] ?? 400_000);
 const ticks = Number(process.argv[3] ?? 30);
@@ -60,8 +66,10 @@ for (let shard = 0; shard < shards; shard++) {
 }
 // Payloads per tick, as received.
 const payloads: string[][] = [];
+const indexedByTick: string[][] = [];
 for (let tick = 1; tick <= ticks; tick++) {
 	const tickPayloads: string[] = [];
+	const tickIndexed: string[] = [];
 	for (let shard = 0; shard < shards; shard++) {
 		const moves = [];
 		for (let i = shard * perShard; i < (shard + 1) * perShard; i++) {
@@ -74,9 +82,60 @@ for (let tick = 1; tick <= ticks; tick++) {
 		for (const chunk of chunksOf(moves)) {
 			tickPayloads.push(JSON.stringify(driversMoved(tick as never, chunk)));
 		}
+		// Option shape: each driver's dense index in its shard instead of its ID.
+		const indexes = moves.map((_, i) => i);
+		for (let i = 0; i < moves.length; i += perChunk) {
+			const chunk = moves.slice(i, i + perChunk);
+			tickIndexed.push(
+				JSON.stringify({
+					type: "drivers.moved",
+					tick,
+					shard,
+					drivers: indexes.slice(i, i + perChunk),
+					xs: chunk.map((move) => move.cell.x),
+					ys: chunk.map((move) => move.cell.y),
+				}),
+			);
+		}
 	}
 	payloads.push(tickPayloads);
+	indexedByTick.push(tickIndexed);
 }
+
+// Option schemas: each array checked in one pass by z.custom, no schema run
+// per element (z.array runs its element schema per entry and copies).
+const idPattern = /^[A-Za-z0-9_-]+$/;
+const isCoordinate = (c: unknown) =>
+	typeof c === "number" && Number.isSafeInteger(c) && c >= 0;
+const onePassIds = z.custom<DriverId[]>(
+	(ids) =>
+		Array.isArray(ids) &&
+		ids.every((id) => typeof id === "string" && idPattern.test(id)),
+);
+const onePassCoordinates = z.custom<Coordinate[]>(
+	(cs) => Array.isArray(cs) && cs.every(isCoordinate),
+);
+const sameLength = (m: { xs: unknown[]; ys: unknown[] }, n: number) =>
+	m.xs.length === n && m.ys.length === n;
+const OnePassMoved = z
+	.object({
+		type: z.literal("drivers.moved"),
+		tick: z.int().nonnegative(),
+		driverIds: onePassIds,
+		xs: onePassCoordinates,
+		ys: onePassCoordinates,
+	})
+	.refine((m) => sameLength(m, m.driverIds.length));
+const IndexedMoved = z
+	.object({
+		type: z.literal("drivers.moved"),
+		tick: z.int().nonnegative(),
+		shard: z.int().nonnegative(),
+		drivers: onePassCoordinates,
+		xs: onePassCoordinates,
+		ys: onePassCoordinates,
+	})
+	.refine((m) => sameLength(m, m.drivers.length));
 
 const results = new Map<string, number[]>();
 function time(name: string, run: () => void): void {
@@ -136,6 +195,21 @@ for (const tickPayloads of payloads) {
 			if (!DriversMoved.safeParse(json).success) throw new Error("bad");
 		}
 	});
+	time("decode option: Zod, one pass per array (z.custom)", () => {
+		for (const json of parsedJson) {
+			if (!OnePassMoved.safeParse(json).success) throw new Error("bad");
+		}
+	});
+	const indexedPayloads = indexedByTick[payloads.indexOf(tickPayloads)] ?? [];
+	let indexedJson: unknown[] = [];
+	time("decode option: indexes not IDs, JSON.parse", () => {
+		indexedJson = indexedPayloads.map((payload) => JSON.parse(payload));
+	});
+	time("decode option: indexes not IDs, Zod one pass", () => {
+		for (const json of indexedJson) {
+			if (!IndexedMoved.safeParse(json).success) throw new Error("bad");
+		}
+	});
 	time("apply: decideDispatch (now)", () => {
 		for (const message of messages) {
 			state = decideDispatch(state, message, random).state;
@@ -192,6 +266,43 @@ console.log(
 console.log("median ms per tick (first tick dropped as warm-up):");
 for (const [name, values] of results) {
 	console.log(`  ${name.padEnd(58)} ${median(values.slice(1)).toFixed(1).padStart(8)}`);
+}
+
+// Option: smaller grid buckets (ADR 0036 tuned 16 cells at 50k). Real
+// placeDriver and nearestIdle; every driver idle (live, the busy ones are
+// out of the buckets); one nearest search per trip requested per tick at the
+// spec ratio (drivers / 600), random pickups, nothing excluded.
+const searchesPerTick = Math.round(drivers / 600);
+const noneExcluded = new Set<DriverId>();
+for (const cellsPerBucket of [16, 8, 4]) {
+	const idle = startIdleDrivers(grid, { cellsPerBucket, linearScanBelow: 64 });
+	const placeMs: number[] = [];
+	const searchMs: number[] = [];
+	for (const tickPayloads of payloads) {
+		const messages = tickPayloads.map((payload) => {
+			const parsed = parseMessage(JSON.parse(payload));
+			if (!parsed.ok || parsed.value.type !== "drivers.moved") throw new Error("bad");
+			return parsed.value;
+		});
+		const start = performance.now();
+		for (const message of messages) {
+			forEachMove(message, (driverId, cell) => placeDriver(idle, driverId, cell));
+		}
+		placeMs.push(performance.now() - start);
+		const pickups = Array.from({ length: searchesPerTick }, () =>
+			cellAt(
+				random.int(0, grid.width - 1) as Coordinate,
+				random.int(0, grid.height - 1) as Coordinate,
+			),
+		);
+		const searchStart = performance.now();
+		for (const pickup of pickups) nearestIdle(idle, pickup, noneExcluded);
+		searchMs.push(performance.now() - searchStart);
+	}
+	// The first tick places every driver (new records): dropped.
+	console.log(
+		`  buckets of ${cellsPerBucket} cells: placeDriver ${median(placeMs.slice(1)).toFixed(1)} ms per tick, ${searchesPerTick} nearest searches ${median(searchMs.slice(1)).toFixed(1)} ms per tick`,
+	);
 }
 
 // Option: decode on a worker. The worker JSON.parses and Zod-parses a tick's

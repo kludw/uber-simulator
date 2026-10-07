@@ -128,6 +128,38 @@ for (const [part, count] of [...parts].sort((a, b) => a[0].localeCompare(b[0])))
 	}
 }
 
+// Grouped as in docs/performance.md, ms per tick = share x the run's timed
+// decode + handle ms per tick (--ms <n>, from scratch/dispatch-timing.ts).
+const msFlag = flags.indexOf("--ms");
+if (msFlag !== -1) {
+	const timedMs = Number(flags[msFlag + 1]);
+	const groupOf = (part: string) => {
+		if (part.includes("JSON.parse")) return "decode: JSON.parse";
+		if (part.includes("Zod, internals")) return "decode: Zod per element";
+		if (part.includes("refine")) return "decode: ID regex refine";
+		if (part.includes("payload")) return "decode: payload to string";
+		if (part.includes("placeDriver")) return "apply: placeDriver self";
+		if (part.startsWith("moves:") && part.includes("Bucket")) return "apply: bucket swaps";
+		if (part.startsWith("moves:")) return "apply: loop + cellAt";
+		if (part.includes("nearest")) return "step: nearest search";
+		if (part.startsWith("tick:")) return "step: rest";
+		if (part === "publish") return "publish";
+		if (part === "outside receive") return undefined;
+		return "other handlers, bus";
+	};
+	const groups = new Map<string, number>();
+	for (const [part, count] of parts) {
+		const group = groupOf(part);
+		if (group !== undefined) groups.set(group, (groups.get(group) ?? 0) + count);
+	}
+	console.log(`  groups (ms per sample ${(timedMs / (inReceive / 600)).toFixed(3)}):`);
+	for (const [group, count] of [...groups].sort((a, b) => a[0].localeCompare(b[0]))) {
+		console.log(
+			`    ${group.padEnd(28)} ${((100 * count) / inReceive).toFixed(1).padStart(5)}% ${((timedMs * count) / inReceive).toFixed(1).padStart(7)} ms`,
+		);
+	}
+}
+
 // Hot lines (positionTicks are self ticks per source line) in dispatch's own
 // files and the decode path.
 const lines = new Map<string, number>();
