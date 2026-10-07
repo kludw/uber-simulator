@@ -7,6 +7,7 @@ import {
 	type EventRow,
 	migrate,
 } from "../persistence/clickhouse.ts";
+import { Region } from "../shared/regions.ts";
 import { parseClickHouseConfig } from "../sim/config.ts";
 import { type EventSource, startPersister } from "./persister.ts";
 
@@ -133,7 +134,12 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 			ys: [1],
 		});
 		publish(nc, source, "not json", "run-a");
-		publish(nc, source, { type: "cancel_trip", tripId: "t-1" }, "run-a");
+		publish(
+			nc,
+			source,
+			{ type: "cancel_trip", tripId: "t-1", region: Region.parse(0) },
+			"run-a",
+		);
 		await drained(nc, source);
 		persister.stop();
 		await persister.stopped;

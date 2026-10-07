@@ -10,6 +10,7 @@ import {
 	TripId,
 } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
+import { Region } from "../shared/regions.ts";
 import {
 	type DispatchInput,
 	type DispatchState,
@@ -44,6 +45,7 @@ function requestTrip(tripId: TripId, at: number): RequestTrip {
 		riderId: r1,
 		pickup: cell(1, 2),
 		dropoff: cell(7, 8),
+		region: Region.parse(0),
 	};
 }
 
@@ -52,11 +54,17 @@ function requestTripAt(tripId: TripId, pickup: Cell): DispatchInput {
 }
 
 function wentOnline(driverId: DriverId, at: Cell): DispatchInput {
-	return driversWentOnline(tick(0), [{ driverId, cell: at }]);
+	return driversWentOnline(tick(0), Region.parse(0), [{ driverId, cell: at }]);
 }
 
 function wentOffline(driverId: DriverId, at: Cell): DispatchInput {
-	return { type: "driver.went_offline", tick: tick(0), driverId, cell: at };
+	return {
+		type: "driver.went_offline",
+		tick: tick(0),
+		driverId,
+		cell: at,
+		region: Region.parse(0),
+	};
 }
 
 function ticked(n: number): DispatchInput {
@@ -249,7 +257,7 @@ describe("decideDispatch clock.ticked", () => {
 			requestTrip(t1, 1),
 			wentOnline(d1, cell(9, 9)),
 			wentOnline(d2, cell(5, 5)),
-			driversMoved(tick(1), [
+			driversMoved(tick(1), Region.parse(0), [
 				{ driverId: d2, cell: cell(5, 6) },
 				{ driverId: d1, cell: cell(1, 3) },
 			]),
@@ -271,7 +279,7 @@ describe("decideDispatch clock.ticked", () => {
 	test("offers to the nearest of the drivers one message announces online", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			driversWentOnline(tick(0), [
+			driversWentOnline(tick(0), Region.parse(0), [
 				{ driverId: d1, cell: cell(9, 9) },
 				{ driverId: d2, cell: cell(1, 3) },
 			]),
@@ -295,7 +303,9 @@ describe("decideDispatch clock.ticked", () => {
 	test("offers a trip to a driver first seen moving", () => {
 		const { outputs } = run([
 			requestTrip(t1, 1),
-			driversMoved(tick(1), [{ driverId: d1, cell: cell(1, 3) }]),
+			driversMoved(tick(1), Region.parse(0), [
+				{ driverId: d1, cell: cell(1, 3) },
+			]),
 			ticked(2),
 		]);
 
@@ -330,11 +340,17 @@ describe("decideDispatch clock.ticked", () => {
 });
 
 function accepted(tripId: TripId, driverId: DriverId): DispatchInput {
-	return { type: "offer_accepted", tripId, driverId };
+	return { type: "offer_accepted", tripId, driverId, region: Region.parse(0) };
 }
 
 function declined(tripId: TripId, driverId: DriverId): DispatchInput {
-	return { type: "offer_declined", tripId, driverId };
+	return {
+		type: "offer_declined",
+		tripId,
+		driverId,
+		region: Region.parse(0),
+		idleAt: null,
+	};
 }
 
 describe("decideDispatch offer replies", () => {
@@ -549,6 +565,7 @@ function arrivedAtPickup(
 		driverId,
 		tripId,
 		cell: at,
+		region: Region.parse(0),
 	};
 }
 
@@ -563,6 +580,7 @@ function arrivedAtDropoff(
 		driverId,
 		tripId,
 		cell: at,
+		region: Region.parse(0),
 	};
 }
 
@@ -803,7 +821,7 @@ describe("decideDispatch driver arrivals", () => {
 });
 
 function cancelTrip(tripId: TripId): DispatchInput {
-	return { type: "cancel_trip", tripId };
+	return { type: "cancel_trip", tripId, region: Region.parse(0) };
 }
 
 describe("decideDispatch cancel_trip", () => {
@@ -1289,7 +1307,9 @@ describe.each<Matching>([
 				ticked(2),
 				accepted(t1, d1),
 				wentOnline(d2, cell(5, 5)),
-				driversMoved(tick(2), [{ driverId: d1, cell: cell(1, 3) }]),
+				driversMoved(tick(2), Region.parse(0), [
+					{ driverId: d1, cell: cell(1, 3) },
+				]),
 				requestTrip(t2, 3),
 				cancelTrip(t1),
 				ticked(4),
@@ -1467,7 +1487,14 @@ function confirmTrip(
 	stage: "pickup" | "dropoff",
 	at: Cell,
 ): DispatchInput {
-	return { type: "confirm_trip", tripId, driverId, stage, cell: at };
+	return {
+		type: "confirm_trip",
+		tripId,
+		driverId,
+		stage,
+		cell: at,
+		region: Region.parse(0),
+	};
 }
 
 function tripStatus(

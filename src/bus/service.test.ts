@@ -15,6 +15,7 @@ import {
 	type TripPickedUp,
 } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
+import { Region } from "../shared/regions.ts";
 import { createInMemoryBus } from "./in-memory.ts";
 import { startService } from "./service.ts";
 
@@ -32,7 +33,11 @@ function ticked(n: number): ClockTicked {
 }
 
 function cancelTrip(id: string): CancelTrip {
-	return { type: "cancel_trip", tripId: TripId.parse(id) };
+	return {
+		type: "cancel_trip",
+		tripId: TripId.parse(id),
+		region: Region.parse(0),
+	};
 }
 
 const rejectedTick: InputRejected<Message, string> = {
@@ -77,7 +82,9 @@ describe("startService", () => {
 		bus.drain();
 
 		expect(published).toEqual([
-			driversWentOnline(Tick.parse(0), [{ driverId: d1, cell: origin }]),
+			driversWentOnline(Tick.parse(0), Region.parse(0), [
+				{ driverId: d1, cell: origin },
+			]),
 		]);
 	});
 
@@ -215,10 +222,17 @@ describe("startService", () => {
 
 		expect({ published, logged }).toEqual({
 			published: [
-				driversWentOnline(Tick.parse(0), [{ driverId: d1, cell: origin }]),
+				driversWentOnline(Tick.parse(0), Region.parse(0), [
+					{ driverId: d1, cell: origin },
+				]),
 				pickedUp,
 				offer,
-				{ type: "offer_accepted", tripId: t1, driverId: d1 },
+				{
+					type: "offer_accepted",
+					tripId: t1,
+					driverId: d1,
+					region: Region.parse(0),
+				},
 			],
 			logged: [
 				{

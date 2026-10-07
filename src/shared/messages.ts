@@ -1,5 +1,6 @@
 import * as z from "zod";
 import { Cell, type Coordinate, cellAt } from "./grid.ts";
+import { Region } from "./regions.ts";
 import type { Result } from "./result.ts";
 
 // IDs are valid NATS subject tokens (sim.offers.<driverId>, ADR 0028).
@@ -23,6 +24,10 @@ export type RiderId = z.infer<typeof RiderId>;
 export const RunId = idToken.brand<"RunId">();
 export type RunId = z.infer<typeof RunId>;
 
+// The region owning a message dispatch takes (ADR 0050). Absent in runs
+// stored before regions: region 0, the one region they had.
+const OwningRegion = Region.default(Region.parse(0));
+
 export const ClockTicked = z.object({
 	type: z.literal("clock.ticked"),
 	tick: Tick,
@@ -34,6 +39,7 @@ export const DriverWentOffline = z.object({
 	tick: Tick,
 	driverId: DriverId,
 	cell: Cell,
+	region: OwningRegion,
 });
 export type DriverWentOffline = z.infer<typeof DriverWentOffline>;
 
@@ -60,6 +66,7 @@ function driverCells<Type extends string>(type: Type) {
 		.object({
 			type: z.literal(type),
 			tick: Tick,
+			region: OwningRegion,
 			driverIds: DriverIds,
 			xs: Coordinates,
 			ys: Coordinates,
@@ -86,15 +93,20 @@ export const DriversWentOnline = driverCells("drivers.went_online");
 export type DriversWentOnline = z.infer<typeof DriversWentOnline>;
 export type DriverOnline = { driverId: DriverId; cell: Cell };
 
-export function driversMoved(tick: Tick, moves: DriverMove[]): DriversMoved {
-	return { type: "drivers.moved", tick, ...toArrays(moves) };
+export function driversMoved(
+	tick: Tick,
+	region: Region,
+	moves: DriverMove[],
+): DriversMoved {
+	return { type: "drivers.moved", tick, region, ...toArrays(moves) };
 }
 
 export function driversWentOnline(
 	tick: Tick,
+	region: Region,
 	drivers: DriverOnline[],
 ): DriversWentOnline {
-	return { type: "drivers.went_online", tick, ...toArrays(drivers) };
+	return { type: "drivers.went_online", tick, region, ...toArrays(drivers) };
 }
 
 function toArrays(entries: { driverId: DriverId; cell: Cell }[]): {
@@ -150,6 +162,7 @@ export const DriverArrivedAtPickup = z.object({
 	driverId: DriverId,
 	tripId: TripId,
 	cell: Cell,
+	region: OwningRegion,
 });
 export type DriverArrivedAtPickup = z.infer<typeof DriverArrivedAtPickup>;
 
@@ -167,6 +180,7 @@ export const DriverArrivedAtDropoff = z.object({
 	driverId: DriverId,
 	tripId: TripId,
 	cell: Cell,
+	region: OwningRegion,
 });
 export type DriverArrivedAtDropoff = z.infer<typeof DriverArrivedAtDropoff>;
 
@@ -241,13 +255,18 @@ export const OfferAccepted = z.object({
 	type: z.literal("offer_accepted"),
 	tripId: TripId,
 	driverId: DriverId,
+	region: OwningRegion,
 });
 export type OfferAccepted = z.infer<typeof OfferAccepted>;
 
+// idleAt: the driver's cell if it is idle, else null (offline, or on a trip),
+// so dispatch can correct or drop its view of the driver (ADR 0050).
 export const OfferDeclined = z.object({
 	type: z.literal("offer_declined"),
 	tripId: TripId,
 	driverId: DriverId,
+	region: OwningRegion,
+	idleAt: Cell.nullable(),
 });
 export type OfferDeclined = z.infer<typeof OfferDeclined>;
 
@@ -259,6 +278,7 @@ export const RequestTrip = z.object({
 	riderId: RiderId,
 	pickup: Cell,
 	dropoff: Cell,
+	region: OwningRegion,
 });
 export type RequestTrip = z.infer<typeof RequestTrip>;
 
@@ -279,6 +299,7 @@ export type RequestTripRejected = z.infer<typeof RequestTripRejected>;
 export const CancelTrip = z.object({
 	type: z.literal("cancel_trip"),
 	tripId: TripId,
+	region: OwningRegion,
 });
 export type CancelTrip = z.infer<typeof CancelTrip>;
 
@@ -311,6 +332,7 @@ export const ConfirmTrip = z.object({
 	driverId: DriverId,
 	stage: Stage,
 	cell: Cell,
+	region: OwningRegion,
 });
 export type ConfirmTrip = z.infer<typeof ConfirmTrip>;
 

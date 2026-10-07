@@ -9,6 +9,7 @@ import {
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
+import { Region } from "../shared/regions.ts";
 import {
 	compareSummaries,
 	createSummary,
@@ -65,13 +66,15 @@ function tripEvent(
 // t2 requested at 4, cancelled before any offer. t3 requested at 6, still
 // waiting at the end.
 const eventLog: Message[] = [
-	driversWentOnline(tick(0), [{ driverId: d1, cell: cell(0, 0) }]),
+	driversWentOnline(tick(0), Region.parse(0), [
+		{ driverId: d1, cell: cell(0, 0) },
+	]),
 	requested(t1, 1),
 	tripEvent("trip.offered", t1, 1),
 	tripEvent("trip.matched", t1, 1),
-	driversMoved(tick(2), [{ driverId: d1, cell: cell(1, 0) }]),
+	driversMoved(tick(2), Region.parse(0), [{ driverId: d1, cell: cell(1, 0) }]),
 	tripEvent("trip.picked_up", t1, 2),
-	driversMoved(tick(3), [{ driverId: d1, cell: cell(2, 0) }]),
+	driversMoved(tick(3), Region.parse(0), [{ driverId: d1, cell: cell(2, 0) }]),
 	tripEvent("trip.completed", t1, 3),
 	requested(t2, 4),
 	{ type: "trip.cancelled", tick: tick(5), tripId: t2, driverId: null },

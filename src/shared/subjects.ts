@@ -1,6 +1,7 @@
 // NATS subject names, in one place for the services, the persister, replay,
 // and the browser UI. Pure, no NATS imports, so the UI bundle can use it.
 import type { Message, MessageType, RunId, SimEvent } from "./messages.ts";
+import type { Region } from "./regions.ts";
 
 const simEventsPrefix = "sim.events";
 
@@ -8,18 +9,49 @@ const simEventsPrefix = "sim.events";
 export const simEventSubjects = `${simEventsPrefix}.>`;
 
 // Subject scheme (ADR 0028): subjects serve wildcard taps (sim.events.>),
-// readability, and each service's subscriptions (ADR 0042).
+// readability, and each service's subscriptions (ADR 0042). Messages
+// dispatch takes end in their region (ADR 0050), so each dispatch instance
+// subscribes to its own.
 export function subjectFor(message: Message): string {
 	if (message.type === "offer") return `sim.offers.${message.driverId}`;
-	return `${kindPrefix(message.type)}.${message.type}`;
+	const subject = `${kindPrefix(message.type)}.${message.type}`;
+	if (!("region" in message)) return subject;
+	return `${subject}.${regionToken(message.region)}`;
 }
 
 // What a service subscribes to for one message type it takes (ADR 0042):
-// every subject that type goes on, so offers to any driver.
-export function subscriptionSubject(type: MessageType): string {
+// every subject that type goes on, so offers to any driver, and every
+// region's messages unless the subscriber takes one region (ADR 0050).
+export function subscriptionSubject(
+	type: MessageType,
+	region?: Region,
+): string {
 	if (type === "offer") return "sim.offers.*";
-	return `${kindPrefix(type)}.${type}`;
+	const subject = `${kindPrefix(type)}.${type}`;
+	if (!regionedTypes.has(type)) return subject;
+	return `${subject}.${region === undefined ? "*" : regionToken(region)}`;
 }
+
+function regionToken(region: Region): string {
+	return `region-${region}`;
+}
+
+// The types carrying a region (ADR 0050): what dispatch takes, except
+// clock.ticked.
+const regionedTypes: ReadonlySet<MessageType> = new Set<
+	Extract<Message, { region: Region }>["type"]
+>([
+	"request_trip",
+	"cancel_trip",
+	"offer_accepted",
+	"offer_declined",
+	"driver.arrived_at_pickup",
+	"driver.arrived_at_dropoff",
+	"confirm_trip",
+	"drivers.went_online",
+	"driver.went_offline",
+	"drivers.moved",
+]);
 
 function kindPrefix(type: Exclude<MessageType, "offer">): string {
 	switch (type) {
