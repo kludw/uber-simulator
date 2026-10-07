@@ -29,6 +29,14 @@ on:
         description: Minutes after the last tick for the persister to drain
         type: number
         default: 5
+      solver:
+        description: "#240 experiment: batched solver, dense or lazy"
+        type: string
+        default: dense
+      dispatch_profile:
+        description: "#240 experiment: CPU-profile each dispatch process"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -88,6 +96,9 @@ jobs:
       REGIONS: ${{ matrix.run.regions }}
       TICKS: ${{ inputs.ticks }}
       DRAIN_MINUTES: ${{ inputs.drain_minutes }}
+      BATCH_SOLVER: ${{ inputs.solver }}
+      BATCH_STATS: "1"
+      DISPATCH_PROFILE: ${{ inputs.dispatch_profile }}
     steps:
       - uses: actions/checkout@v5
       # JetStream and the monitoring port (8222) the load test reads: run with
@@ -106,8 +117,8 @@ jobs:
       - run: bun run db:migrate
       - name: Load test
         run: |
-          mkdir -p out
-          { echo "runner: $(nproc) cpus, $(free -m | awk '/Mem:/ {print $2}') MiB"; echo "load average: $(cut -d' ' -f1-3 /proc/loadavg)"; } > out/machine.txt
+          mkdir -p out/profiles
+          { echo "cpu model: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)"; echo "runner: $(nproc) cpus, $(free -m | awk '/Mem:/ {print $2}') MiB"; echo "load average: $(cut -d' ' -f1-3 /proc/loadavg)"; } > out/machine.txt
           # Ticks run at 1 s each; the cap allows startup, the drain bound,
           # and 5 min slack, and kills a run that hangs.
           cap=$(awk "BEGIN { print int($TICKS / 60 + $DRAIN_MINUTES + 5) }")

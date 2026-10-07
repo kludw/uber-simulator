@@ -41,6 +41,8 @@ import {
 import {
 	type IdleDriver,
 	type IdleDrivers,
+	idleCell,
+	idleCount,
 	idleDriversById,
 	markBusy,
 	markFree,
@@ -49,6 +51,7 @@ import {
 	removeDriver,
 	startIdleDrivers,
 } from "./idle-drivers.ts";
+import { lazyMinCostMatching } from "./lazy-matching.ts";
 import { minCostMatching } from "./matching.ts";
 import {
 	type ArrivalRejected,
@@ -232,11 +235,66 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 		case "batched":
 			if (queued.length === 0) break;
 			if (ticked.tick % state.matching.windowTicks !== 0) break;
-			for (const { trip, driverId } of batchedPairs(
-				queued,
-				idleDriversById(state.drivers),
-			)) {
-				offer(trip, driverId);
+			{
+				// #240 experiment, not merged: solver choice and per-batch stats.
+				const started = performance.now();
+				const idleTotal = idleCount(state.drivers);
+				const lazy =
+					process.env.BATCH_SOLVER === "lazy" && queued.length <= idleTotal;
+				const pairs = lazy
+					? lazyMinCostMatching(
+							queued,
+							state.drivers,
+							state.grid.width + state.grid.height - 2,
+						).map(({ row, driverId }) => ({
+							trip: queued[row] as QueuedTrip,
+							driverId,
+						}))
+					: batchedPairs(queued, idleDriversById(state.drivers));
+				if (
+					process.env.BATCH_CHECK !== undefined &&
+					queued.length <= idleTotal
+				) {
+					// Both solvers on the same input: same pair count and distance.
+					const sum = (list: { trip: QueuedTrip; driverId: DriverId }[]) =>
+						list.reduce((total, { trip, driverId }) => {
+							const cell = idleCell(state.drivers, driverId);
+							return total + distanceToCoordinates(trip.pickup, cell.x, cell.y);
+						}, 0);
+					const dense = batchedPairs(queued, idleDriversById(state.drivers));
+					const other = lazyMinCostMatching(
+						queued,
+						state.drivers,
+						state.grid.width + state.grid.height - 2,
+					).map(({ row, driverId }) => ({
+						trip: queued[row] as QueuedTrip,
+						driverId,
+					}));
+					if (dense.length !== other.length || sum(dense) !== sum(other)) {
+						throw new Error(
+							`mismatch tick ${ticked.tick}: dense ${dense.length}/${sum(dense)} lazy ${other.length}/${sum(other)}`,
+						);
+					}
+					console.error(
+						`check tick=${ticked.tick} ok ${dense.length}/${sum(dense)}`,
+					);
+				}
+				if (process.env.BATCH_STATS !== undefined) {
+					const total = pairs.reduce(
+						(sum, { trip, driverId }) =>
+							sum +
+							distanceToCoordinates(
+								trip.pickup,
+								idleCell(state.drivers, driverId).x,
+								idleCell(state.drivers, driverId).y,
+							),
+						0,
+					);
+					console.error(
+						`batch tick=${ticked.tick} queued=${queued.length} idle=${idleTotal} pairs=${pairs.length} distance=${total} ms=${(performance.now() - started).toFixed(2)} solver=${lazy ? "lazy" : "dense"}`,
+					);
+				}
+				for (const { trip, driverId } of pairs) offer(trip, driverId);
 			}
 			break;
 		default: {

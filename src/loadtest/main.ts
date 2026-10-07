@@ -104,7 +104,13 @@ function spawn(
 	service: ServiceProcess,
 	onLine: (line: string) => void = () => {},
 ) {
-	const subprocess = Bun.spawn(["bun", service.entrypoint], {
+	// #240 experiment, not merged: CPU profile of each dispatch process when
+	// DISPATCH_PROFILE is set, written on its process.exit after SIGTERM.
+	const profile =
+		Bun.env.DISPATCH_PROFILE === "true" && service.name.startsWith("dispatch")
+			? ["--cpu-prof", "--cpu-prof-md", "--cpu-prof-dir", "out/profiles"]
+			: [];
+	const subprocess = Bun.spawn(["bun", ...profile, service.entrypoint], {
 		env: { ...runEnv, ...service.env },
 		stdout: "pipe",
 		stderr: "inherit",

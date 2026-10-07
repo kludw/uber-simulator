@@ -338,3 +338,20 @@ function nearestBeyond(pickup: Cell, size: number, ring: number): number {
 		(row + ring) * size - pickup.y,
 	);
 }
+
+// #240 experiment, not merged: an idle driver's cell, for the lazy solver.
+export function idleCell(
+	idle: IdleDrivers,
+	driverId: DriverId,
+): { x: number; y: number } {
+	const driver = idle[internals].byId.get(driverId);
+	if (driver === undefined || driver.bucket === notIdle) {
+		throw new Error(`${driverId} is not idle`);
+	}
+	return { x: driver.x, y: driver.y };
+}
+
+// #240 experiment: idle driver count.
+export function idleCount(idle: IdleDrivers): number {
+	return idle[internals].idleCount;
+}

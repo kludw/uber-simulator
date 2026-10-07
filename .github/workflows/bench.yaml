@@ -33,6 +33,14 @@ on:
         description: Also write a heap profile on exit (large at 10k drivers)
         type: boolean
         default: false
+      solver:
+        description: "#240 experiment: batched solver, dense or lazy"
+        type: string
+        default: dense
+      regions:
+        description: "#240 experiment: region layout"
+        type: string
+        default: 1x1
 
 permissions:
   contents: read
@@ -70,6 +78,9 @@ jobs:
       TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
       CPU_PROFILE: ${{ inputs.cpu_profile }}
       HEAP_PROFILE: ${{ inputs.heap_profile }}
+      BATCH_SOLVER: ${{ inputs.solver }}
+      BATCH_STATS: "1"
+      REGIONS: ${{ inputs.regions }}
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -96,7 +107,7 @@ jobs:
           # benchmark process itself.
           timeout "${backstop}m" \
             bun $profile_flags src/bench/main.ts --drivers "$DRIVERS" --ticks "$TICKS" --matching "$MATCHING" \
-              --max-minutes "$TIMEOUT_MINUTES" \
+              --regions "$REGIONS" --max-minutes "$TIMEOUT_MINUTES" \
             > out/report.txt 2> out/stderr.txt
           code=$?
           set -e
