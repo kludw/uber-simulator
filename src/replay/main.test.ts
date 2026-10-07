@@ -17,6 +17,7 @@ import {
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
+import { Region } from "../shared/regions.ts";
 import { parseClickHouseConfig } from "../sim/config.ts";
 
 // Runs `bun run replay`'s entrypoint against the local NATS and ClickHouse
@@ -129,7 +130,7 @@ describe.skipIf(!natsUrl || !config)("bun run replay", () => {
 const d1 = DriverId.parse("d-1");
 
 function moved(tick: number, x: number): SimEvent {
-	return driversMoved(Tick.parse(tick), [
+	return driversMoved(Tick.parse(tick), Region.parse(0), [
 		{ driverId: d1, cell: Cell.parse({ x, y: 0 }) },
 	]);
 }

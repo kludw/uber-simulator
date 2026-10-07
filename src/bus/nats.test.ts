@@ -9,6 +9,7 @@ import {
 	RunId,
 	TripId,
 } from "../shared/messages.ts";
+import { Region } from "../shared/regions.ts";
 import {
 	type ConnectionStatus,
 	connectNatsBus,
@@ -86,7 +87,11 @@ describe("connectNatsBus", () => {
 			pong(socket, text);
 		});
 		const bus = await connectFake(server.url, () => {});
-		bus.publish({ type: "cancel_trip", tripId: TripId.parse("t-1") });
+		bus.publish({
+			type: "cancel_trip",
+			tripId: TripId.parse("t-1"),
+			region: Region.parse(0),
+		});
 		await Bun.sleep(100);
 
 		await expect(bus.close()).resolves.toBeUndefined();
@@ -103,7 +108,11 @@ describe("connectNatsBus", () => {
 			pong(socket, text);
 		});
 		const bus = await connectFake(server.url, () => {});
-		bus.publish({ type: "cancel_trip", tripId: TripId.parse("t-1") });
+		bus.publish({
+			type: "cancel_trip",
+			tripId: TripId.parse("t-1"),
+			region: Region.parse(0),
+		});
 		// One reconnect after its 2 s wait, rejected again: connection closed.
 		await Bun.sleep(3000);
 		server.stop();
@@ -125,7 +134,11 @@ describe("connectNatsBus", () => {
 		const bus = await connectFake(server.url, (status) =>
 			statuses.push(status),
 		);
-		bus.publish({ type: "cancel_trip", tripId: TripId.parse("t-1") });
+		bus.publish({
+			type: "cancel_trip",
+			tripId: TripId.parse("t-1"),
+			region: Region.parse(0),
+		});
 		// Reconnects after its 2 s wait.
 		await Bun.sleep(2500);
 		await bus.close();
@@ -176,12 +189,30 @@ describe("connectNatsBus", () => {
 				`MSG sim.commands.cancel_trip ${sid} ${Buffer.byteLength(payload)}\r\n${payload}\r\n`,
 			);
 
-		push(JSON.stringify({ type: "cancel_trip", tripId: "t-1" }));
+		push(
+			JSON.stringify({
+				type: "cancel_trip",
+				tripId: "t-1",
+				region: Region.parse(0),
+			}),
+		);
 		// A type no subscriber takes, then not a message at all.
 		push(JSON.stringify({ type: "request_trip_accepted", tripId: "t-9" }));
 		push("{not json");
-		push(JSON.stringify({ type: "cancel_trip", tripId: "t-2" }));
-		push(JSON.stringify({ type: "cancel_trip", tripId: "t-3" }));
+		push(
+			JSON.stringify({
+				type: "cancel_trip",
+				tripId: "t-2",
+				region: Region.parse(0),
+			}),
+		);
+		push(
+			JSON.stringify({
+				type: "cancel_trip",
+				tripId: "t-3",
+				region: Region.parse(0),
+			}),
+		);
 		await lastHandled;
 		await bus.close();
 		server.stop();
@@ -262,7 +293,11 @@ describe("connectNatsBus", () => {
 		push("sim.events.drivers.moved", moved("d-2"));
 		push(
 			"sim.commands.cancel_trip",
-			JSON.stringify({ type: "cancel_trip", tripId: "t-1" }),
+			JSON.stringify({
+				type: "cancel_trip",
+				tripId: "t-1",
+				region: Region.parse(0),
+			}),
 		);
 		await lastHandled;
 		await bus.close();
@@ -373,7 +408,11 @@ describe.skipIf(!natsUrl)("NATS bus", () => {
 	}
 
 	function cancelTrip(n: number): CancelTrip {
-		return { type: "cancel_trip", tripId: TripId.parse(`${tripIdSalt}-${n}`) };
+		return {
+			type: "cancel_trip",
+			tripId: TripId.parse(`${tripIdSalt}-${n}`),
+			region: Region.parse(0),
+		};
 	}
 
 	function isOwn(message: { tripId: string }): boolean {

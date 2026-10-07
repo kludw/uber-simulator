@@ -9,6 +9,7 @@ import {
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
+import { Region } from "../shared/regions.ts";
 import { checkInvariants, createInvariantChecker } from "./invariants.ts";
 
 const grid: Grid = { width: 10, height: 10 };
@@ -55,15 +56,21 @@ function tripEvent(
 }
 
 function wentOnline(driverId: DriverId, at: Cell): Message {
-	return driversWentOnline(tick(0), [{ driverId, cell: at }]);
+	return driversWentOnline(tick(0), Region.parse(0), [{ driverId, cell: at }]);
 }
 
 function wentOffline(driverId: DriverId, at: Cell, when: number): Message {
-	return { type: "driver.went_offline", tick: tick(when), driverId, cell: at };
+	return {
+		type: "driver.went_offline",
+		tick: tick(when),
+		driverId,
+		cell: at,
+		region: Region.parse(0),
+	};
 }
 
 function moved(driverId: DriverId, to: Cell, at: number): Message {
-	return driversMoved(tick(at), [{ driverId, cell: to }]);
+	return driversMoved(tick(at), Region.parse(0), [{ driverId, cell: to }]);
 }
 
 // d1 starts at (0,0); t1 picks up at (1,0), drops off at (2,0).
@@ -338,7 +345,7 @@ describe("checkInvariants", () => {
 		const log: Message[] = [
 			wentOnline(d1, cell(0, 0)),
 			wentOnline(d2, cell(5, 5)),
-			driversMoved(tick(1), [
+			driversMoved(tick(1), Region.parse(0), [
 				{ driverId: d1, cell: cell(1, 0) },
 				{ driverId: d2, cell: cell(7, 5) },
 			]),
@@ -375,7 +382,9 @@ describe("checkInvariants driver shifts", () => {
 			wentOffline(d1, cell(2, 0), 4),
 			tripEvent("trip.offered", t2, d1, 4),
 			tripEvent("trip.offer_declined", t2, d1, 4),
-			driversWentOnline(tick(8), [{ driverId: d1, cell: cell(2, 0) }]),
+			driversWentOnline(tick(8), Region.parse(0), [
+				{ driverId: d1, cell: cell(2, 0) },
+			]),
 			moved(d1, cell(2, 1), 9),
 		];
 
@@ -388,11 +397,11 @@ describe("checkInvariants driver shifts", () => {
 			wentOnline(d2, cell(5, 5)),
 			wentOffline(d1, cell(0, 0), 1),
 			wentOffline(d2, cell(5, 5), 1),
-			driversWentOnline(tick(4), [
+			driversWentOnline(tick(4), Region.parse(0), [
 				{ driverId: d1, cell: cell(0, 0) },
 				{ driverId: d2, cell: cell(5, 5) },
 			]),
-			driversMoved(tick(5), [
+			driversMoved(tick(5), Region.parse(0), [
 				{ driverId: d1, cell: cell(1, 0) },
 				{ driverId: d2, cell: cell(5, 6) },
 			]),

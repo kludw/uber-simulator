@@ -10,6 +10,7 @@ import {
 	Tick,
 	TripId,
 } from "./messages.ts";
+import { Region } from "./regions.ts";
 import {
 	replaySubject,
 	replaySubjects,
@@ -23,27 +24,51 @@ const tripId = TripId.parse("t-1");
 const driverId = DriverId.parse("d-7");
 const riderId = RiderId.parse("r-1");
 const cell = Cell.parse({ x: 0, y: 0 });
+const region = Region.parse(2);
 
 describe("subjectFor", () => {
 	// Every Message type with its subject per ADR 0028.
 	const cases: [Message, string][] = [
 		[{ type: "clock.ticked", tick }, "sim.events.clock.ticked"],
 		[
-			driversWentOnline(tick, [{ driverId, cell }]),
-			"sim.events.drivers.went_online",
+			driversWentOnline(tick, region, [{ driverId, cell }]),
+			"sim.events.drivers.went_online.region-2",
 		],
 		[
-			{ type: "driver.went_offline", tick, driverId, cell },
-			"sim.events.driver.went_offline",
+			{
+				type: "driver.went_offline",
+				tick,
+				driverId,
+				cell,
+				region: region,
+			},
+			"sim.events.driver.went_offline.region-2",
 		],
-		[driversMoved(tick, [{ driverId, cell }]), "sim.events.drivers.moved"],
 		[
-			{ type: "driver.arrived_at_pickup", tick, driverId, tripId, cell },
-			"sim.events.driver.arrived_at_pickup",
+			driversMoved(tick, region, [{ driverId, cell }]),
+			"sim.events.drivers.moved.region-2",
 		],
 		[
-			{ type: "driver.arrived_at_dropoff", tick, driverId, tripId, cell },
-			"sim.events.driver.arrived_at_dropoff",
+			{
+				type: "driver.arrived_at_pickup",
+				tick,
+				driverId,
+				tripId,
+				cell,
+				region: region,
+			},
+			"sim.events.driver.arrived_at_pickup.region-2",
+		],
+		[
+			{
+				type: "driver.arrived_at_dropoff",
+				tick,
+				driverId,
+				tripId,
+				cell,
+				region: region,
+			},
+			"sim.events.driver.arrived_at_dropoff.region-2",
 		],
 		[
 			{
@@ -89,12 +114,18 @@ describe("subjectFor", () => {
 			"sim.offers.d-7",
 		],
 		[
-			{ type: "offer_accepted", tripId, driverId },
-			"sim.replies.offer_accepted",
+			{ type: "offer_accepted", tripId, driverId, region: region },
+			"sim.replies.offer_accepted.region-2",
 		],
 		[
-			{ type: "offer_declined", tripId, driverId },
-			"sim.replies.offer_declined",
+			{
+				type: "offer_declined",
+				tripId,
+				driverId,
+				region: region,
+				idleAt: null,
+			},
+			"sim.replies.offer_declined.region-2",
 		],
 		[
 			{
@@ -104,8 +135,9 @@ describe("subjectFor", () => {
 				riderId,
 				pickup: cell,
 				dropoff: cell,
+				region: region,
 			},
-			"sim.commands.request_trip",
+			"sim.commands.request_trip.region-2",
 		],
 		[
 			{ type: "request_trip_accepted", tripId },
@@ -119,7 +151,10 @@ describe("subjectFor", () => {
 			},
 			"sim.replies.request_trip_rejected",
 		],
-		[{ type: "cancel_trip", tripId }, "sim.commands.cancel_trip"],
+		[
+			{ type: "cancel_trip", tripId, region: region },
+			"sim.commands.cancel_trip.region-2",
+		],
 		[
 			{ type: "cancel_trip_accepted", tripId },
 			"sim.replies.cancel_trip_accepted",
@@ -133,8 +168,15 @@ describe("subjectFor", () => {
 			"sim.replies.cancel_trip_rejected",
 		],
 		[
-			{ type: "confirm_trip", tripId, driverId, stage: "pickup", cell },
-			"sim.commands.confirm_trip",
+			{
+				type: "confirm_trip",
+				tripId,
+				driverId,
+				stage: "pickup",
+				cell,
+				region: region,
+			},
+			"sim.commands.confirm_trip.region-2",
 		],
 		[
 			{
@@ -153,14 +195,34 @@ describe("subjectFor", () => {
 	});
 
 	// ADR 0042: one subscription per type a service takes; offers for any
-	// driver, so a shard needs one subscription, not one per driver.
+	// driver, so a shard needs one subscription, not one per driver. ADR
+	// 0050: a subscriber without a region takes every region.
 	test.each(cases)(
 		"%p is received on the subscription to its type",
 		(message, subject) => {
 			expect(subscriptionSubject(message.type)).toBe(
+				message.type === "offer"
+					? "sim.offers.*"
+					: subject.replace(/\.region-2$/, ".*"),
+			);
+		},
+	);
+
+	// ADR 0050: dispatch k takes its region's messages, and unregioned types
+	// as everyone does.
+	test.each(cases)(
+		"%p is received on the subscription to its type for its region",
+		(message, subject) => {
+			expect(subscriptionSubject(message.type, region)).toBe(
 				message.type === "offer" ? "sim.offers.*" : subject,
 			);
 		},
+	);
+});
+
+test("a region's subscription excludes other regions' messages", () => {
+	expect(subscriptionSubject("drivers.moved", Region.parse(1))).toBe(
+		"sim.events.drivers.moved.region-1",
 	);
 });
 
@@ -172,9 +234,9 @@ test("replaySubject prefixes the live subject with replay and the run id", () =>
 	expect(
 		replaySubject(
 			RunId.parse("run-1"),
-			driversMoved(tick, [{ driverId, cell }]),
+			driversMoved(tick, region, [{ driverId, cell }]),
 		),
-	).toBe("replay.run-1.sim.events.drivers.moved");
+	).toBe("replay.run-1.sim.events.drivers.moved.region-2");
 });
 
 test("replaySubjects is the wildcard over a run's replayed event subjects", () => {

@@ -12,6 +12,7 @@ import {
 	type TripStatus,
 } from "../shared/messages.ts";
 import { createRandom, type Random } from "../shared/random.ts";
+import { Region } from "../shared/regions.ts";
 import {
 	type DriverShardInput,
 	type DriverShardState,
@@ -115,7 +116,7 @@ describe("startDriverShard", () => {
 			scriptedRandom([3, 4, 7, 8]),
 		);
 		expect(outputs).toEqual([
-			driversWentOnline(tick(5), [
+			driversWentOnline(tick(5), Region.parse(0), [
 				{ driverId: d1, cell: cell(3, 4) },
 				{ driverId: d2, cell: cell(7, 8) },
 			]),
@@ -150,7 +151,9 @@ describe("startDriverShard with shifts", () => {
 			}),
 		);
 		expect(outputs).toEqual([
-			driversWentOnline(tick(5), [{ driverId: d2, cell: cell(7, 8) }]),
+			driversWentOnline(tick(5), Region.parse(0), [
+				{ driverId: d2, cell: cell(7, 8) },
+			]),
 		]);
 	});
 });
@@ -187,7 +190,9 @@ describe("decideDriverShard with shifts", () => {
 		);
 		const { outputs } = runTicks(started.state, 1, 4, random);
 		expect(outputs).toEqual([
-			driversWentOnline(tick(4), [{ driverId: d1, cell: cell(3, 4) }]),
+			driversWentOnline(tick(4), Region.parse(0), [
+				{ driverId: d1, cell: cell(3, 4) },
+			]),
 		]);
 	});
 
@@ -204,8 +209,12 @@ describe("decideDriverShard with shifts", () => {
 		const before = runTicks(started.state, 1, 2, random);
 		const { outputs } = runTicks(before.state, 3, 3, random);
 		expect(outputs).toEqual([
-			driversWentOnline(tick(3), [{ driverId: d1, cell: cell(3, 4) }]),
-			driversMoved(tick(3), [{ driverId: d2, cell: cell(4, 8) }]),
+			driversWentOnline(tick(3), Region.parse(0), [
+				{ driverId: d1, cell: cell(3, 4) },
+			]),
+			driversMoved(tick(3), Region.parse(0), [
+				{ driverId: d2, cell: cell(4, 8) },
+			]),
 		]);
 	});
 
@@ -220,7 +229,9 @@ describe("decideDriverShard with shifts", () => {
 		);
 		const { outputs } = runTicks(started.state, 1, 2, random);
 		expect(outputs).toEqual([
-			driversMoved(tick(1), [{ driverId: d1, cell: cell(1, 0) }]),
+			driversMoved(tick(1), Region.parse(0), [
+				{ driverId: d1, cell: cell(1, 0) },
+			]),
 			{
 				type: "driver.went_offline",
 				tick: tick(2),
@@ -249,15 +260,21 @@ describe("decideDriverShard with shifts", () => {
 		);
 		const { outputs } = runTicks(cancelled.state, 3, 6, random);
 		expect([...enRoute.outputs, ...outputs]).toEqual([
-			driversMoved(tick(1), [{ driverId: d1, cell: cell(1, 0) }]),
-			driversMoved(tick(2), [{ driverId: d1, cell: cell(1, 1) }]),
+			driversMoved(tick(1), Region.parse(0), [
+				{ driverId: d1, cell: cell(1, 0) },
+			]),
+			driversMoved(tick(2), Region.parse(0), [
+				{ driverId: d1, cell: cell(1, 1) },
+			]),
 			{
 				type: "driver.went_offline",
 				tick: tick(3),
 				driverId: d1,
 				cell: cell(1, 1),
 			},
-			driversWentOnline(tick(6), [{ driverId: d1, cell: cell(1, 1) }]),
+			driversWentOnline(tick(6), Region.parse(0), [
+				{ driverId: d1, cell: cell(1, 1) },
+			]),
 		]);
 	});
 
@@ -289,7 +306,9 @@ describe("decideDriverShard with shifts", () => {
 		);
 		const { outputs } = runTicks(completed.state, 4, 4, random);
 		expect([...atDropoff.outputs, ...completed.outputs, ...outputs]).toEqual([
-			driversMoved(tick(2), [{ driverId: d1, cell: cell(2, 0) }]),
+			driversMoved(tick(2), Region.parse(0), [
+				{ driverId: d1, cell: cell(2, 0) },
+			]),
 			{
 				type: "driver.arrived_at_dropoff",
 				tick: tick(2),
@@ -347,7 +366,9 @@ describe("startDriverShard shift config", () => {
 			scriptedRandom([3, 4]),
 		);
 		expect(outputs).toEqual([
-			driversWentOnline(tick(0), [{ driverId: d1, cell: cell(3, 4) }]),
+			driversWentOnline(tick(0), Region.parse(0), [
+				{ driverId: d1, cell: cell(3, 4) },
+			]),
 		]);
 	});
 
@@ -438,7 +459,9 @@ describe("decideDriverShard on tick", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(1), [{ driverId: d1, cell: cell(1, 0) }]),
+			driversMoved(tick(1), Region.parse(0), [
+				{ driverId: d1, cell: cell(1, 0) },
+			]),
 		]);
 	});
 
@@ -455,7 +478,7 @@ describe("decideDriverShard on tick", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(1), [
+			driversMoved(tick(1), Region.parse(0), [
 				{ driverId: d1, cell: cell(5, 5) },
 				{ driverId: d2, cell: cell(1, 0) },
 			]),
@@ -505,7 +528,7 @@ describe("decideDriverShard on tick", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(1), [
+			driversMoved(tick(1), Region.parse(0), [
 				{ driverId: d1, cell: cell(1, 0) },
 				{ driverId: d2, cell: cell(9, 8) },
 			]),
@@ -525,7 +548,7 @@ describe("decideDriverShard on tick", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(1), [
+			driversMoved(tick(1), Region.parse(0), [
 				{ driverId: d1, cell: cell(1, 0) },
 				{ driverId: d2, cell: cell(9, 8) },
 			]),
@@ -549,7 +572,9 @@ describe("decideDriverShard on tick", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(2), [{ driverId: d1, cell: cell(2, 0) }]),
+			driversMoved(tick(2), Region.parse(0), [
+				{ driverId: d1, cell: cell(2, 0) },
+			]),
 		]);
 	});
 
@@ -580,7 +605,9 @@ describe("decideDriverShard on tick", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(1), [{ driverId: d1, cell: cell(1, 0) }]),
+			driversMoved(tick(1), Region.parse(0), [
+				{ driverId: d1, cell: cell(1, 0) },
+			]),
 		]);
 	});
 
@@ -597,7 +624,9 @@ describe("decideDriverShard on tick", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(1), [{ driverId: d1, cell: cell(5, 5) }]),
+			driversMoved(tick(1), Region.parse(0), [
+				{ driverId: d1, cell: cell(5, 5) },
+			]),
 			{
 				type: "driver.arrived_at_pickup",
 				tick: tick(1),
@@ -668,7 +697,9 @@ describe("decideDriverShard on tick", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(2), [{ driverId: d1, cell: cell(1, 1) }]),
+			driversMoved(tick(2), Region.parse(0), [
+				{ driverId: d1, cell: cell(1, 1) },
+			]),
 		]);
 	});
 });
@@ -769,7 +800,9 @@ describe("decideDriverShard confirming its trip", () => {
 		);
 		const { outputs } = runTicks(told.state, 12, 12, random);
 		expect(outputs).toEqual([
-			driversMoved(tick(12), [{ driverId: d1, cell: cell(6, 5) }]),
+			driversMoved(tick(12), Region.parse(0), [
+				{ driverId: d1, cell: cell(6, 5) },
+			]),
 		]);
 	});
 
@@ -788,7 +821,9 @@ describe("decideDriverShard confirming its trip", () => {
 		);
 		const { outputs } = runTicks(told.state, 14, 14, random);
 		expect(outputs).toEqual([
-			driversMoved(tick(14), [{ driverId: d1, cell: cell(6, 6) }]),
+			driversMoved(tick(14), Region.parse(0), [
+				{ driverId: d1, cell: cell(6, 6) },
+			]),
 		]);
 	});
 
@@ -807,7 +842,9 @@ describe("decideDriverShard confirming its trip", () => {
 		);
 		const { outputs } = runTicks(told.state, 12, 12, random);
 		expect(outputs).toEqual([
-			driversMoved(tick(12), [{ driverId: d1, cell: cell(5, 6) }]),
+			driversMoved(tick(12), Region.parse(0), [
+				{ driverId: d1, cell: cell(5, 6) },
+			]),
 		]);
 	});
 
@@ -826,7 +863,9 @@ describe("decideDriverShard confirming its trip", () => {
 		);
 		const { outputs } = runTicks(told.state, 14, 14, random);
 		expect(outputs).toEqual([
-			driversMoved(tick(14), [{ driverId: d1, cell: cell(6, 6) }]),
+			driversMoved(tick(14), Region.parse(0), [
+				{ driverId: d1, cell: cell(6, 6) },
+			]),
 		]);
 	});
 
@@ -918,7 +957,9 @@ describe("decideDriverShard confirming its trip", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(11), [{ driverId: d1, cell: cell(6, 5) }]),
+			driversMoved(tick(11), Region.parse(0), [
+				{ driverId: d1, cell: cell(6, 5) },
+			]),
 		]);
 	});
 
@@ -970,7 +1011,9 @@ describe("decideDriverShard on offer", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(2), [{ driverId: d1, cell: cell(1, 1) }]),
+			driversMoved(tick(2), Region.parse(0), [
+				{ driverId: d1, cell: cell(1, 1) },
+			]),
 		]);
 	});
 
@@ -1102,7 +1145,9 @@ describe("decideDriverShard on trip ended", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(2), [{ driverId: d1, cell: cell(0, 1) }]),
+			driversMoved(tick(2), Region.parse(0), [
+				{ driverId: d1, cell: cell(0, 1) },
+			]),
 		]);
 	});
 
@@ -1129,7 +1174,9 @@ describe("decideDriverShard on trip ended", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(3), [{ driverId: d1, cell: cell(5, 6) }]),
+			driversMoved(tick(3), Region.parse(0), [
+				{ driverId: d1, cell: cell(5, 6) },
+			]),
 		]);
 	});
 
@@ -1151,7 +1198,9 @@ describe("decideDriverShard on trip ended", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(2), [{ driverId: d1, cell: cell(0, 1) }]),
+			driversMoved(tick(2), Region.parse(0), [
+				{ driverId: d1, cell: cell(0, 1) },
+			]),
 		]);
 	});
 
@@ -1173,7 +1222,9 @@ describe("decideDriverShard on trip ended", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(2), [{ driverId: d1, cell: cell(1, 0) }]),
+			driversMoved(tick(2), Region.parse(0), [
+				{ driverId: d1, cell: cell(1, 0) },
+			]),
 		]);
 	});
 
@@ -1195,7 +1246,9 @@ describe("decideDriverShard on trip ended", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(2), [{ driverId: d2, cell: cell(1, 0) }]),
+			driversMoved(tick(2), Region.parse(0), [
+				{ driverId: d2, cell: cell(1, 0) },
+			]),
 		]);
 	});
 });
@@ -1232,7 +1285,9 @@ describe("decideDriverShard carrying the rider", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(3), [{ driverId: d1, cell: cell(6, 5) }]),
+			driversMoved(tick(3), Region.parse(0), [
+				{ driverId: d1, cell: cell(6, 5) },
+			]),
 		]);
 	});
 
@@ -1249,7 +1304,9 @@ describe("decideDriverShard carrying the rider", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(3), [{ driverId: d1, cell: cell(6, 5) }]),
+			driversMoved(tick(3), Region.parse(0), [
+				{ driverId: d1, cell: cell(6, 5) },
+			]),
 			{
 				type: "driver.arrived_at_dropoff",
 				tick: tick(3),
@@ -1399,7 +1456,9 @@ describe("decideDriverShard carrying the rider", () => {
 			random,
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(5), [{ driverId: d1, cell: cell(6, 6) }]),
+			driversMoved(tick(5), Region.parse(0), [
+				{ driverId: d1, cell: cell(6, 6) },
+			]),
 		]);
 	});
 });
@@ -1578,7 +1637,9 @@ describe("driver shard trip scenario", () => {
 			outputs.push(...decided.outputs);
 		}
 		const moved = (n: number, x: number, y: number) =>
-			driversMoved(tick(n), [{ driverId: d1, cell: cell(x, y) }]);
+			driversMoved(tick(n), Region.parse(0), [
+				{ driverId: d1, cell: cell(x, y) },
+			]);
 		expect(outputs).toEqual([
 			{ type: "offer_accepted", tripId: t1, driverId: d1 },
 			moved(1, 4, 5),

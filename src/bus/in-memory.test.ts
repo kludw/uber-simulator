@@ -8,6 +8,7 @@ import {
 	TripId,
 } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
+import { Region } from "../shared/regions.ts";
 import { createInMemoryBus } from "./in-memory.ts";
 
 function ticked(n: number): ClockTicked {
@@ -17,6 +18,7 @@ function ticked(n: number): ClockTicked {
 const cancelTrip: CancelTrip = {
 	type: "cancel_trip",
 	tripId: TripId.parse("t-1"),
+	region: Region.parse(0),
 };
 
 describe("in-memory bus", () => {
@@ -94,6 +96,7 @@ function cancels(count: number): CancelTrip[] {
 	return Array.from({ length: count }, (_, i) => ({
 		type: "cancel_trip",
 		tripId: TripId.parse(`t-${i}`),
+		region: Region.parse(0),
 	}));
 }
 

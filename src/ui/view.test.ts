@@ -9,6 +9,7 @@ import {
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
+import { Region } from "../shared/regions.ts";
 import { applyEvent, emptyView, type View } from "./view.ts";
 
 const d1 = DriverId.parse("d-1");
@@ -44,6 +45,7 @@ const trip: SimEvent[] = [
 		driverId: d1,
 		tripId: t1,
 		cell: pickup,
+		region: Region.parse(0),
 	},
 	{ type: "trip.picked_up", tick: tick(5), tripId: t1, driverId: d1 },
 	{
@@ -52,6 +54,7 @@ const trip: SimEvent[] = [
 		driverId: d1,
 		tripId: t1,
 		cell: dropoff,
+		region: Region.parse(0),
 	},
 	{ type: "trip.completed", tick: tick(10), tripId: t1, driverId: d1 },
 ];
@@ -64,7 +67,7 @@ describe("drivers", () => {
 	test("each driver one message announces online is idle at its cell", () => {
 		const d2 = DriverId.parse("d-2");
 		const view = viewOf([
-			driversWentOnline(tick(0), [
+			driversWentOnline(tick(0), Region.parse(0), [
 				{ driverId: d1, cell: cell(2, 3) },
 				{ driverId: d2, cell: cell(5, 5) },
 			]),
@@ -94,7 +97,7 @@ describe("drivers", () => {
 	test("drivers announced online in one message count as idle", () => {
 		const d2 = DriverId.parse("d-2");
 		const view = viewOf([
-			driversWentOnline(tick(0), [
+			driversWentOnline(tick(0), Region.parse(0), [
 				{ driverId: d1, cell: cell(2, 3) },
 				{ driverId: d2, cell: cell(5, 5) },
 			]),
@@ -117,7 +120,7 @@ describe("drivers", () => {
 		const view = viewOf([
 			...trip.slice(0, 3),
 			online(d2, 0, cell(5, 5)),
-			driversMoved(tick(3), [
+			driversMoved(tick(3), Region.parse(0), [
 				{ driverId: d1, cell: cell(1, 0) },
 				{ driverId: d2, cell: cell(5, 6) },
 			]),
@@ -367,6 +370,7 @@ describe("going offline", () => {
 		tick: tick(4),
 		driverId: d1,
 		cell: cell(2, 3),
+		region: Region.parse(0),
 	};
 
 	test("a driver going offline leaves the view", () => {
@@ -405,11 +409,11 @@ describe("going offline", () => {
 });
 
 function online(driverId: DriverId, at: number, to: Cell): SimEvent {
-	return driversWentOnline(tick(at), [{ driverId, cell: to }]);
+	return driversWentOnline(tick(at), Region.parse(0), [{ driverId, cell: to }]);
 }
 
 function moved(driverId: DriverId, at: number, to: Cell): SimEvent {
-	return driversMoved(tick(at), [{ driverId, cell: to }]);
+	return driversMoved(tick(at), Region.parse(0), [{ driverId, cell: to }]);
 }
 
 function requested(

@@ -10,6 +10,7 @@ import {
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
+import { Region } from "../shared/regions.ts";
 import { toRow } from "./rows.ts";
 
 const tick = Tick.parse(12);
@@ -35,24 +36,44 @@ describe("toRow", () => {
 		],
 		// One row per message, the drivers in the payload (ADR 0049).
 		[
-			driversWentOnline(tick, [{ driverId, cell }]),
+			driversWentOnline(tick, Region.parse(0), [{ driverId, cell }]),
 			{ tripId: "", driverId: "", riderId: "" },
 		],
 		[
-			{ type: "driver.went_offline", tick, driverId, cell },
+			{
+				type: "driver.went_offline",
+				tick,
+				driverId,
+				cell,
+				region: Region.parse(0),
+			},
 			{ tripId: "", driverId: "d-7", riderId: "" },
 		],
 		// One row per message, the moves in the payload (ADR 0045).
 		[
-			driversMoved(tick, [{ driverId, cell }]),
+			driversMoved(tick, Region.parse(0), [{ driverId, cell }]),
 			{ tripId: "", driverId: "", riderId: "" },
 		],
 		[
-			{ type: "driver.arrived_at_pickup", tick, driverId, tripId, cell },
+			{
+				type: "driver.arrived_at_pickup",
+				tick,
+				driverId,
+				tripId,
+				cell,
+				region: Region.parse(0),
+			},
 			{ tripId: "t-3", driverId: "d-7", riderId: "" },
 		],
 		[
-			{ type: "driver.arrived_at_dropoff", tick, driverId, tripId, cell },
+			{
+				type: "driver.arrived_at_dropoff",
+				tick,
+				driverId,
+				tripId,
+				cell,
+				region: Region.parse(0),
+			},
 			{ tripId: "t-3", driverId: "d-7", riderId: "" },
 		],
 		[

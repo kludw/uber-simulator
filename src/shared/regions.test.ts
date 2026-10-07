@@ -37,23 +37,23 @@ describe("RegionLayout", () => {
 
 describe("regionOf", () => {
 	test("every cell is region 0 with one region", () => {
-		expect(regionOf(layout("1x1"), grid, cell(499, 499))).toBe(0);
+		expect(regionOf(layout("1x1"), grid, cell(499, 499))).toBe(Region.parse(0));
 	});
 
 	test("2x1 puts the left half in region 0", () => {
-		expect(regionOf(layout("2x1"), grid, cell(249, 499))).toBe(0);
+		expect(regionOf(layout("2x1"), grid, cell(249, 499))).toBe(Region.parse(0));
 	});
 
 	test("2x1 puts the right half in region 1", () => {
-		expect(regionOf(layout("2x1"), grid, cell(250, 0))).toBe(1);
+		expect(regionOf(layout("2x1"), grid, cell(250, 0))).toBe(Region.parse(1));
 	});
 
 	test("2x2 numbers regions row-major: bottom left is region 2", () => {
-		expect(regionOf(layout("2x2"), grid, cell(0, 250))).toBe(2);
+		expect(regionOf(layout("2x2"), grid, cell(0, 250))).toBe(Region.parse(2));
 	});
 
 	test("2x2 numbers regions row-major: bottom right is region 3", () => {
-		expect(regionOf(layout("2x2"), grid, cell(250, 250))).toBe(3);
+		expect(regionOf(layout("2x2"), grid, cell(250, 250))).toBe(Region.parse(3));
 	});
 });
 
@@ -76,7 +76,7 @@ describe("regionBounds", () => {
 		const bounds = [0, 1, 2].map((region) =>
 			regionBounds(layout("3x1"), grid, Region.parse(region)),
 		);
-		expect(bounds.map(({ min, max }) => [min.x, max.x])).toEqual([
+		expect(bounds.map(({ min, max }): number[] => [min.x, max.x])).toEqual([
 			[0, 166],
 			[167, 333],
 			[334, 499],
@@ -85,7 +85,7 @@ describe("regionBounds", () => {
 
 	test("3x1 bounds agree with regionOf at the borders", () => {
 		expect(
-			[166, 167, 333, 334].map((x) =>
+			[166, 167, 333, 334].map((x): number =>
 				regionOf(layout("3x1"), grid, cell(x, 0)),
 			),
 		).toEqual([0, 1, 1, 2]);

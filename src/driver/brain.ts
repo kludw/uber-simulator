@@ -30,6 +30,7 @@ import type {
 } from "../shared/messages.ts";
 import { driversMoved, driversWentOnline } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
+import { Region } from "../shared/regions.ts";
 
 type Driver =
 	| { state: "offline"; id: DriverId; cell: Cell }
@@ -177,7 +178,9 @@ export function startDriverShard(
 	const picky = startPicky(config.preferences, config.driverIds, random);
 	return {
 		state: { grid: config.grid, drivers, schedule, picky },
-		outputs: inChunks(online, (chunk) => driversWentOnline(config.tick, chunk)),
+		outputs: inChunks(online, (chunk) =>
+			driversWentOnline(config.tick, Region.parse(0), chunk),
+		),
 	};
 }
 
@@ -555,8 +558,12 @@ function onTick(
 	return {
 		state,
 		outputs: [
-			...inChunks(online, (chunk) => driversWentOnline(input.tick, chunk)),
-			...inChunks(moves, (chunk) => driversMoved(input.tick, chunk)),
+			...inChunks(online, (chunk) =>
+				driversWentOnline(input.tick, Region.parse(0), chunk),
+			),
+			...inChunks(moves, (chunk) =>
+				driversMoved(input.tick, Region.parse(0), chunk),
+			),
 			...outputs,
 		],
 	};

@@ -16,6 +16,7 @@ import {
 	type SimEvent,
 	Tick,
 } from "../shared/messages.ts";
+import { Region } from "../shared/regions.ts";
 import { parseClickHouseConfig } from "../sim/config.ts";
 import { createInvariantChecker } from "../sim/invariants.ts";
 import { runInProcess } from "../sim/run.ts";
@@ -191,7 +192,7 @@ const d1 = DriverId.parse("d-1");
 const ingestedAt = new Date("2026-10-03T12:00:00Z");
 
 function moved(tick: number): SimEvent {
-	return driversMoved(Tick.parse(tick), [
+	return driversMoved(Tick.parse(tick), Region.parse(0), [
 		{ driverId: d1, cell: Cell.parse({ x: tick, y: 0 }) },
 	]);
 }
