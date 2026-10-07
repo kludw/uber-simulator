@@ -1,6 +1,6 @@
 # 0020. Watch-only browser UI: vanilla TypeScript, canvas, NATS over WebSocket
 
-- Status: Accepted
+- Status: Accepted (drawing above 10,000 drivers: 0053)
 - Date: 2026-10-02
 
 ## Context

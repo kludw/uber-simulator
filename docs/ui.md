@@ -54,7 +54,7 @@ Each row adds to the one before, measured at 400k uniform unless noted.
 
 ## Decision
 
-[ADR 0053](adr/0053-scale-the-ui-in-the-browser.md): keep the direct NATS subscription; the view keeps drivers by driver index in typed arrays and updates in place, so applying a message costs its own size; above 10,000 drivers the canvas draws a tile heatmap once per tick instead of a dot per driver.
+[ADR 0053](adr/0053-scale-the-ui-in-the-browser.md): keep the direct NATS subscription; the view keeps drivers by driver index in typed arrays and updates in place, so applying a message costs its own size; above 10,000 drivers (chosen: dots measured at 10k and 100k only) the canvas draws a tile heatmap once per tick instead of a dot per driver.
 
 ## Reproduce
 
