@@ -10,7 +10,7 @@ import {
 	TripId,
 } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
-import { Region } from "../shared/regions.ts";
+import { Region, RegionLayout } from "../shared/regions.ts";
 import {
 	type DispatchInput,
 	type DispatchState,
@@ -343,13 +343,18 @@ function accepted(tripId: TripId, driverId: DriverId): DispatchInput {
 	return { type: "offer_accepted", tripId, driverId, region: Region.parse(0) };
 }
 
-function declined(tripId: TripId, driverId: DriverId): DispatchInput {
+// idleAt: the driver's cell if it is idle, null if offline or on a trip.
+function declined(
+	tripId: TripId,
+	driverId: DriverId,
+	idleAt: Cell | null,
+): DispatchInput {
 	return {
 		type: "offer_declined",
 		tripId,
 		driverId,
 		region: Region.parse(0),
-		idleAt: null,
+		idleAt,
 	};
 }
 
@@ -385,7 +390,7 @@ describe("decideDispatch offer replies", () => {
 			requestTrip(t1, 1),
 			wentOnline(d1, cell(3, 3)),
 			ticked(2),
-			declined(t1, d1),
+			declined(t1, d1, cell(3, 3)),
 		]);
 
 		expect(outputs).toEqual([
@@ -399,7 +404,7 @@ describe("decideDispatch offer replies", () => {
 			wentOnline(d1, cell(3, 3)),
 			wentOnline(d2, cell(9, 9)),
 			ticked(2),
-			declined(t1, d1),
+			declined(t1, d1, cell(3, 3)),
 			ticked(3),
 		]);
 
@@ -421,7 +426,7 @@ describe("decideDispatch offer replies", () => {
 			requestTrip(t2, 1),
 			wentOnline(d1, cell(3, 3)),
 			ticked(2),
-			declined(t1, d1),
+			declined(t1, d1, cell(3, 3)),
 			wentOnline(d2, cell(9, 9)),
 			ticked(3),
 		]);
@@ -540,14 +545,14 @@ describe("decideDispatch stale and invalid offer replies", () => {
 			requestTrip(t1, 1),
 			wentOnline(d1, cell(3, 3)),
 			ticked(2),
-			declined(t1, d2),
+			declined(t1, d2, cell(9, 9)),
 		]);
 
 		expect(outputs).toEqual([
 			{
 				type: "input_rejected",
 				reason: "no_pending_offer",
-				input: declined(t1, d2),
+				input: declined(t1, d2, cell(9, 9)),
 			},
 		]);
 	});
@@ -1072,7 +1077,7 @@ describe("decideDispatch batched matching", () => {
 				wentOnline(d1, cell(3, 3)),
 				wentOnline(d2, cell(9, 9)),
 				ticked(2),
-				declined(t1, d1),
+				declined(t1, d1, cell(3, 3)),
 				ticked(3),
 				ticked(4),
 			],
@@ -1098,7 +1103,7 @@ describe("decideDispatch batched matching", () => {
 				wentOnline(d1, cell(3, 3)),
 				wentOnline(d2, cell(9, 9)),
 				ticked(2),
-				declined(t1, d1),
+				declined(t1, d1, cell(3, 3)),
 				ticked(3),
 			],
 			batched,
@@ -1113,7 +1118,7 @@ describe("decideDispatch batched matching", () => {
 				requestTrip(t1, 1),
 				wentOnline(d1, cell(3, 3)),
 				ticked(2),
-				declined(t1, d1),
+				declined(t1, d1, cell(3, 3)),
 				ticked(4),
 			],
 			batched,
@@ -1130,7 +1135,7 @@ describe("decideDispatch batched matching", () => {
 				requestTripAt(t2, cell(6, 0)),
 				wentOnline(d1, cell(1, 0)),
 				ticked(2),
-				declined(t1, d1),
+				declined(t1, d1, cell(1, 0)),
 				ticked(4),
 			],
 			batched,
@@ -1663,7 +1668,7 @@ describe("decideDispatch confirm_trip", () => {
 		["was cancelled", [requestTrip(t1, 1), cancelTrip(t1)]],
 		["was cancelled while matched to it", [...matchedT1, cancelTrip(t1)]],
 		["expired its offer to it", [...offeredT1, ticked(5)]],
-		["was declined by it", [...offeredT1, declined(t1, d1)]],
+		["was declined by it", [...offeredT1, declined(t1, d1, cell(3, 3))]],
 		["is matched to another driver", matchedToD2],
 		[
 			"is picked up by another driver",
@@ -1691,5 +1696,181 @@ describe("decideDispatch confirm_trip", () => {
 				expect(outputs).toEqual([tripStatus(t1, d1, stage, "released")]);
 			},
 		);
+	});
+});
+
+// ADR 0050: an instance of a 2x1 layout owning region 0 (x 0-4); trips'
+// pickups (1, 2) are in it, their dropoffs (7, 8) outside. Ticks are even so
+// the batched window (2) is open on each.
+describe.each<Matching>([
+	{ type: "greedy" },
+	{ type: "batched", windowTicks: 2 },
+])("decideDispatch in a region ($type)", (matching) => {
+	const region0 = Region.parse(0);
+
+	function runInRegion(inputs: DispatchInput[]) {
+		let state = startDispatch({
+			grid,
+			tick: tick(0),
+			matching,
+			regions: RegionLayout.parse("2x1"),
+			region: region0,
+		});
+		let outputs: unknown[] = [];
+		for (const input of inputs) {
+			({ state, outputs } = decideDispatch(state, input, random));
+		}
+		return { outputs };
+	}
+
+	test("does not offer a trip to a driver that moved out of the region", () => {
+		const { outputs } = runInRegion([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(4, 2)),
+			driversMoved(tick(1), region0, [{ driverId: d1, cell: cell(5, 2) }]),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	// d1's move from (3, 2) to (5, 2) was lost: dispatch still has it at
+	// (3, 2), a ghost (ADR 0050, item 6).
+	test("does not offer a trip to a driver whose decline says it is idle outside the region", () => {
+		const { outputs } = runInRegion([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 2)),
+			ticked(2),
+			declined(t1, d1, cell(5, 2)),
+			requestTrip(t2, 3),
+			ticked(4),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	// d1 is on another region's trip, passing through.
+	test("does not offer a trip to a driver whose decline says it is not idle", () => {
+		const { outputs } = runInRegion([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(3, 2)),
+			ticked(2),
+			declined(t1, d1, null),
+			requestTrip(t2, 3),
+			ticked(4),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("offers a trip to a declining driver by the cell its decline says it is idle at", () => {
+		const { outputs } = runInRegion([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(4, 9)),
+			ticked(2),
+			declined(t1, d1, cell(1, 3)),
+			cancelTrip(t1),
+			wentOnline(d2, cell(3, 2)),
+			requestTrip(t2, 3),
+			ticked(4),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(4), tripId: t2, driverId: d1 },
+		]);
+	});
+
+	// d1's moves to the dropoff were lost: dispatch last saw it at the pickup.
+	test.each<[string, DispatchInput]>([
+		["arrival", arrivedAtDropoff(t1, d1, cell(7, 8))],
+		["confirm", confirmTrip(t1, d1, "dropoff", cell(7, 8))],
+	])(
+		"does not offer a trip to a driver whose dropoff %s is outside the region",
+		(_case, atDropoff) => {
+			const { outputs } = runInRegion([
+				requestTrip(t1, 1),
+				wentOnline(d1, cell(4, 2)),
+				ticked(2),
+				accepted(t1, d1),
+				arrivedAtPickup(t1, d1, cell(1, 2)),
+				atDropoff,
+				requestTrip(t2, 3),
+				ticked(4),
+			]);
+
+			expect(outputs).toEqual([]);
+		},
+	);
+
+	test("offers a trip to an idle driver named by a rejected arrival outside the region", () => {
+		const { outputs } = runInRegion([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(4, 2)),
+			ticked(2),
+			accepted(t1, d1),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+			wentOnline(d2, cell(3, 2)),
+			arrivedAtDropoff(t1, d2, cell(7, 8)),
+			requestTrip(t2, 3),
+			ticked(4),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d2,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(4), tripId: t2, driverId: d2 },
+		]);
+	});
+
+	test("does not offer a trip to a driver freed outside the region", () => {
+		const { outputs } = runInRegion([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(4, 2)),
+			ticked(2),
+			accepted(t1, d1),
+			driversMoved(tick(2), region0, [{ driverId: d1, cell: cell(5, 2) }]),
+			cancelTrip(t1),
+			requestTrip(t2, 3),
+			ticked(4),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("offers a trip to a driver freed back inside the region", () => {
+		const { outputs } = runInRegion([
+			requestTrip(t1, 1),
+			wentOnline(d1, cell(4, 2)),
+			ticked(2),
+			accepted(t1, d1),
+			driversMoved(tick(2), region0, [{ driverId: d1, cell: cell(5, 2) }]),
+			driversMoved(tick(3), region0, [{ driverId: d1, cell: cell(4, 2) }]),
+			cancelTrip(t1),
+			requestTrip(t2, 3),
+			ticked(4),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d1,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(4), tripId: t2, driverId: d1 },
+		]);
 	});
 });

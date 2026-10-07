@@ -8,6 +8,12 @@ import {
 import { DriverId } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
 import {
+	oneRegion,
+	Region,
+	RegionLayout,
+	regionBounds,
+} from "../shared/regions.ts";
+import {
 	type IdleDriver,
 	type IdleDrivers,
 	idleDriversById,
@@ -39,9 +45,9 @@ function driver(id: string, x: number, y: number) {
 
 function placed(
 	drivers: readonly IdleDriver[],
-	search?: Parameters<typeof startIdleDrivers>[1],
+	search?: Parameters<typeof startIdleDrivers>[2],
 ): IdleDrivers {
-	const index = startIdleDrivers(grid, search);
+	const index = startIdleDrivers(grid, undefined, search);
 	for (const { driverId, cell: at } of drivers)
 		placeDriver(index, driverId, at.x, at.y);
 	return index;
@@ -129,6 +135,51 @@ describe("nearestIdle", () => {
 		markFree(index, DriverId.parse("d-2"));
 
 		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-1"));
+	});
+});
+
+// ADR 0050: an instance's index covers its region, the left half (x 0-9).
+describe("a region's drivers", () => {
+	const leftHalf = regionBounds(
+		RegionLayout.parse("2x1"),
+		grid,
+		Region.parse(0),
+	);
+
+	test("a driver moving out of the region is no longer idle in it", () => {
+		const index = startIdleDrivers(grid, leftHalf);
+		placeDriver(index, DriverId.parse("d-1"), ...xy(9, 5));
+		placeDriver(index, DriverId.parse("d-1"), ...xy(10, 5));
+
+		expect(idleDriversById(index)).toEqual([]);
+	});
+
+	test("a busy driver moving out of the region is idle again when freed back inside", () => {
+		const index = startIdleDrivers(grid, leftHalf);
+		placeDriver(index, DriverId.parse("d-1"), ...xy(9, 5));
+		markBusy(index, DriverId.parse("d-1"));
+		placeDriver(index, DriverId.parse("d-1"), ...xy(10, 5));
+		placeDriver(index, DriverId.parse("d-1"), ...xy(9, 6));
+		markFree(index, DriverId.parse("d-1"));
+
+		expect(idleDriversById(index)).toEqual([driver("d-1", 9, 6)]);
+	});
+
+	test("a busy driver freed outside the region is not idle in it", () => {
+		const index = startIdleDrivers(grid, leftHalf);
+		placeDriver(index, DriverId.parse("d-1"), ...xy(9, 5));
+		markBusy(index, DriverId.parse("d-1"));
+		placeDriver(index, DriverId.parse("d-1"), ...xy(10, 5));
+		markFree(index, DriverId.parse("d-1"));
+
+		expect(idleDriversById(index)).toEqual([]);
+	});
+
+	test("a driver first seen outside the region is not idle in it", () => {
+		const index = startIdleDrivers(grid, leftHalf);
+		placeDriver(index, DriverId.parse("d-1"), ...xy(10, 5));
+
+		expect(idleDriversById(index)).toEqual([]);
 	});
 });
 
@@ -224,14 +275,24 @@ describe("nearestIdle grid search", () => {
 	test("returns exactly what a linear scan returns with pickups and drivers off the grid", () => {
 		expectLinearScanPicks(152, { drivers: true, pickups: true });
 	});
+
+	test("returns exactly what a linear scan of the region's drivers returns", () => {
+		expectLinearScanPicks(153, { drivers: true, pickups: false }, true);
+	});
 });
 
 type OffGrid = { drivers: boolean; pickups: boolean };
 
 // Random sequences of placements (new drivers and moves), removals, busy and
 // free drivers and searches, each search's driver then made busy as dispatch
-// does, against a plain model of the same drivers searched linearly.
-function expectLinearScanPicks(seed: number, offGrid: OffGrid): void {
+// does, against a plain model of the same drivers searched linearly. With
+// regions, the index covers one random region of a random layout: the model
+// drops a driver placed outside it unless busy, and one freed outside it.
+function expectLinearScanPicks(
+	seed: number,
+	offGrid: OffGrid,
+	regions = false,
+): void {
 	const random = createRandom(seed);
 	for (let run = 0; run < 1000; run++) {
 		const scenarioGrid = {
@@ -247,7 +308,23 @@ function expectLinearScanPicks(seed: number, offGrid: OffGrid): void {
 		};
 		// IDs with mixed digit counts so string order differs from numeric order.
 		const randomDriver = () => DriverId.parse(`d-${random.int(0, 99)}`);
-		const index = startIdleDrivers(scenarioGrid, {
+		const layout = regions
+			? RegionLayout.parse(
+					`${random.int(1, Math.min(3, scenarioGrid.width))}x${random.int(1, Math.min(3, scenarioGrid.height))}`,
+				)
+			: oneRegion;
+		const region = regionBounds(
+			layout,
+			scenarioGrid,
+			Region.parse(random.int(0, layout.columns * layout.rows - 1)),
+		);
+		// Off-grid cells belong to the region at that grid edge.
+		const inRegion = (at: Cell) =>
+			at.x >= region.min.x &&
+			at.y >= region.min.y &&
+			(at.x <= region.max.x || region.max.x === scenarioGrid.width - 1) &&
+			(at.y <= region.max.y || region.max.y === scenarioGrid.height - 1);
+		const index = startIdleDrivers(scenarioGrid, region, {
 			cellsPerBucket: random.int(1, 6),
 			linearScanBelow: random.int(0, 1) === 0 ? 0 : random.int(0, 20),
 		});
@@ -263,7 +340,11 @@ function expectLinearScanPicks(seed: number, offGrid: OffGrid): void {
 			if (action <= 4) {
 				const at = randomCell(offGrid.drivers);
 				placeDriver(index, driverId, at.x, at.y);
-				model.cells.set(driverId, at);
+				if (inRegion(at) || model.busy.has(driverId)) {
+					model.cells.set(driverId, at);
+				} else {
+					model.cells.delete(driverId);
+				}
 			} else if (action === 5) {
 				removeDriver(index, driverId);
 				model.cells.delete(driverId);
@@ -277,6 +358,8 @@ function expectLinearScanPicks(seed: number, offGrid: OffGrid): void {
 			} else if (action === 7 && model.busy.has(driverId)) {
 				markFree(index, driverId);
 				model.busy.delete(driverId);
+				const at = model.cells.get(driverId);
+				if (at !== undefined && !inRegion(at)) model.cells.delete(driverId);
 			} else if (action >= 8) {
 				const pickup = randomCell(offGrid.pickups);
 				const excluded = new Set(

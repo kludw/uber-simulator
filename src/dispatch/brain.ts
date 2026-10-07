@@ -33,6 +33,12 @@ import type {
 import { forEachDriverAt } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 import {
+	oneRegion,
+	Region,
+	type RegionLayout,
+	regionBounds,
+} from "../shared/regions.ts";
+import {
 	type IdleDriver,
 	type IdleDrivers,
 	idleDriversById,
@@ -63,8 +69,9 @@ import {
 // requested trips without an offer, in that order (FIFO).
 // endedTrips: completed and cancelled trips, out of the per-tick scan but kept
 // to answer late and duplicate inputs for them.
-// drivers: online drivers' cells as last reported in events, and which are
-// busy (a pending offer or an active trip), kept across ticks (ADR 0048).
+// drivers: online drivers' cells in its region as last reported in events (busy
+// ones anywhere), and which are busy (a pending offer or an active trip), kept
+// across ticks (ADR 0048, 0050).
 // Cells may be stale (ADR 0018): a driver offered a trip on the tick it went
 // offline declines (ADR 0032).
 // tick: last clock tick, stamped on events caused by non-tick inputs.
@@ -122,10 +129,14 @@ type Decision = { state: DispatchState; outputs: DispatchOutput[] };
 // ADR 0018.
 const offerTimeoutTicks = 3;
 
+// regions, region: the layout and the region this instance owns (ADR 0050);
+// missing = one region.
 export function startDispatch(config: {
 	grid: Grid;
 	tick: Tick;
 	matching?: Matching | undefined;
+	regions?: RegionLayout;
+	region?: Region;
 }): DispatchState {
 	const matching = config.matching ?? { type: "greedy" };
 	// Parsed at the edge; a bad window here is a caller bug.
@@ -143,7 +154,14 @@ export function startDispatch(config: {
 		matching,
 		trips: new Map(),
 		endedTrips: new Map(),
-		drivers: startIdleDrivers(config.grid),
+		drivers: startIdleDrivers(
+			config.grid,
+			regionBounds(
+				config.regions ?? oneRegion,
+				config.grid,
+				config.region ?? Region.parse(0),
+			),
+		),
 	};
 }
 
@@ -410,6 +428,20 @@ function onOfferReply(
 			],
 		};
 	}
+	// A decline says where the driver is before its offer frees it: idle at a
+	// cell, or not idle (offline, or on another region's trip), so a driver
+	// whose move out of the region was lost is dropped (ADR 0050).
+	if (reply.type === "offer_declined") {
+		if (reply.idleAt === null) removeDriver(state.drivers, reply.driverId);
+		else {
+			placeDriver(
+				state.drivers,
+				reply.driverId,
+				reply.idleAt.x,
+				reply.idleAt.y,
+			);
+		}
+	}
 	storeTrip(state, next.value);
 	return {
 		state,
@@ -459,6 +491,10 @@ function arrive(
 			outputs: [{ type: "input_rejected", reason: next.error.type, input }],
 		};
 	}
+	// The arrival's cell is the driver's latest before its trip frees it, so a
+	// lost last move can't leave it idle at a stale cell (ADR 0050). Only here:
+	// a rejected arrival may name an idle driver.
+	placeDriver(state.drivers, input.driverId, input.cell.x, input.cell.y);
 	storeTrip(state, next.value);
 	return {
 		state,
