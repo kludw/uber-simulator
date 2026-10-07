@@ -1,0 +1,27 @@
+name: index-bench
+
+# Experiment for #268, not merged: one tick of drivers.moved for its
+# consumers, driver IDs (today) against driver indexes (scratch/index-bench.ts).
+on:
+  push:
+    branches: [268-exp-index-bench]
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: |
+          echo "cpu: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2)"
+          echo "runner: $(nproc) cpus; load average: $(cut -d' ' -f1-3 /proc/loadavg)"
+          bun scratch/index-bench.ts 400000 30
+          bun scratch/index-bench.ts 500000 30
+          echo "load average: $(cut -d' ' -f1-3 /proc/loadavg)"
