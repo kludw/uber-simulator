@@ -1463,3 +1463,13 @@ Greedy 400k, the four runs above (603.6-604.1 s from start to stop): dispatch 0.
 | NATS server at the limit | 0.10-0.14 cores | 0.09-0.15 cores |
 
 Next (proposal, no ADR; the 400k target is met): (1) greedy past 400k is still limited by dispatch's one thread, decoding and applying `drivers.moved` about equal; [Dispatch moves profile](#dispatch-moves-profile)'s remaining options are driver indexes instead of IDs in `drivers.moved` and decoding on a worker (an ADR each), and splitting dispatch by region is milestone 21. (2) Fix the riders' request draw for means above about 745 before measuring past 450k (milestone 21 targets 500k), or those runs carry less than spec-ratio demand. (3) Batched is unchanged and needs its batch matching cheaper (milestone 22).
+
+## Request draw cap
+
+Fixed 2026-10-07, [#246](https://github.com/kludw/uber-simulator/issues/246). The riders' request draw (`poisson` in `src/rider/brain.ts`, Knuth's method) capped requests at about 745 per tick, whatever the mean ([After milestone 20](#after-milestone-20)): `Math.exp(-mean)` underflows to 0 above that. It now draws a mean above 700 as the sum of Knuth draws over equal chunks of at most 700 (Poisson is additive). Means up to 700 (42,000 requests per minute, 420k drivers at the spec ratio) draw exactly as before, so every run below that is unchanged. No result is re-measured here.
+
+Results that ran with the cap (mean above about 745 per tick, about 447k drivers at the spec ratio):
+
+- [Ceiling](#ceiling), greedy 500k (in process): ran about 745 requests per tick against 833 at the spec ratio, about 11% light. Requests are a small share of its 152.6 M messages (driver moves dominate), but dispatch's matching work was understated, so "greedy keeps real time up to 500k" holds for that lighter demand only.
+- [After milestone 19](#after-milestone-19), greedy 500k (live, 2 runs): same cap (4,441.7-4,466.3 events per tick). One failed anyway; the pass on the EPYC 9V45 is at about 11% fewer requests than the spec ratio.
+- [After milestone 20](#after-milestone-20), greedy 450k-600k (live): 450k was 0.8% light, which doesn't change its verdicts; 475k-600k failed anyway, so the limits stand, but their dispatch numbers understate spec-ratio load.
