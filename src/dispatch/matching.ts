@@ -169,7 +169,10 @@ export function minCostMatchingByNearest(
 ): TripPair[] {
 	const rows = trips.length;
 	// A disallowed pair costs more than any whole set of allowed pairs, so the
-	// optimum uses as many allowed pairs as possible.
+	// optimum uses as many allowed pairs as possible. Assumes every pickup and
+	// driver cell is on the grid, so no distance exceeds width + height - 2
+	// (ADR 0051). An off-grid cell is bad input from another service; with
+	// one, a batch may get fewer pairs than the dense solver's.
 	const sentinel = rows * (grid.width + grid.height - 2) + 1;
 	const rowPotential = new Float64Array(rows);
 	const columnOfRow = new Int32Array(rows).fill(unmatched);
@@ -197,17 +200,22 @@ export function minCostMatchingByNearest(
 	// Each trip's nearest allowed untouched driver. Untouched drivers only
 	// shrink, so it stays the nearest until it is touched.
 	const cached: (Untouched | undefined)[] = new Array(rows);
+	// Trips with no allowed untouched driver left: stays so for the batch.
+	const noneAllowed = new Uint8Array(rows);
 
 	// The cheapest untouched driver for a row: its nearest allowed one, else
 	// any untouched one at the sentinel cost.
 	const untouched = (row: number, trip: MatchTrip): Untouched => {
 		const hit = cached[row];
 		if (hit !== undefined && !columnOf.has(hit.driverId)) return hit;
-		const allowed = nearest(
-			trip.pickup,
-			(driverId) =>
-				columnOf.has(driverId) || trip.excludedDrivers.has(driverId),
-		);
+		const allowed =
+			noneAllowed[row] === 1
+				? undefined
+				: nearest(
+						trip.pickup,
+						(driverId) =>
+							columnOf.has(driverId) || trip.excludedDrivers.has(driverId),
+					);
 		if (allowed !== undefined) {
 			const found = {
 				driverId: allowed.driverId,
@@ -218,6 +226,7 @@ export function minCostMatchingByNearest(
 			cached[row] = found;
 			return found;
 		}
+		noneAllowed[row] = 1;
 		const any = nearest(trip.pickup, (driverId) => columnOf.has(driverId));
 		if (any === undefined) throw new Error("more trips than idle drivers");
 		return { ...any, cost: sentinel, allowed: false };
