@@ -12,7 +12,6 @@ import type {
 	DriverArrivedAtPickup,
 	DriverId,
 	DriverMove,
-	DriverOnline,
 	DriversMoved,
 	DriversWentOnline,
 	DriverWentOffline,
@@ -184,11 +183,6 @@ export function startDriverShard(
 			periods,
 		};
 	}
-	const online: DriverOnline[] = [];
-	for (const driver of drivers.values()) {
-		if (driver.state !== "idle") continue;
-		online.push({ driverId: driver.id, cell: driver.cell });
-	}
 	const picky = startPicky(config.preferences, config.driverIds, random);
 	const state: DriverShardState = {
 		grid: config.grid,
@@ -197,9 +191,17 @@ export function startDriverShard(
 		schedule,
 		picky,
 	};
+	const online: ByRegion = new Map();
+	for (const driver of drivers.values()) {
+		if (driver.state !== "idle") continue;
+		inRegion(online, regionOf(state.regions, state.grid, driver.cell)).push({
+			driverId: driver.id,
+			cell: driver.cell,
+		});
+	}
 	return {
 		state,
-		outputs: inRegionChunks(state, online, (region, chunk) =>
+		outputs: inRegionChunks(online, (region, chunk) =>
 			driversWentOnline(config.tick, region, chunk),
 		),
 	};
@@ -330,8 +332,11 @@ function onOffer(
 		throw new Error(`offer for driver ${offer.driverId} outside this shard`);
 	}
 	const region = regionOf(state.regions, state.grid, offer.pickup);
+	// Out of region: the offering instance no longer owns the driver (it
+	// crossed), so accepting would leave two instances tracking it (ADR 0050).
 	if (
 		offered.state !== "idle" ||
+		regionOf(state.regions, state.grid, offered.cell) !== region ||
 		declines(state.picky, offered, offer, random)
 	) {
 		return {
@@ -512,8 +517,8 @@ function onTick(
 	input: ClockTicked,
 	random: Random,
 ): Decision {
-	const online: DriverOnline[] = [];
-	const moves: DriverMove[] = [];
+	const online: ByRegion = new Map();
+	const moves: ByRegion = new Map();
 	const outputs: DriverShardOutput[] = [];
 	const { drivers, schedule } = state;
 	// Only existing keys are set while iterating: order stays by ID.
@@ -525,27 +530,41 @@ function onTick(
 		if (schedule !== null && changed !== null) {
 			drivers.set(driver.id, changed.driver);
 			schedule.periods.set(driver.id, changed.period);
+			const { cell } = changed.driver;
+			const region = regionOf(state.regions, state.grid, cell);
 			if (changed.driver.state === "idle") {
-				online.push({ driverId: driver.id, cell: changed.driver.cell });
+				inRegion(online, region).push({ driverId: driver.id, cell });
 			} else {
 				outputs.push({
 					type: "driver.went_offline",
 					tick: input.tick,
 					driverId: driver.id,
-					cell: changed.driver.cell,
-					region: regionOf(state.regions, state.grid, changed.driver.cell),
+					cell,
+					region,
 				});
 			}
 			continue;
 		}
+		// A move goes to the region that owned the driver before it: an idle
+		// driver's previous cell's, a busy driver's trip's (ADR 0050).
 		switch (driver.state) {
-			case "idle":
-				drivers.set(driver.id, wander(driver, state.grid, random, moves));
+			case "idle": {
+				const region = regionOf(state.regions, state.grid, driver.cell);
+				drivers.set(
+					driver.id,
+					wander(driver, state.grid, random, inRegion(moves, region)),
+				);
 				break;
+			}
 			case "en_route":
 				drivers.set(
 					driver.id,
-					driveToPickup(driver, input.tick, moves, outputs),
+					driveToPickup(
+						driver,
+						input.tick,
+						inRegion(moves, driver.region),
+						outputs,
+					),
 				);
 				break;
 			case "at_pickup":
@@ -575,7 +594,12 @@ function onTick(
 			case "on_trip":
 				drivers.set(
 					driver.id,
-					driveToDropoff(driver, input.tick, moves, outputs),
+					driveToDropoff(
+						driver,
+						input.tick,
+						inRegion(moves, driver.region),
+						outputs,
+					),
 				);
 				break;
 			default: {
@@ -589,10 +613,10 @@ function onTick(
 	return {
 		state,
 		outputs: [
-			...inRegionChunks(state, online, (region, chunk) =>
+			...inRegionChunks(online, (region, chunk) =>
 				driversWentOnline(input.tick, region, chunk),
 			),
-			...inRegionChunks(state, moves, (region, chunk) =>
+			...inRegionChunks(moves, (region, chunk) =>
 				driversMoved(input.tick, region, chunk),
 			),
 			...outputs,
@@ -603,24 +627,27 @@ function onTick(
 // ADR 0045: keeps a message well under NATS's default 1 MB max_payload.
 const maxDriversPerMessage = 5000;
 
-// Chunks per region of the entries' cells, regions in index order, entry
-// order kept within each (ADR 0050). None when there are no entries.
+// A tick's drivers going online or moves, by the region they are sent to.
+type ByRegion = Map<Region, DriverMove[]>;
+
+function inRegion(byRegion: ByRegion, region: Region): DriverMove[] {
+	const entries = byRegion.get(region);
+	if (entries !== undefined) return entries;
+	const created: DriverMove[] = [];
+	byRegion.set(region, created);
+	return created;
+}
+
+// Regions in index order, entry order kept within each (ADR 0050). None when
+// there are no entries.
 function inRegionChunks<Batch>(
-	state: DriverShardState,
-	entries: DriverMove[],
+	byRegion: ByRegion,
 	batch: (region: Region, chunk: DriverMove[]) => Batch,
 ): Batch[] {
-	const byRegion = new Map<Region, DriverMove[]>();
-	for (const entry of entries) {
-		const region = regionOf(state.regions, state.grid, entry.cell);
-		const inRegion = byRegion.get(region);
-		if (inRegion === undefined) byRegion.set(region, [entry]);
-		else inRegion.push(entry);
-	}
 	return [...byRegion]
 		.toSorted(([a], [b]) => a - b)
-		.flatMap(([region, inRegion]) =>
-			inChunks(inRegion, (chunk) => batch(region, chunk)),
+		.flatMap(([region, entries]) =>
+			inChunks(entries, (chunk) => batch(region, chunk)),
 		);
 }
 
