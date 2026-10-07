@@ -244,8 +244,22 @@ function onTick(
 	return { state, outputs };
 }
 
-// Knuth's method: fine for the small per-tick means used here.
+// Largest mean Knuth's method draws exactly: Math.exp(-mean) stays a normal
+// double up to ~708 and underflows to 0 at ~745, capping the draw there.
+const KNUTH_MAX_MEAN = 700;
+
+// Poisson is additive: a larger mean is the sum of draws over equal chunks
+// Knuth handles. Means up to KNUTH_MAX_MEAN draw exactly as before (#246).
 function poisson(mean: number, random: Random): number {
+	const chunks = Math.max(1, Math.ceil(mean / KNUTH_MAX_MEAN));
+	let count = 0;
+	for (let chunk = 0; chunk < chunks; chunk++) {
+		count += knuthPoisson(mean / chunks, random);
+	}
+	return count;
+}
+
+function knuthPoisson(mean: number, random: Random): number {
 	const limit = Math.exp(-mean);
 	let count = 0;
 	let product = random.float();
