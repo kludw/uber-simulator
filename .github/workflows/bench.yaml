@@ -79,7 +79,7 @@ jobs:
       - name: Bench
         run: |
           mkdir -p out/profiles
-          { echo "runner: $(nproc) cpus, $(free -m | awk '/Mem:/ {print $2}') MiB"; echo "load average: $(cut -d' ' -f1-3 /proc/loadavg)"; } > out/machine.txt
+          { echo "runner: $(nproc) cpus, $(free -m | awk '/Mem:/ {print $2}') MiB"; echo "cpu model: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)"; echo "load average: $(cut -d' ' -f1-3 /proc/loadavg)"; } > out/machine.txt
           profile_flags=""
           if [ "$CPU_PROFILE" = "true" ]; then
             profile_flags="--cpu-prof --cpu-prof-md --cpu-prof-dir out/profiles"
