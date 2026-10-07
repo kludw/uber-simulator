@@ -8,6 +8,7 @@ import {
 	TripId,
 } from "../shared/messages.ts";
 import { createRandom, type Random } from "../shared/random.ts";
+import { Region, RegionLayout } from "../shared/regions.ts";
 import {
 	decideRiders,
 	type RidersInput,
@@ -101,6 +102,7 @@ describe("decideRiders on tick", () => {
 				riderId: RiderId.parse("r-1"),
 				pickup: cell(2, 3),
 				dropoff: cell(7, 8),
+				region: Region.parse(0),
 			},
 		]);
 	});
@@ -120,6 +122,7 @@ describe("decideRiders on tick", () => {
 				state: "waiting",
 				id: RiderId.parse("r-1"),
 				tripId: TripId.parse("t-1"),
+				region: Region.parse(0),
 				requestedAt: tick(1),
 				patience: 150,
 			},
@@ -144,6 +147,7 @@ describe("decideRiders on tick", () => {
 				riderId: RiderId.parse("r-1"),
 				pickup: cell(2, 3),
 				dropoff: cell(7, 8),
+				region: Region.parse(0),
 			},
 		]);
 	});
@@ -176,6 +180,7 @@ describe("decideRiders on tick with hotspot demand", () => {
 				riderId: RiderId.parse("r-1"),
 				pickup: cell(3, 4),
 				dropoff: cell(7, 8),
+				region: Region.parse(0),
 			},
 		]);
 	});
@@ -200,6 +205,7 @@ describe("decideRiders on tick with hotspot demand", () => {
 				riderId: RiderId.parse("r-1"),
 				pickup: cell(2, 9),
 				dropoff: cell(7, 8),
+				region: Region.parse(0),
 			},
 		]);
 	});
@@ -468,6 +474,7 @@ describe("decideRiders over many ticks", () => {
 				riderId: RiderId.parse("r-1"),
 				pickup: cell(1, 9),
 				dropoff: cell(8, 4),
+				region: Region.parse(0),
 			},
 			{
 				type: "request_trip",
@@ -476,6 +483,7 @@ describe("decideRiders over many ticks", () => {
 				riderId: RiderId.parse("r-2"),
 				pickup: cell(0, 5),
 				dropoff: cell(1, 4),
+				region: Region.parse(0),
 			},
 			{
 				type: "request_trip",
@@ -484,6 +492,7 @@ describe("decideRiders over many ticks", () => {
 				riderId: RiderId.parse("r-3"),
 				pickup: cell(2, 0),
 				dropoff: cell(8, 8),
+				region: Region.parse(0),
 			},
 		]);
 	});
@@ -504,6 +513,7 @@ function waitingRider(): RidersState {
 					state: "waiting",
 					id: r1,
 					tripId: t1,
+					region: Region.parse(0),
 					requestedAt: tick(1),
 					patience: 150,
 				},
@@ -527,7 +537,7 @@ function quietTick(state: RidersState, n: number) {
 describe("decideRiders patience", () => {
 	test("waiting rider whose patience runs out cancels the trip", () => {
 		expect(quietTick(waitingRider(), 151).outputs).toEqual([
-			{ type: "cancel_trip", tripId: t1 },
+			{ type: "cancel_trip", tripId: t1, region: Region.parse(0) },
 		]);
 	});
 
@@ -548,6 +558,7 @@ describe("decideRiders patience", () => {
 						state: "waiting",
 						id: RiderId.parse("r-9"),
 						tripId: TripId.parse("t-9"),
+						region: Region.parse(0),
 						requestedAt: tick(1),
 						patience: 150,
 					},
@@ -563,14 +574,52 @@ describe("decideRiders patience", () => {
 			}),
 		);
 		expect(quietTick(r10.state, 151).outputs).toEqual([
-			{ type: "cancel_trip", tripId: TripId.parse("t-10") },
-			{ type: "cancel_trip", tripId: TripId.parse("t-9") },
+			{
+				type: "cancel_trip",
+				tripId: TripId.parse("t-10"),
+				region: Region.parse(0),
+			},
+			{
+				type: "cancel_trip",
+				tripId: TripId.parse("t-9"),
+				region: Region.parse(0),
+			},
 		]);
 	});
 
 	test("rider cancels a trip only once", () => {
 		const cancelled = quietTick(waitingRider(), 151);
 		expect(quietTick(cancelled.state, 152).outputs).toEqual([]);
+	});
+});
+
+// ADR 0050: a trip belongs to its pickup's region. 2x1 on the 10 x 10 grid:
+// x 0-4 region 0, x 5-9 region 1.
+describe("decideRiders regions", () => {
+	const twoRegions = RegionLayout.parse("2x1");
+
+	// Pickup (7, 3) in region 1, dropoff (2, 8) in region 0.
+	function spawnInRegion1() {
+		return decideRiders(
+			startRiders({ grid, requestsPerMinute: 10, regions: twoRegions }),
+			{ type: "clock.ticked", tick: tick(1) },
+			scriptedRandom({
+				"demand:1": { floats: [0.9, 0.5], ints: [7, 3, 2, 8] },
+				"patience:1": { ints: [150] },
+			}),
+		);
+	}
+
+	test("a rider requests its trip from its pickup's region", () => {
+		expect(spawnInRegion1().outputs).toMatchObject([
+			{ type: "request_trip", region: 1 },
+		]);
+	});
+
+	test("a rider out of patience cancels in its trip's region", () => {
+		expect(quietTick(spawnInRegion1().state, 151).outputs).toEqual([
+			{ type: "cancel_trip", tripId: t1, region: Region.parse(1) },
+		]);
 	});
 });
 

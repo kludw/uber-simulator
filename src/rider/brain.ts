@@ -14,13 +14,21 @@ import type {
 	TripPickedUp,
 } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
+import {
+	oneRegion,
+	type Region,
+	type RegionLayout,
+	regionOf,
+} from "../shared/regions.ts";
 import { assertValidDemand, type Demand, pickupsForTick } from "./demand.ts";
 
+// region: the trip's, where its cancel goes (ADR 0050).
 type Rider =
 	| {
 			state: "waiting";
 			id: RiderId;
 			tripId: TripId;
+			region: Region;
 			requestedAt: Tick;
 			patience: number;
 	  }
@@ -33,6 +41,7 @@ type Rider =
 // 0036). Kept in spawn order, so patience cancels sort by rider ID themselves.
 export type RidersState = {
 	grid: Grid;
+	regions: RegionLayout;
 	requestsPerMinute: number;
 	demand: Demand;
 	spawned: number;
@@ -60,16 +69,18 @@ type Rejected = InputRejected<
 
 type Decision = { state: RidersState; outputs: RidersOutput[] };
 
-// Missing demand = uniform.
+// Missing demand = uniform; missing regions = one region.
 export function startRiders(config: {
 	grid: Grid;
 	requestsPerMinute: number;
 	demand?: Demand;
+	regions?: RegionLayout;
 }): RidersState {
 	const demand = config.demand ?? { type: "uniform" };
 	assertValidDemand(demand, config.grid);
 	return {
 		grid: config.grid,
+		regions: config.regions ?? oneRegion,
 		requestsPerMinute: config.requestsPerMinute,
 		demand,
 		spawned: 0,
@@ -201,7 +212,7 @@ function onTick(
 		root: random,
 		demand,
 	});
-	const outOfPatience: Rider[] = [];
+	const outOfPatience: Extract<Rider, { state: "waiting" }>[] = [];
 	for (const rider of state.riders.values()) {
 		if (rider.state !== "waiting") continue;
 		if (input.tick < rider.requestedAt + rider.patience) continue;
@@ -210,7 +221,11 @@ function onTick(
 	outOfPatience.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 	const outputs: RidersOutput[] = [];
 	for (const rider of outOfPatience) {
-		outputs.push({ type: "cancel_trip", tripId: rider.tripId });
+		outputs.push({
+			type: "cancel_trip",
+			tripId: rider.tripId,
+			region: rider.region,
+		});
 		state.riders.set(rider.tripId, {
 			state: "cancelling",
 			id: rider.id,
@@ -228,6 +243,7 @@ function onTick(
 			state: "waiting",
 			id: `r-${state.spawned}` as RiderId,
 			tripId: `t-${state.spawned}` as TripId,
+			region: regionOf(state.regions, state.grid, pickup),
 			requestedAt: input.tick,
 			patience: patience.int(120, 300),
 		};
@@ -239,6 +255,7 @@ function onTick(
 			riderId: rider.id,
 			pickup,
 			dropoff,
+			region: rider.region,
 		});
 	}
 	return { state, outputs };
