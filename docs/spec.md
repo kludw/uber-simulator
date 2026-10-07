@@ -22,7 +22,7 @@ Independent processes, each owning its state, talking over NATS. Each service's 
 | clock | tick counter | publishes `clock.ticked` every 1 s / speed |
 | driver (×2, 50 drivers each, fixed shard) | driver position, state | announces drivers going online (one `drivers.went_online` per region per up to 5,000 drivers, first in the tick, 0049, 0050), moves drivers each tick (one `drivers.moved` per region owning the moving drivers per up to 5,000 moves: an idle driver's cell before the move, a busy driver's trip's, 0050; as parallel arrays of driver IDs and coordinates, before its other events of the tick, 0045, 0047), answers offers, reports arrivals |
 | rider | riders, demand generator | spawns riders (Poisson; pickups uniform or around hotspots, 0031), requests trips, cancels on lost patience |
-| dispatch (single) | trips | queues requests, matches, owns every trip transition |
+| dispatch (one per region, one region by default, 0050) | its region's trips (a trip's region is its pickup's) and idle drivers | queues requests, matches within its region, owns every transition of its trips |
 | persister | stream position (JetStream consumer) | writes all events to ClickHouse, at-least-once |
 | UI (browser) | — | renders a view built from events |
 
@@ -52,7 +52,7 @@ Idle drivers wander: pick a random target cell, drive there, repeat. By default 
 - An offline driver (from `driver.went_offline` until its `drivers.went_online` entry) never moves and is never matched (`trip.matched`). Offers to it are allowed (stale view; it declines), and events freeing it (cancel, expiry, decline) don't bring it online.
 - A driver goes offline only with no active trip.
 
-Checked from the event log alone, one message at a time, by `createInvariantChecker` (`checkInvariants` over a whole log; `src/sim/invariants.ts`), independent of brain code.
+Checked from the event log alone, one message at a time, by `createInvariantChecker` (`checkInvariants` over a whole log; `src/sim/invariants.ts`), independent of brain code. Every invariant is global, whatever the region layout: each is about one trip (its events come from one dispatch instance) or one driver (its moves from one shard), so the checker needs no layout (0050).
 
 ## UI (0020)
 
