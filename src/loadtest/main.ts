@@ -98,7 +98,13 @@ const { promise: childFailed, resolve: markChildFailed } =
 	Promise.withResolvers<string>();
 
 function spawn(service: Service, onLine: (line: string) => void = () => {}) {
-	const subprocess = Bun.spawn(["bun", service.entrypoint], {
+	// #232 experiment, not merged: CPU profile of dispatch, written on its
+	// process.exit after SIGTERM.
+	const profile =
+		service.name === "dispatch"
+			? ["--cpu-prof", "--cpu-prof-dir", "out/profiles"]
+			: [];
+	const subprocess = Bun.spawn(["bun", ...profile, service.entrypoint], {
 		env: { ...runEnv, ...service.env },
 		stdout: "pipe",
 		stderr: "inherit",
