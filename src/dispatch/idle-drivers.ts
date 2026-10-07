@@ -11,14 +11,16 @@ export type IdleDriver = { driverId: DriverId; cell: Cell };
 
 // Square buckets of cellsPerBucket x cellsPerBucket cells. Below
 // linearScanBelow idle drivers, a linear scan beats searching mostly empty
-// buckets (ADR 0036). Defaults measured at 50k drivers (docs/performance.md).
+// buckets (ADR 0036). linearScanBelow measured at 50k drivers, cellsPerBucket
+// retuned at 400k and re-checked at 50k (docs/performance.md, Dispatch moves
+// profile, Move handling cut).
 type IdleDriverSearch = {
 	cellsPerBucket: number;
 	linearScanBelow: number;
 };
 
 const defaultSearch: IdleDriverSearch = {
-	cellsPerBucket: 16,
+	cellsPerBucket: 8,
 	linearScanBelow: 64,
 };
 
