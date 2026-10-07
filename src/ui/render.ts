@@ -1,6 +1,11 @@
 import type { Grid } from "../shared/grid.ts";
 import type { Tick } from "../shared/messages.ts";
-import { type DriverView, emptyView, type View } from "./view.ts";
+import {
+	type DriverView,
+	emptyView,
+	forEachDriver,
+	type View,
+} from "./view.ts";
 
 // Cell coordinates; fractional while a driver is between cells.
 type Point = { x: number; y: number };
@@ -89,8 +94,8 @@ export function tickFraction(timing: TickTiming, now: number): number {
 	return Math.min(1, (now - timing.arrivedAt) / timing.duration);
 }
 
-// Draws the latest view on every animation frame. Call show() with each new
-// view.
+// Draws the view on every animation frame. Call show() after each event
+// applied to it (the view is updated in place).
 export function startRenderer(
 	canvas: HTMLCanvasElement,
 	grid: Grid,
@@ -164,13 +169,13 @@ function draw(
 		);
 	}
 
-	for (const driver of view.drivers.values()) {
+	forEachDriver(view, (_index, driver) => {
 		const position = toPixel(driverPosition(driver, view.tick, fraction));
 		context.fillStyle = driverColors[driver.state];
 		context.beginPath();
 		context.arc(position.x, position.y, driverRadius, 0, 2 * Math.PI);
 		context.fill();
-	}
+	});
 }
 
 // Sizes the backing store to the canvas's CSS size times devicePixelRatio, so

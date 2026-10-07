@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import { Cell } from "../shared/grid.ts";
 import {
-	type DriverId,
+	DriverId,
 	driversMoved,
 	driversWentOnline,
 	RiderId,
@@ -11,7 +11,13 @@ import {
 	TripId,
 } from "../shared/messages.ts";
 import { Region } from "../shared/regions.ts";
-import { applyEvent, emptyView, type View } from "./view.ts";
+import {
+	applyEvent,
+	type DriverView,
+	emptyView,
+	forEachDriver,
+	type View,
+} from "./view.ts";
 
 // Drivers 1 and 2 of a fleet of 10: IDs d-1 and d-2 (ADR 0052).
 const fleetSize = 10;
@@ -66,7 +72,15 @@ const trip: SimEvent[] = [
 ];
 
 function viewOf(events: SimEvent[]): View {
-	return events.reduce(applyEvent, emptyView());
+	const view = emptyView();
+	for (const event of events) applyEvent(view, event);
+	return view;
+}
+
+function driversOf(view: View): Map<DriverIndex, DriverView> {
+	const drivers = new Map<DriverIndex, DriverView>();
+	forEachDriver(view, (index, driver) => drivers.set(index, driver));
+	return drivers;
 }
 
 describe("drivers", () => {
@@ -77,9 +91,9 @@ describe("drivers", () => {
 				{ driverIndex: i2, cell: cell(5, 5) },
 			]),
 		]);
-		expect([...view.drivers]).toEqual([
+		expect([...driversOf(view)]).toEqual([
 			[
-				d1,
+				i1,
 				{
 					state: "idle",
 					cell: cell(2, 3),
@@ -88,7 +102,7 @@ describe("drivers", () => {
 				},
 			],
 			[
-				d2,
+				i2,
 				{
 					state: "idle",
 					cell: cell(5, 5),
@@ -111,7 +125,7 @@ describe("drivers", () => {
 
 	test("a move keeps the previous cell and the tick it moved at", () => {
 		const view = viewOf([online(i1, 0, cell(2, 3)), moved(i1, 4, cell(2, 4))]);
-		expect(view.drivers.get(d1)).toEqual({
+		expect(driversOf(view).get(i1)).toEqual({
 			state: "idle",
 			cell: cell(2, 4),
 			previousCell: cell(2, 3),
@@ -128,9 +142,9 @@ describe("drivers", () => {
 				{ driverIndex: i2, cell: cell(5, 6) },
 			]),
 		]);
-		expect([...view.drivers]).toEqual([
+		expect([...driversOf(view)]).toEqual([
 			[
-				d1,
+				i1,
 				{
 					state: "en_route",
 					cell: cell(1, 0),
@@ -139,7 +153,7 @@ describe("drivers", () => {
 				},
 			],
 			[
-				d2,
+				i2,
 				{
 					state: "idle",
 					cell: cell(5, 6),
@@ -152,32 +166,32 @@ describe("drivers", () => {
 
 	test("a matched driver is en route", () => {
 		const view = viewOf(trip.slice(0, 3));
-		expect(view.drivers.get(d1)?.state).toBe("en_route");
+		expect(driversOf(view).get(i1)?.state).toBe("en_route");
 	});
 
 	test("a driver arrived at pickup is at pickup", () => {
 		const view = viewOf(trip.slice(0, 4));
-		expect(view.drivers.get(d1)?.state).toBe("at_pickup");
+		expect(driversOf(view).get(i1)?.state).toBe("at_pickup");
 	});
 
 	test("a driver whose rider is picked up is on trip", () => {
 		const view = viewOf(trip.slice(0, 5));
-		expect(view.drivers.get(d1)?.state).toBe("on_trip");
+		expect(driversOf(view).get(i1)?.state).toBe("on_trip");
 	});
 
 	test("a driver arrived at dropoff is at dropoff", () => {
 		const view = viewOf(trip.slice(0, 6));
-		expect(view.drivers.get(d1)?.state).toBe("at_dropoff");
+		expect(driversOf(view).get(i1)?.state).toBe("at_dropoff");
 	});
 
 	test("a driver whose trip completed is idle again", () => {
 		const view = viewOf(trip);
-		expect(view.drivers.get(d1)?.state).toBe("idle");
+		expect(driversOf(view).get(i1)?.state).toBe("idle");
 	});
 
 	test("the driver named by a cancelled trip is idle again", () => {
 		const view = viewOf([...trip.slice(0, 3), cancelled(t1, d1, 3)]);
-		expect(view.drivers.get(d1)?.state).toBe("idle");
+		expect(driversOf(view).get(i1)?.state).toBe("idle");
 	});
 });
 
@@ -290,7 +304,7 @@ describe("counters", () => {
 describe("joining mid-run", () => {
 	test("a driver first seen moving is idle at its cell", () => {
 		const view = viewOf([moved(i1, 7, cell(4, 4))]);
-		expect(view.drivers.get(d1)).toEqual({
+		expect(driversOf(view).get(i1)).toEqual({
 			state: "idle",
 			cell: cell(4, 4),
 			previousCell: cell(4, 4),
@@ -298,25 +312,18 @@ describe("joining mid-run", () => {
 		});
 	});
 
-	test("a driver first seen arriving at pickup is at pickup at that cell", () => {
-		const view = viewOf([trip[3] as SimEvent]);
-		expect(view.drivers.get(d1)).toEqual({
-			state: "at_pickup",
-			cell: cell(3, 0),
-			previousCell: cell(3, 0),
-			movedAt: tick(5),
-		});
-	});
-
-	test("a driver first seen arriving at dropoff is at dropoff at that cell", () => {
-		const view = viewOf([trip[5] as SimEvent]);
-		expect(view.drivers.get(d1)).toEqual({
-			state: "at_dropoff",
-			cell: cell(3, 5),
-			previousCell: cell(3, 5),
-			movedAt: tick(10),
-		});
-	});
+	// ADR 0053: an arrival carries no fleet size; the driver appears with its
+	// next move, within a tick.
+	test.each([3, 5])(
+		"a driver first seen arriving is not shown (trip event %#)",
+		(arrival) => {
+			const view = viewOf([
+				online(i2, 0, cell(5, 5)),
+				trip[arrival] as SimEvent,
+			]);
+			expect(driversOf(view).has(i1)).toBe(false);
+		},
+	);
 
 	test("trip events for an unknown trip and driver only count", () => {
 		const view = viewOf(
@@ -326,6 +333,54 @@ describe("joining mid-run", () => {
 			...emptyView(),
 			tripsCompleted: 1,
 		});
+	});
+});
+
+// ADR 0053 decision 2: drivers are kept by index, sized by the fleet size of
+// drivers.* messages.
+describe("fleet size", () => {
+	test("before any driver message, driver events change no driver but trips apply", () => {
+		const view = viewOf([...trip.slice(1, 3), moved(i1, 3, cell(1, 0))]);
+		expect({
+			state: driversOf(view).get(i1)?.state,
+			activeTrips: [...view.activeTrips.keys()],
+		}).toEqual({ state: "idle", activeTrips: [t1] });
+	});
+
+	test.each(["d-10", "d-99999", "driver-1"])(
+		"events naming driver %p, outside the fleet, change no driver",
+		(id) => {
+			const outside = DriverId.parse(id);
+			const view = viewOf([
+				online(i1, 0, cell(0, 0)),
+				requested(t1, 1, pickup, dropoff),
+				matched(t1, outside, 2),
+				{
+					type: "driver.went_offline",
+					tick: tick(3),
+					driverId: outside,
+					cell: cell(0, 0),
+					region: Region.parse(0),
+				},
+			]);
+			expect([...driversOf(view).keys()]).toEqual([i1]);
+		},
+	);
+
+	test("a new fleet size resets the view before its message applies", () => {
+		const newRun: SimEvent[] = [
+			{ type: "clock.ticked", tick: tick(11) },
+			driversWentOnline(tick(0), Region.parse(0), 20, [
+				{ driverIndex: i2, cell: cell(7, 7) },
+			]),
+		];
+		const view = viewOf([
+			...trip,
+			online(i2, 3, cell(5, 5)),
+			requested(TripId.parse("t-2"), 9, pickup, dropoff),
+			...newRun,
+		]);
+		expect(view).toEqual(viewOf(newRun));
 	});
 });
 
@@ -339,7 +394,7 @@ describe("late arrivals", () => {
 			trip[3] as SimEvent,
 			{ type: "trip.offer_expired", tick: tick(5), tripId: t1, driverId: d1 },
 		]);
-		expect(view.drivers.get(d1)?.state).toBe("idle");
+		expect(driversOf(view).get(i1)?.state).toBe("idle");
 	});
 
 	test("an arrival after the trip was cancelled leaves the driver idle", () => {
@@ -348,7 +403,7 @@ describe("late arrivals", () => {
 			cancelled(t1, d1, 5),
 			trip[3] as SimEvent,
 		]);
-		expect(view.drivers.get(d1)?.state).toBe("idle");
+		expect(driversOf(view).get(i1)?.state).toBe("idle");
 	});
 });
 
@@ -360,7 +415,9 @@ describe("offers", () => {
 			{ type: "trip.offer_declined", tick: tick(3), tripId: t1, driverId: d1 },
 			{ type: "trip.offer_expired", tick: tick(4), tripId: t1, driverId: d1 },
 		] satisfies SimEvent[];
-		expect(offered.reduce(applyEvent, view)).toBe(view);
+		const before = structuredClone(view);
+		for (const event of offered) applyEvent(view, event);
+		expect(view).toEqual(before);
 	});
 });
 
@@ -376,7 +433,7 @@ describe("going offline", () => {
 
 	test("a driver going offline leaves the view", () => {
 		const view = viewOf([online(i1, 0, cell(2, 3)), wentOffline]);
-		expect(view.drivers.has(d1)).toBe(false);
+		expect(driversOf(view).has(i1)).toBe(false);
 	});
 
 	test("a driver going offline is no longer counted", () => {
@@ -396,7 +453,7 @@ describe("going offline", () => {
 			wentOffline,
 			freed,
 		]);
-		expect(view.drivers.has(d1)).toBe(false);
+		expect(driversOf(view).has(i1)).toBe(false);
 	});
 
 	test("a driver back online is idle at its cell", () => {
@@ -405,7 +462,7 @@ describe("going offline", () => {
 			wentOffline,
 			online(i1, 9, cell(2, 3)),
 		]);
-		expect(view.drivers.get(d1)?.state).toBe("idle");
+		expect(driversOf(view).get(i1)?.state).toBe("idle");
 	});
 });
 
