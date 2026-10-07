@@ -1,4 +1,6 @@
-# Performance
+# Performance history
+
+Every measurement so far, oldest first, as recorded at the time; current limits, how to measure, and what fails first are in [performance.md](performance.md). Two later findings correct the reading of earlier sections without re-measuring them, and each affected section points to them: [Request draw cap](#request-draw-cap) (demand above about 447k drivers) and [Runner topology](#runner-topology) (the runner's 4 CPUs are 2 cores).
 
 Where wall time and memory go at 1k, 5k, and 10k drivers, measured 2026-10-03 at `0efef1e` ([#108](https://github.com/kludw/uber-simulator/issues/108)). The baseline is measurements only; the ADR 0033 fixes and their effect are in [After milestone 9 fixes](#after-milestone-9-fixes), 1-hour runs in [Long runs](#long-runs), 20k-50k in [Toward 50k](#toward-50k), 50k after the ADR 0036 fixes in [After milestone 12](#after-milestone-12), 76k-500k in [Ceiling](#ceiling), and the distributed stack over NATS in [Live limits](#live-limits) (latest: [After milestone 22](#after-milestone-22), batched limits per region layout; [After milestone 21](#after-milestone-21), dispatch split by region); batched dispatch memory in [Batched dispatch memory](#batched-dispatch-memory); the observer's `clock.ticked` deviations in [Clock deviation](#clock-deviation); dispatch's work per tick at greedy 200k, by function, in [Dispatch profile](#dispatch-profile); the compact `drivers.moved` shape and its effect in [Compact driver moves](#compact-driver-moves); dispatch keeping its idle drivers across ticks in [Idle drivers across ticks](#idle-drivers-across-ticks); cheaper move handling in dispatch in [Move handling cut](#move-handling-cut); the CI runner being 2 SMT cores in [Runner topology](#runner-topology); batched matching's profile and the exact cut that lifts its limit in [Cheaper batched matching](#cheaper-batched-matching).
 
@@ -338,6 +340,8 @@ Grouped by nearest named `src/` caller, as in [Toward 50k](#toward-50k) (self-ti
 - Batched is now 74% matching: the exact Hungarian solve, O(queued² × idle) per batch tick, and the dense cost matrix it reads. One tick in 5 is a batch tick, so its p95 falls on one. This is where ADR 0036's follow-up (k-nearest pruning vs dispatch sharding) would act if batched ever misses the target.
 
 ## Ceiling
+
+Corrected later: greedy 500k here ran about 11% below the spec ratio's demand ([Request draw cap](#request-draw-cap)).
 
 How far the in-process run goes past 50k. Measured 2026-10-04 at `e16f94a` (master after [#152](https://github.com/kludw/uber-simulator/pull/152)), [#154](https://github.com/kludw/uber-simulator/issues/154).
 
@@ -705,6 +709,8 @@ Every other run of [After milestone 16](#after-milestone-16) and [Subscriptions 
 
 ## Infra CPU
 
+Corrected later: the runner's 4 CPUs are 2 cores with SMT, so idle or spare cores read off run averages below don't hold during each tick's burst ([Runner topology](#runner-topology)).
+
 Where the runner's CPU goes near the live limit, and what the 35k backlog spike of [After milestone 16](#after-milestone-16) coincides with, [#198](https://github.com/kludw/uber-simulator/issues/198) (milestone 17). The load test report now gives, besides each service's CPU: the NATS server's and ClickHouse's CPU from their containers' cgroup v2 `cpu.stat` (cumulative `user_usec` / `system_usec`, read through `docker exec` at the start, with each backlog sample, and at the stop); the load test process's own CPU (`process.cpuUsage()`: observer and sampler); each one's share of the runner's CPUs over the run; and per backlog sample, the NATS server's and ClickHouse's CPU in cores and ClickHouse's merged rows (`system.events` `MergedRows`, every table). Measured 2026-10-05 on branch `198-infra-cpu` at `02c519a` (master `df17330` plus the report change).
 
 ### Method
@@ -755,6 +761,8 @@ The persister after [ADR 0044](adr/0044-persister-pipelining.md) (next fetch run
 - **Smaller gain than projected**: ADR 0044 projected 170-200 ms rounds while behind. Fetch is hidden, but decode and insert each grew by about 20 ms on average (decode 63-81 -> 83-89, insert 72-86 -> 99-102), consistent with the NATS client parsing the next batch on the same thread during the insert's await and between decodes (inferred, not profiled). Persister CPU 372-426 s (62-70% of a core), up from 332-391 s.
 
 ## After milestone 17
+
+Corrected later: the runner's 4 CPUs are 2 cores with SMT, so idle or spare cores read off run averages below don't hold during each tick's burst ([Runner topology](#runner-topology)).
 
 Live limits after [ADR 0044](adr/0044-persister-pipelining.md)'s persister pipelining, judged by ADR 0037 with [ADR 0038](adr/0038-persister-backlog-criterion.md)'s backlog bound, [#200](https://github.com/kludw/uber-simulator/issues/200). Measured 2026-10-05/06 at `f8b4b74` (master after [#202](https://github.com/kludw/uber-simulator/pull/202)).
 
@@ -857,6 +865,8 @@ Both runs pass every criterion: 0 overruns, 0 slow consumers, drain 2.1 s.
 - **Persister, NATS server, ClickHouse**: their CPU isn't split by type; they carry 98.9-99.3% `driver.moved` by count. The NATS server uses 0.77-0.78 cores, ClickHouse 0.34-0.38, the persister 386.8-404.5 CPU s (0.64-0.67 cores).
 
 ## After milestone 18
+
+Corrected later: the runner's 4 CPUs are 2 cores with SMT, so idle or spare cores read off run averages below don't hold during each tick's burst ([Runner topology](#runner-topology)).
 
 Live limits after [ADR 0045](adr/0045-publish-driver-moves-in-batches.md)'s `drivers.moved` (a shard's moves of a tick in messages of at most 5,000), judged by ADR 0037 with [ADR 0038](adr/0038-persister-backlog-criterion.md)'s backlog bound, [#207](https://github.com/kludw/uber-simulator/issues/207). Measured 2026-10-06 at `6909e8a` (master after [#210](https://github.com/kludw/uber-simulator/pull/210)).
 
@@ -1166,6 +1176,8 @@ In process the whole tick is 16-25% faster (mean), 24-25% on the EPYC 7763; peak
 
 ## After milestone 19
 
+Corrected later: greedy above about 447k drivers ran below the spec ratio's demand ([Request draw cap](#request-draw-cap)); the runner's 4 CPUs are 2 cores with SMT, so spare cores read off run averages below don't hold during each tick's burst ([Runner topology](#runner-topology)).
+
 Live limits after [ADR 0047](adr/0047-driver-moves-as-parallel-arrays.md)'s compact `drivers.moved` and [ADR 0048](adr/0048-keep-idle-drivers-across-ticks.md)'s idle drivers kept across ticks, judged by ADR 0037 with [ADR 0046](adr/0046-persister-pending-criterion.md)'s backlog bound, [#223](https://github.com/kludw/uber-simulator/issues/223). Measured 2026-10-07 at `d13cf24` (master after [#227](https://github.com/kludw/uber-simulator/pull/227)).
 
 ### Method
@@ -1269,6 +1281,8 @@ Whether publishing drivers going online per shard in chunks of 5,000 ([ADR 0049]
 - **Settle still fails first above 325k-350k**, set by dispatch's per-tick work (426-652 ms here; out of scope for #229): 400k passes every criterion on one EPYC 9V74 (p95 559.8 ms) and fails settle on another (731.0 ms; its dispatch took 22% longer per tick for the same messages), 500k fails settle and overruns on both EPYC 7763 runs. The live limit stays [After milestone 19](#after-milestone-19)'s 325k (not re-bracketed); what no longer limits it is the slow consumer.
 
 ## Dispatch moves profile
+
+Corrected later: the runner's 4 CPUs are 2 cores with SMT, so idle or spare cores read off run averages below don't hold during each tick's burst ([Runner topology](#runner-topology)).
 
 Where dispatch's time per tick goes at greedy 325k and 400k after [ADR 0047](adr/0047-driver-moves-as-parallel-arrays.md), [0048](adr/0048-keep-idle-drivers-across-ticks.md) and [0049](adr/0049-publish-drivers-going-online-in-batches.md), by function, and what each candidate cut would save, so milestone 20's cut is chosen from a profile, [#232](https://github.com/kludw/uber-simulator/issues/232). Measured 2026-10-07 at master `d99579d`.
 
@@ -1390,6 +1404,8 @@ Unpaired `bench` workflow, same-model rows only (mean / p95): 50k batched on an 
 Next, per [Dispatch moves profile](#dispatch-moves-profile): driver indexes instead of IDs in `drivers.moved` (an ADR; removes the Map lookup and most of JSON.parse), then decoding on a worker (an ADR); splitting dispatch is milestone 21.
 
 ## After milestone 20
+
+Corrected later: greedy above about 447k drivers ran below the spec ratio's demand ([Request draw cap](#request-draw-cap)); the runner's 4 CPUs are 2 cores with SMT, so spare cores read off run averages below don't hold during each tick's burst ([Runner topology](#runner-topology)).
 
 Live limits after [Move handling cut](#move-handling-cut) (`drivers.moved` / `drivers.went_online` arrays checked in one Zod pass, x and y on dispatch's driver record, 8-cell grid buckets), judged by ADR 0037 with [ADR 0046](adr/0046-persister-pending-criterion.md)'s backlog bound, [#234](https://github.com/kludw/uber-simulator/issues/234). Measured 2026-10-07 at `90bece8` (master after [#244](https://github.com/kludw/uber-simulator/pull/244)).
 

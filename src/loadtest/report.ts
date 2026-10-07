@@ -50,7 +50,7 @@ const minTicks = 600;
 const maxSettleP95Ms = 610;
 const maxOverrunShare = 0.01;
 // Not a criterion: the observer's own lateness (#214). After tick 2, receipts
-// were at most 46 ms late in the runs measured (docs/performance.md).
+// were at most 46 ms late in the runs measured (docs/performance-history.md).
 const observerLateWarningMs = 100;
 
 export function loadtestReport(
