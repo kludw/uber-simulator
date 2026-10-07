@@ -104,6 +104,10 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: bun run db:migrate
+      - name: Topology (experiment, #238)
+        run: |
+          mkdir -p out
+          bash experiment/topology.sh 2>&1 | tee out/topology.txt
       - name: Load test
         run: |
           mkdir -p out
@@ -111,6 +115,7 @@ jobs:
           # Ticks run at 1 s each; the cap allows startup, the drain bound,
           # and 5 min slack, and kills a run that hangs.
           cap=$(awk "BEGIN { print int($TICKS / 60 + $DRAIN_MINUTES + 5) }")
+          bash experiment/sample.sh > out/schedstat.txt 2>&1 &
           set +e
           # bun run loadtest, called directly so timeout's SIGTERM reaches the
           # load test, which then stops its services; SIGKILL 1 min later if
