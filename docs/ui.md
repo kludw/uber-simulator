@@ -1,6 +1,6 @@
 # UI at scale
 
-How the browser UI ([ADR 0020](adr/0020-browser-ui-canvas-nats-websocket.md)) and its feed behave at 10k, 100k and 400k drivers, how that was measured, and what the UI does about it ([ADR 0053](adr/0053-scale-the-ui-in-the-browser.md)). Last measured 2026-10-08 on master `1ab377c` and the unmerged experiment branch `272-exp-ui-scale`.
+How the browser UI ([ADR 0020](adr/0020-browser-ui-canvas-nats-websocket.md)) and its feed behave at 10k, 100k and 400k drivers, how that was measured, and what the UI does about it ([ADR 0053](adr/0053-scale-the-ui-in-the-browser.md)). Last measured 2026-10-08 on master `1ab377c`, the unmerged experiment branch `272-exp-ui-scale`, and the view by index (#273).
 
 ## Method
 
@@ -51,6 +51,18 @@ Each row adds to the one before, measured at 400k uniform unless noted.
 
 - A2 got slower than A1 at applying: the image removed the draw cost and exposed the state events' map copies (profile: `applyEvent` 234 ms/s self). B removed the per-move string IDs and objects; its profile still showed `applyEvent` at 253 ms/s from the rider and trip map copies, and `(program)` at 620 ms/s from 18k trip lines. C removed both.
 - One pixel per cell (A2-C) is legible as a texture, not as information: at 100k uniform it is grey noise with a few coloured specks. The tile heatmap (D) shows where the work is: with `city` demand, downtown and the airport stand out as tiles full of busy drivers and waiting riders.
+
+## View by index ([#273](https://github.com/kludw/uber-simulator/issues/273))
+
+ADR 0053 slice 1: the view keeps drivers in typed arrays by driver index and updates in place; dots at every size. Measured 2026-10-08 on branch `273-ui-view-by-index` with the method above (uniform, shifts off), the page instrumented locally as on the experiment branch (decode + apply time per message, draw time per frame; at 400k the canvas skips drawing, since dots at 400k still fall behind and grow the heap by construction). Host load average 2.2-3.3. Feed at 400k: 3,389 messages/s, 5,934 KB/s.
+
+| Fleet | Canvas | Frames / s | Frame p95 (ms) | Draw p50 (ms) | Decode + apply (ms / s) | Applied of the feed | JS heap |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 10k | dots | 60 | 16.7 | 1.3-1.4 | 0.9 | all (78-85 msg/s, 129-132 KB/s) | 5.0-9.9 MB at 35 s, 6.4-8.4 MB at 80 s: flat |
+| 400k | idle | 60 | 16.8 | 0 | 31.6-31.8 | all (3,480 msg/s, 5,976-6,005 KB/s) | 8.4-19.6 MB at 35 s, 10.6-20.8 MB at 60 s |
+
+- **Target met**: decode + apply at 400k is 31.6-31.8 ms per wall second (target about 35, spike C 34.2); at 10k it fell from 26.6 to 0.9 ms/s, since a `drivers.moved` message no longer copies the drivers map.
+- Two runs per row (warm-up 15 s and 40-60 s, 20 s windows); the heap ranges are `performance.memory` and the protocol's `JSHeapUsedSize`, read at the end of each window.
 
 ## Decision
 
