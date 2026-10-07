@@ -52,3 +52,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0046 | [Persister pending criterion](0046-persister-pending-criterion.md)      | Accepted |
 | 0047 | [Driver moves as parallel arrays](0047-driver-moves-as-parallel-arrays.md) | Accepted |
 | 0048 | [Keep idle drivers across ticks](0048-keep-idle-drivers-across-ticks.md) | Accepted |
+| 0049 | [Drivers going online in batches](0049-publish-drivers-going-online-in-batches.md) | Accepted |
