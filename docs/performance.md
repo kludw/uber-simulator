@@ -45,6 +45,7 @@ Both CI workflows run each case on its own GitHub `ubuntu-latest` runner: 4 CPUs
 - Each tick's work arrives in one burst (the shards publish their moves at the start of the tick, and every service handles them), so a run average well under 4 cores doesn't mean cores to spare: at greedy `1x1` 400k every CPU is 49-50% busy on average ([After milestone 21](performance-history.md#after-milestone-21)).
 - CPU models vary by job: EPYC 7763, 9V45, 9V74, Xeon Platinum 8370C, 8573C, Xeon 6973P-C. Most failures near a limit are on the EPYC 7763 ([After milestone 21](performance-history.md#after-milestone-21), [After milestone 22](performance-history.md#after-milestone-22)).
 - The dev machine's load average is often 50-90: local timings only show a command works ([Method](performance-history.md#method)).
+- **No larger runner is available to this repo.** It belongs to a personal account (`kludw`), and GitHub's larger runners are added by organization or enterprise owners, in a runner group ([Managing larger runners](https://docs.github.com/en/actions/how-tos/manage-runners/larger-runners/manage-larger-runners)). Load test jobs asking for `ubuntu-latest-4-cores`, `-8-cores` and `-16-cores` stayed queued for 5 min with no runner and were cancelled, while a `ubuntu-latest` job ran ([Larger runner](performance-history.md#larger-runner)).
 
 ## How to measure
 
@@ -56,7 +57,7 @@ Command and report: README [Load test](../README.md#load-test). In CI (one job p
 gh workflow run loadtest.yaml --ref master -f drivers="350000 400000" -f matching="greedy" -f regions="1x1 2x1"
 ```
 
-Each job's report is uploaded as an artifact (`gh run download <run id>`); its `host` line names the CPU model. A size counts as supported when the slower of two runs (at least two workflow runs, so two runners) passes every criterion ([ADR 0037](adr/0037-end-to-end-load-test.md), with [ADR 0046](adr/0046-persister-pending-criterion.md)'s backlog bound in place of 0037's pending trend). The report prints a `pass` / `FAIL` line per criterion:
+`-f runner=<label>` runs the jobs on another runner (default `ubuntu-latest`). Each job's report is uploaded as an artifact (`gh run download <run id>`); its `host` line names the CPU model, and `machine.txt` adds the `lscpu` topology (cores per socket, threads per core). A size counts as supported when the slower of two runs (at least two workflow runs, so two runners) passes every criterion ([ADR 0037](adr/0037-end-to-end-load-test.md), with [ADR 0046](adr/0046-persister-pending-criterion.md)'s backlog bound in place of 0037's pending trend). The report prints a `pass` / `FAIL` line per criterion:
 
 - at least 600 ticks at `SPEED=1`;
 - settle p95 at most 610 ms (settle of tick t = last event of tick t minus `clock.ticked` t, as the observer receives them);
@@ -89,7 +90,7 @@ Target per ADR 0036: p95 under 1,000 ms per tick, counted as reliably met only w
 
 Proposals from the last two re-measurements, no ADR yet:
 
-1. **More physical cores, or less CPU per tick's moves in every service.** Both greedy and batched split layouts are bound by the runner's 2 cores. Re-measure the layouts on a runner with more cores (a larger GitHub runner or a self-hosted one), or cut what every service spends on `drivers.moved` (the persister decodes and stores every one too) ([After milestone 21](performance-history.md#after-milestone-21), [After milestone 22](performance-history.md#after-milestone-22)).
+1. **More physical cores, or less CPU per tick's moves in every service.** Both greedy and batched split layouts are bound by the runner's 2 cores. Re-measure the layouts on a runner with more cores, or cut what every service spends on `drivers.moved` (the persister decodes and stores every one too) ([After milestone 21](performance-history.md#after-milestone-21), [After milestone 22](performance-history.md#after-milestone-22)). A larger GitHub runner needs the repo in an organization with larger runners set up ([Larger runner](performance-history.md#larger-runner)); otherwise a self-hosted runner, passed with `-f runner=<label>`.
 2. **Profile batched `1x1` at 175k** to see whether the solver or the moves now dominate dispatch's thread; the batch step's cost follows how far idle drivers are from pickups ([Cheaper batched matching](performance-history.md#cheaper-batched-matching), [After milestone 22](performance-history.md#after-milestone-22)).
 3. **Re-measure the in-process ceiling**: greedy 500k ran with capped demand, batched predates ADR 0051 ([In-process ceiling](#in-process-ceiling)).
 
