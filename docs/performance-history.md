@@ -1853,3 +1853,24 @@ ms per tick, jobs 1 / 2 (EPYC 7763) and 3 (Xeon 8573C):
 - **Readers that want IDs lose nothing**: an ID from a table filled once per index costs no more than today's ID from JSON.parse.
 - **The persister's decode shrinks the same way**; its row payload stringify doesn't (the arrays have the same lengths).
 - Not measured here: the driver shards' build and stringify, and the live effect on settle, which [#269](https://github.com/kludw/uber-simulator/issues/269) measures with the load test at 450k and 500k.
+
+## Dispatch drivers by index
+
+Live greedy `1x1` after [ADR 0052](adr/0052-driver-indexes-in-moves.md)'s both slices (driver indexes in moves, [#269](https://github.com/kludw/uber-simulator/issues/269); dispatch's drivers in an array by index, [#280](https://github.com/kludw/uber-simulator/issues/280)), branch `280-dispatch-array-by-index` at `dd0f3bb`. Measured 2026-10-07. Not a full re-measure: two sizes, two runs each, nothing above 500k ([#270](https://github.com/kludw/uber-simulator/issues/270) brackets the limits).
+
+### Method
+
+`loadtest` workflow as in [After milestone 22](#after-milestone-22): `ubuntu-latest`, 2 driver shards, spec-ratio demand, seed 1, 600 ticks, drain bound 5 min; `-f drivers="450000 500000" -f matching=greedy -f regions=1x1`, two workflow runs. Dispatch ms per tick: its `messages_timed` entries summed over the run, over 600 ticks (wall time).
+
+### Results
+
+| Drivers | Run | CPU model | Settle ms mean / p95 / max | Overruns | Backlog second-half max (limit) | Slow consumers | Dispatch ms per tick: `drivers.moved` decode / handle, `clock.ticked` handle, all | Dispatch peak RSS MiB | Verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | ---: | --- |
+| 450k | [37691796420](https://github.com/kludw/uber-simulator/actions/runs/37691796420) | EPYC 7763 | 293.9 / 395.9 / 563.9 | 0 | 1 (13,427) | 0 | 63.8 / 40.5, 71.3, 216.5 | 488.4 | pass |
+| 450k | [37691799800](https://github.com/kludw/uber-simulator/actions/runs/37691799800) | EPYC 9V74 | 235.8 / 315.7 / 531.3 | 0 | 1,318 | 0 | 47.5 / 33.4, 55.7, 166.2 | 491.1 | pass |
+| 500k | [37691796420](https://github.com/kludw/uber-simulator/actions/runs/37691796420) | EPYC 9V74 | 259.6 / 336.4 / 476.1 | 0 | 0 | 0 | 51.7 / 35.6, 67.9, 188.0 | 534.9 | pass |
+| 500k | [37691799800](https://github.com/kludw/uber-simulator/actions/runs/37691799800) | EPYC 7763 | 347.8 / 461.9 / 668.3 | 0 | 1,725 | 0 | 69.9 / 48.6, 96.6, 262.6 | 519.6 | pass |
+
+- **Greedy `1x1` keeps real time at 500k**, two of two, on both CPU models, the EPYC 7763 included (p95 461.9 ms, 148 ms under the bound); every run 600 of 600 ticks, persister drained in 2.1 s.
+- **Dispatch's moves are no longer most of its tick**: `drivers.moved` decode + handle is 81-118 ms per tick at 450k-500k (45-49% of dispatch's 166-263 ms), against 223-272 ms at 400k (73-78%) in [After milestone 20](#after-milestone-20). Live wall time, so it includes waiting for a CPU; not comparable one to one with [Driver indexes in moves](#driver-indexes-in-moves)' single-process 74-80%.
+- Dispatch peak RSS 488-535 MiB at 450k-500k (418-422 MiB at 400k, [After milestone 21](#after-milestone-21)); not split by cause (the array by index is 4 MB at 500k, ADR 0052).
