@@ -1,6 +1,6 @@
 # Performance
 
-How many drivers the simulation keeps at real time today, how that is measured, and what fails first. Every number here cites its CI run or the section of [performance-history.md](performance-history.md) that holds the full table, method and reasoning; that file keeps every measurement since milestone 9, oldest first. Last updated after milestone 25 (2026-10-07); batched `2x1` and `2x2` after milestone 22.
+How many drivers the simulation keeps at real time today, how that is measured, and what fails first. The browser UI's cost at scale: [ui.md](ui.md). Every number here cites its CI run or the section of [performance-history.md](performance-history.md) that holds the full table, method and reasoning; that file keeps every measurement since milestone 9, oldest first. Last updated after milestone 25 (2026-10-07); batched `2x1` and `2x2` after milestone 22.
 
 ## Current live limits
 

@@ -23,7 +23,7 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0017 | [Independent actor services with pure brains](0017-independent-actor-services-with-pure-brains.md) | Accepted |
 | 0018 | [Dispatch matching via offers](0018-dispatch-matching-via-offers.md)     | Accepted (offer transport superseded by 0028; single instance superseded by 0050) |
 | 0019 | [One package, entrypoint per service](0019-single-package-multiple-entrypoints.md) | Accepted |
-| 0020 | [Browser UI: canvas, NATS over WebSocket](0020-browser-ui-canvas-nats-websocket.md) | Accepted |
+| 0020 | [Browser UI: canvas, NATS over WebSocket](0020-browser-ui-canvas-nats-websocket.md) | Accepted (drawing above 10,000 drivers: 0053) |
 | 0021 | [Development workflow](0021-development-workflow.md)                   | Accepted |
 | 0022 | [Source layout and brain shape](0022-source-layout-and-brain-shape.md) | Accepted |
 | 0023 | [Small in-house seeded PRNG](0023-own-seeded-prng.md)                    | Accepted |
@@ -56,3 +56,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0050 | [Split dispatch by region](0050-split-dispatch-by-region.md) | Accepted |
 | 0051 | [Search untouched drivers in batched matching](0051-search-untouched-drivers-in-batched-matching.md) | Accepted |
 | 0052 | [Driver indexes in moves](0052-driver-indexes-in-moves.md) | Accepted |
+| 0053 | [Scale the UI in the browser](0053-scale-the-ui-in-the-browser.md) | Accepted |
