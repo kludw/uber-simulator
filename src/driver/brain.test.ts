@@ -1773,25 +1773,57 @@ describe("decideDriverShard regions", () => {
 		]);
 	});
 
-	test("a tick's moves go out in one message per region of the cells moved to", () => {
+	test("an idle driver's move goes to the region of the cell it moved from", () => {
 		const { state } = startAt([
-			[6, 0],
-			[1, 0],
+			[4, 0],
+			[5, 0],
 		]);
-		// Wander targets: d-1 (9, 0), d-2 (0, 0).
+		// Wander targets: d-1 (9, 0), d-2 (0, 0): both cross the border.
 		const { outputs } = decideDriverShard(
 			state,
 			{ type: "clock.ticked", tick: tick(1) },
 			scriptedRandom([9, 0, 0, 0]),
 		);
 		expect(outputs).toEqual([
-			driversMoved(tick(1), region0, [{ driverId: d2, cell: cell(0, 0) }]),
-			driversMoved(tick(1), region1, [{ driverId: d1, cell: cell(7, 0) }]),
+			driversMoved(tick(1), region0, [{ driverId: d1, cell: cell(5, 0) }]),
+			driversMoved(tick(1), region1, [{ driverId: d2, cell: cell(4, 0) }]),
 		]);
 	});
 
+	test("an idle driver that crossed the border moves in its new region", () => {
+		const { state } = startAt([[4, 0]]);
+		// Wander target (9, 0).
+		const random = scriptedRandom([9, 0]);
+		const first = decideDriverShard(
+			state,
+			{ type: "clock.ticked", tick: tick(1) },
+			random,
+		);
+		const { outputs } = decideDriverShard(
+			first.state,
+			{ type: "clock.ticked", tick: tick(2) },
+			random,
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(2), region1, [{ driverId: d1, cell: cell(6, 0) }]),
+		]);
+	});
+
+	test("a driver carrying a rider across the border moves in its trip's region", () => {
+		const { state } = startAt([[5, 5]]);
+		const outputs = feed(state, [
+			crossingOffer,
+			{ type: "clock.ticked", tick: tick(1) },
+			{ type: "trip.picked_up", tick: tick(1), tripId: t1, driverId: d1 },
+			{ type: "clock.ticked", tick: tick(2) },
+		]);
+		expect(outputs).toContainEqual(
+			driversMoved(tick(2), region1, [{ driverId: d1, cell: cell(4, 5) }]),
+		);
+	});
+
 	test("a driver accepts an offer in its pickup's region", () => {
-		const { state } = startAt([[1, 1]]);
+		const { state } = startAt([[6, 1]]);
 		expect(feed(state, [offer(d1)])).toEqual([
 			{ type: "offer_accepted", tripId: t1, driverId: d1, region: region1 },
 		]);
@@ -1853,7 +1885,7 @@ describe("decideDriverShard regions", () => {
 	});
 
 	test("an idle driver declines in the offer's region, telling its cell", () => {
-		const random = shiftRandom([1, 1], { "preference:d-1": [2] });
+		const random = shiftRandom([8, 8], { "preference:d-1": [2] });
 		const { state } = startDriverShard(
 			{
 				grid,
@@ -1875,13 +1907,39 @@ describe("decideDriverShard regions", () => {
 				tripId: t1,
 				driverId: d1,
 				region: region1,
-				idleAt: cell(1, 1),
+				idleAt: cell(8, 8),
 			},
 		]);
 	});
 
+	test("an idle driver declines an offer from a region other than its cell's, telling its cell", () => {
+		const { state } = startAt([[4, 5]]);
+		expect(feed(state, [offer(d1)])).toEqual([
+			{
+				type: "offer_declined",
+				tripId: t1,
+				driverId: d1,
+				region: region1,
+				idleAt: cell(4, 5),
+			},
+		]);
+	});
+
+	test("a driver that crossed into the pickup's region accepts its offer", () => {
+		const { state } = startAt([[4, 5]]);
+		// Wander target (9, 5).
+		const { state: crossed } = decideDriverShard(
+			state,
+			{ type: "clock.ticked", tick: tick(1) },
+			scriptedRandom([9, 5]),
+		);
+		expect(feed(crossed, [offer(d1)])).toEqual([
+			{ type: "offer_accepted", tripId: t1, driverId: d1, region: region1 },
+		]);
+	});
+
 	test("a driver on a trip declines another offer without a cell", () => {
-		const { state } = startAt([[1, 1]]);
+		const { state } = startAt([[6, 1]]);
 		const outputs = feed(state, [
 			offer(d1),
 			{ ...offer(d1), tripId: t2, pickup: cell(0, 9) },
@@ -1922,6 +1980,33 @@ describe("decideDriverShard regions", () => {
 			cell: cell(7, 0),
 			region: region1,
 		});
+	});
+});
+
+// 2x2 on the 10 x 10 grid: region 0 top left, 1 top right, 2 bottom left,
+// 3 bottom right.
+describe("decideDriverShard 2x2 regions", () => {
+	const regions = RegionLayout.parse("2x2");
+
+	test("idle drivers crossing row and column borders move in the regions they left", () => {
+		const { state } = startDriverShard(
+			{ grid, driverIds: [d1, d2], tick: tick(0), regions },
+			scriptedRandom([4, 9, 9, 4]),
+		);
+		// Wander targets (9, 9): d-1 steps along x, d-2 along y, both into 3.
+		const { outputs } = decideDriverShard(
+			state,
+			{ type: "clock.ticked", tick: tick(1) },
+			scriptedRandom([9, 9, 9, 9]),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(1), Region.parse(1), [
+				{ driverId: d2, cell: cell(9, 5) },
+			]),
+			driversMoved(tick(1), Region.parse(2), [
+				{ driverId: d1, cell: cell(5, 9) },
+			]),
+		]);
 	});
 });
 
