@@ -3,7 +3,8 @@ name: loadtest
 # Manual only: `gh workflow run loadtest.yaml --ref master` runs `bun run
 # loadtest` (ADR 0037) for 1k drivers, greedy, one region, 600 ticks; set the
 # cases with -f, e.g. `-f drivers="5000 10000" -f matching="greedy batched"
-# -f regions="1x1 2x1"`. One job (own runner, NATS, ClickHouse) per drivers x
+# -f regions="1x1 2x1"`, and the runner label with -f runner (e.g. a larger
+# runner's label). One job (own runner, NATS, ClickHouse) per drivers x
 # matching x regions case. Each case's report, runner note, service logs, and
 # NATS log are uploaded as one artifact (`gh run download <run id>`).
 on:
@@ -29,6 +30,10 @@ on:
         description: Minutes after the last tick for the persister to drain
         type: number
         default: 5
+      runner:
+        description: Runner label for the load test jobs (e.g. a larger runner)
+        type: string
+        default: ubuntu-latest
 
 permissions:
   contents: read
@@ -54,7 +59,7 @@ jobs:
 
   loadtest:
     needs: matrix
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     # Backstop for setup and upload; the run itself is capped below.
     timeout-minutes: 60
     strategy:
@@ -107,7 +112,7 @@ jobs:
       - name: Load test
         run: |
           mkdir -p out
-          { echo "runner: $(nproc) cpus, $(free -m | awk '/Mem:/ {print $2}') MiB"; echo "load average: $(cut -d' ' -f1-3 /proc/loadavg)"; } > out/machine.txt
+          { echo "runner: $(nproc) cpus, $(free -m | awk '/Mem:/ {print $2}') MiB"; echo "load average: $(cut -d' ' -f1-3 /proc/loadavg)"; lscpu | grep -E '^(Model name|CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|Socket\(s\)):'; } > out/machine.txt
           # Ticks run at 1 s each; the cap allows startup, the drain bound,
           # and 5 min slack, and kills a run that hangs.
           cap=$(awk "BEGIN { print int($TICKS / 60 + $DRAIN_MINUTES + 5) }")
