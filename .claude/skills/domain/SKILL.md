@@ -82,7 +82,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
    - `trip.requested`, `trip.offered`, `trip.offer_declined`, `trip.offer_expired`, `trip.matched`, `trip.picked_up`, `trip.completed`, `trip.cancelled` (only dispatch emits `trip.*`)
    - `driver.went_offline`, `driver.arrived_at_pickup`, `driver.arrived_at_dropoff`
    - `drivers.went_online` (tick, `driverIds`, `xs`, `ys`: driver `driverIds[i]` online at cell `(xs[i], ys[i])`): one shard's drivers going online in one tick (at start, or a shift change), at most 5,000 per message, published first in the shard's tick, before its `drivers.moved`; none when no driver went online (0049). Built with `driversWentOnline`, read with `forEachWentOnline`.
-   - `drivers.moved` (tick, `driverIds`, `xs`, `ys`: move i is driver `driverIds[i]` to cell `(xs[i], ys[i])`): one shard's moves of one tick, at most 5,000 per message, published before the shard's other events of that tick; none when no driver moved (0045, shape 0047). Built with `driversMoved`, read with `forEachMove` (`src/shared/messages.ts`), each visit one **move**.
+   - `drivers.moved` (tick, `driverIds`, `xs`, `ys`: move i is driver `driverIds[i]` to cell `(xs[i], ys[i])`): one shard's moves of one tick, at most 5,000 per message, published before the shard's other events of that tick; none when no driver moved (0045, shape 0047). Built with `driversMoved`, read with `forEachMove` (`src/shared/messages.ts`), each visit one **move**; `forEachDriverAt` reads either message as coordinates without a Cell (dispatch).
 2. Same name used as event `type` in code, NATS subject suffix, ClickHouse event type value.
 3. Invalid state transition = domain error (see `errors` skill), never silently ignored.
 
