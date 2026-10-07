@@ -1687,3 +1687,7 @@ Every run finished 600 of 600 ticks with no slow consumers and the persister bac
 - **Milestone 22's targets are met by the spike**: `1x1` 100k (two of two, 133.2 and 180.5 ms p95) and `2x2` 150k (two of two, 370.0 and 369.9 ms); `1x1` also passes 125k twice (448.5, 383.1 ms). `2x2` 200k fails settle (615.8, 773.2 ms).
 - At 50k `1x1` settle p95 drops from 287.7-575.7 ms ([After milestone 21](#after-milestone-21)) to 66.9-70.9 ms.
 - `2x2` batches are slower than `1x1` for the same drivers per region (150k `2x2`: 37.5k per region, 134.6-143.9 ms mean per batch; 50k `1x1`: 17.4-20.5 ms): the four instances solve their batches on the same tick on 2 physical cores ([Runner topology](#runner-topology)), and batch ms are wall time. Where the first limit now sits, per layout, is #242's measurement.
+
+## After milestone 22
+
+Live batched limits after [ADR 0051](adr/0051-search-untouched-drivers-in-batched-matching.md)'s exact batched matching, [#242](https://github.com/kludw/uber-simulator/issues/242). Measurement in progress.
