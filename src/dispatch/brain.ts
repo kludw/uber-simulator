@@ -1,4 +1,4 @@
-import { distance, distanceToCoordinates, type Grid } from "../shared/grid.ts";
+import { distance, type Grid } from "../shared/grid.ts";
 import type {
 	CancelTrip,
 	CancelTripAccepted,
@@ -41,15 +41,17 @@ import {
 import {
 	type IdleDriver,
 	type IdleDrivers,
+	idleCount,
 	idleDriversById,
 	markBusy,
 	markFree,
 	nearestIdle,
+	nearestIdleSkipping,
 	placeDriver,
 	removeDriver,
 	startIdleDrivers,
 } from "./idle-drivers.ts";
-import { minCostMatching } from "./matching.ts";
+import { minCostMatching, minCostMatchingByNearest } from "./matching.ts";
 import {
 	type ArrivalRejected,
 	acceptOffer,
@@ -232,10 +234,7 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 		case "batched":
 			if (queued.length === 0) break;
 			if (ticked.tick % state.matching.windowTicks !== 0) break;
-			for (const { trip, driverId } of batchedPairs(
-				queued,
-				idleDriversById(state.drivers),
-			)) {
+			for (const { trip, driverId } of batchedPairs(state, queued)) {
 				offer(trip, driverId);
 			}
 			break;
@@ -274,37 +273,37 @@ function queuedTrips(state: DispatchState): QueuedTrip[] {
 	return queued;
 }
 
-// ADR 0030: as many pairs as possible, least total pickup distance among those.
+// ADR 0030: as many pairs as possible, least total pickup distance among
+// those. Idle drivers found by nearest queries, unless more trips are queued
+// than drivers are idle: then the dense solver over the few idle drivers
+// (ADR 0051).
 function batchedPairs(
+	state: DispatchState,
+	queued: readonly QueuedTrip[],
+): OfferPair[] {
+	if (queued.length > idleCount(state.drivers)) {
+		return densePairs(queued, idleDriversById(state.drivers));
+	}
+	return minCostMatchingByNearest(
+		queued,
+		(pickup, skip) => nearestIdleSkipping(state.drivers, pickup, skip),
+		state.grid,
+	).map(({ row, driverId }) => {
+		const trip = queued[row];
+		if (trip === undefined) throw new Error(`matching row ${row} out of range`);
+		return { trip, driverId };
+	});
+}
+
+function densePairs(
 	queued: readonly QueuedTrip[],
 	idle: readonly IdleDriver[],
 ): OfferPair[] {
-	// A trip's row is asked for more than once per batch (#213): drivers' cells
-	// as flat coordinates, read in order.
-	const driverXs = Int32Array.from(idle, ({ cell }) => cell.x);
-	const driverYs = Int32Array.from(idle, ({ cell }) => cell.y);
-	let columnOf: Map<DriverId, number> | undefined;
-	const ofRow = (row: number, out: number[]) => {
-		const trip = queued[row];
-		if (trip === undefined) throw new Error(`row ${row} out of range`);
-		for (let column = 0; column < idle.length; column++) {
-			const x = driverXs[column];
-			const y = driverYs[column];
-			if (x === undefined || y === undefined) {
-				throw new Error(`column ${column} out of range`);
-			}
-			out[column] = distanceToCoordinates(trip.pickup, x, y);
-		}
-		if (trip.excludedDrivers.size === 0) return;
-		columnOf ??= new Map(
-			idle.map(({ driverId }, column) => [driverId, column]),
-		);
-		for (const driverId of trip.excludedDrivers) {
-			const column = columnOf.get(driverId);
-			if (column !== undefined) out[column] = Number.POSITIVE_INFINITY;
-		}
+	// More trips than idle drivers: the solver solves the transpose and asks
+	// for drivers' columns only.
+	const ofRow = () => {
+		throw new Error("dense matching asked for a trip's row");
 	};
-	// Only when more trips are queued than drivers are idle.
 	const ofColumn = (column: number, out: number[]) => {
 		const driver = idle[column];
 		if (driver === undefined) throw new Error(`column ${column} out of range`);

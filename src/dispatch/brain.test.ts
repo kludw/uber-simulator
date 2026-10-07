@@ -1038,6 +1038,33 @@ describe("decideDispatch batched matching", () => {
 		]);
 	});
 
+	test("with more trips than idle drivers, offers the pairs with least total pickup distance", () => {
+		// As contested, plus t-3 far from both drivers: it waits.
+		const { outputs } = run(
+			[requestTripAt(TripId.parse("t-3"), cell(9, 9)), ...contested],
+			batched,
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d2,
+				pickup: cell(2, 0),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d2 },
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d1,
+				pickup: cell(0, 0),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t2, driverId: d1 },
+		]);
+	});
+
 	test("matches the trip when the driver accepts a batched offer", () => {
 		const { outputs } = run(
 			[

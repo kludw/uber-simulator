@@ -176,6 +176,10 @@ export function markFree(idle: IdleDrivers, driverId: DriverId): void {
 	} else drivers.byId.delete(driverId);
 }
 
+export function idleCount(idle: IdleDrivers): number {
+	return idle[internals].idleCount;
+}
+
 // Idle drivers and their cells, ordered by ID (batched matching's columns).
 export function idleDriversById(idle: IdleDrivers): IdleDriver[] {
 	const drivers = idle[internals];
@@ -241,16 +245,34 @@ export function nearestIdle(
 	pickup: Cell,
 	excluded: ReadonlySet<DriverId>,
 ): DriverId | undefined {
-	const drivers = idle[internals];
+	return search(idle[internals], pickup, (driverId) => excluded.has(driverId))
+		?.driverId;
+}
+
+// As nearestIdle, never a driver `skip` holds for, and with the driver's cell
+// (batched matching's nearest untouched driver, ADR 0051).
+export function nearestIdleSkipping(
+	idle: IdleDrivers,
+	pickup: Cell,
+	skip: (driverId: DriverId) => boolean,
+): IdleDriver | undefined {
+	const nearest = search(idle[internals], pickup, skip);
+	if (nearest === undefined) return undefined;
+	return { driverId: nearest.driverId, cell: cellAt(nearest.x, nearest.y) };
+}
+
+function search(
+	drivers: Drivers,
+	pickup: Cell,
+	skip: (driverId: DriverId) => boolean,
+): Driver | undefined {
 	// The ring bound holds for in-grid pickups only (see bucketOf); a pickup
 	// off the grid is bad input, so take the scan, exact by construction.
 	const pickupOffGrid =
 		pickup.x >= drivers.grid.width || pickup.y >= drivers.grid.height;
-	const nearest =
-		pickupOffGrid || drivers.idleCount < drivers.search.linearScanBelow
-			? scanAll(drivers, pickup, excluded)
-			: searchRings(drivers, pickup, excluded);
-	return nearest?.driverId;
+	return pickupOffGrid || drivers.idleCount < drivers.search.linearScanBelow
+		? scanAll(drivers, pickup, skip)
+		: searchRings(drivers, pickup, skip);
 }
 
 type Nearest = { driver: Driver; distance: number } | undefined;
@@ -272,12 +294,12 @@ function closer(nearest: Nearest, driver: Driver, pickup: Cell): Nearest {
 function scanAll(
 	drivers: Drivers,
 	pickup: Cell,
-	excluded: ReadonlySet<DriverId>,
+	skip: (driverId: DriverId) => boolean,
 ): Driver | undefined {
 	let nearest: Nearest;
 	for (const bucket of drivers.buckets) {
 		for (const driver of bucket) {
-			if (excluded.has(driver.driverId)) continue;
+			if (skip(driver.driverId)) continue;
 			nearest = closer(nearest, driver, pickup);
 		}
 	}
@@ -290,7 +312,7 @@ function scanAll(
 function searchRings(
 	drivers: Drivers,
 	pickup: Cell,
-	excluded: ReadonlySet<DriverId>,
+	skip: (driverId: DriverId) => boolean,
 ): Driver | undefined {
 	const size = drivers.search.cellsPerBucket;
 	const column = Math.floor(pickup.x / size);
@@ -316,7 +338,7 @@ function searchRings(
 			for (let x = column - ring; x <= column + ring; x += step) {
 				if (x < 0 || x >= drivers.columns) continue;
 				for (const driver of drivers.buckets[y * drivers.columns + x] ?? []) {
-					if (excluded.has(driver.driverId)) continue;
+					if (skip(driver.driverId)) continue;
 					nearest = closer(nearest, driver, pickup);
 				}
 			}

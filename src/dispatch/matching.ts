@@ -1,3 +1,11 @@
+import {
+	type Cell,
+	distance,
+	distanceToCoordinates,
+	type Grid,
+} from "../shared/grid.ts";
+import type { DriverId } from "../shared/messages.ts";
+
 export interface Pair {
 	row: number;
 	column: number;
@@ -124,8 +132,210 @@ function solve(rows: number, columns: number, ofRow: FillCosts): Pair[] {
 	return pairs;
 }
 
-function at(values: readonly number[], index: number): number {
+function at<Value>(values: ArrayLike<Value>, index: number): Value {
 	const value = values[index];
 	if (value === undefined) throw new Error(`index ${index} out of range`);
 	return value;
 }
+
+export type MatchTrip = {
+	pickup: Cell;
+	excludedDrivers: ReadonlySet<DriverId>;
+};
+
+/**
+ * The idle driver nearest to the pickup that `skip` doesn't hold for, ties to
+ * the lowest ID, with its cell; undefined when there is none.
+ */
+export type NearestDriver = (
+	pickup: Cell,
+	skip: (driverId: DriverId) => boolean,
+) => { driverId: DriverId; cell: Cell } | undefined;
+
+export type TripPair = { row: number; driverId: DriverId };
+
+/**
+ * Batch assignment (ADR 0030) of queued trips to idle drivers found by
+ * `nearest`, never listed (ADR 0051): same objective as minCostMatching, pairs
+ * ordered by row (trip index). Needs at least as many idle drivers as trips;
+ * throws otherwise (caller bug). Costs are pickup distances; drivers excluded
+ * for a trip are not allowed. Pure function of the input; which of several
+ * optimal matchings comes back is not specified.
+ */
+export function minCostMatchingByNearest(
+	trips: readonly MatchTrip[],
+	nearest: NearestDriver,
+	grid: Grid,
+): TripPair[] {
+	const rows = trips.length;
+	// A disallowed pair costs more than any whole set of allowed pairs, so the
+	// optimum uses as many allowed pairs as possible. Assumes every pickup and
+	// driver cell is on the grid, so no distance exceeds width + height - 2
+	// (ADR 0051). An off-grid cell is bad input from another service; with
+	// one, a batch may get fewer pairs than the dense solver's.
+	const sentinel = rows * (grid.width + grid.height - 2) + 1;
+	const rowPotential = new Float64Array(rows);
+	const columnOfRow = new Int32Array(rows).fill(unmatched);
+	// Touched drivers (columns), in the order paths reached them. Each path
+	// touches exactly one, so there are at most `rows`. Every touched driver
+	// is matched; an untouched one has potential 0 and no row.
+	const touchedIds: DriverId[] = [];
+	const columnOf = new Map<DriverId, number>();
+	const touchedXs = new Int32Array(rows);
+	const touchedYs = new Int32Array(rows);
+	const columnPotential = new Float64Array(rows);
+	const rowOfColumn = new Int32Array(rows);
+	const allowedOfColumn = new Uint8Array(rows);
+	// Per path, by touched column: least reduced distance from the path's
+	// start found so far, the column it came through (root: the start row),
+	// whether that pair is allowed, and when the column was reached.
+	const key = new Float64Array(rows);
+	const keyFrom = new Int32Array(rows);
+	const keyAllowed = new Uint8Array(rows);
+	const reachedAt = new Float64Array(rows);
+	const visited = new Uint8Array(rows);
+	// Per path, by visited row: the row and when it was reached.
+	const pathRows: number[] = [];
+	const pathReachedAt: number[] = [];
+	// Each trip's nearest allowed untouched driver. Untouched drivers only
+	// shrink, so it stays the nearest until it is touched.
+	const cached: (Untouched | undefined)[] = new Array(rows);
+	// Trips with no allowed untouched driver left: stays so for the batch.
+	const noneAllowed = new Uint8Array(rows);
+
+	// The cheapest untouched driver for a row: its nearest allowed one, else
+	// any untouched one at the sentinel cost.
+	const untouched = (row: number, trip: MatchTrip): Untouched => {
+		const hit = cached[row];
+		if (hit !== undefined && !columnOf.has(hit.driverId)) return hit;
+		const allowed =
+			noneAllowed[row] === 1
+				? undefined
+				: nearest(
+						trip.pickup,
+						(driverId) =>
+							columnOf.has(driverId) || trip.excludedDrivers.has(driverId),
+					);
+		if (allowed !== undefined) {
+			const found = {
+				driverId: allowed.driverId,
+				cell: allowed.cell,
+				cost: distance(trip.pickup, allowed.cell),
+				allowed: true,
+			};
+			cached[row] = found;
+			return found;
+		}
+		noneAllowed[row] = 1;
+		const any = nearest(trip.pickup, (driverId) => columnOf.has(driverId));
+		if (any === undefined) throw new Error("more trips than idle drivers");
+		return { ...any, cost: sentinel, allowed: false };
+	};
+
+	for (let start = 0; start < rows; start++) {
+		const touched = touchedIds.length;
+		key.fill(Number.POSITIVE_INFINITY, 0, touched);
+		visited.fill(0, 0, touched);
+		pathRows.length = 0;
+		pathReachedAt.length = 0;
+		let end: (Untouched & { from: number }) | undefined;
+		let endKey = Number.POSITIVE_INFINITY;
+		let row = start;
+		let from = root;
+		let reached = 0;
+		// Dijkstra over reduced costs. Every touched driver is matched, so the
+		// path goes on through its row and ends only at an untouched driver.
+		for (;;) {
+			pathRows.push(row);
+			pathReachedAt.push(reached);
+			const trip = at(trips, row);
+			const base = reached - at(rowPotential, row);
+			for (let column = 0; column < touched; column++) {
+				if (visited[column] === 1) continue;
+				const allowed = !trip.excludedDrivers.has(at(touchedIds, column));
+				const cost = allowed
+					? distanceToCoordinates(
+							trip.pickup,
+							at(touchedXs, column),
+							at(touchedYs, column),
+						)
+					: sentinel;
+				const reduced = base + cost - at(columnPotential, column);
+				if (reduced < at(key, column)) {
+					key[column] = reduced;
+					keyFrom[column] = from;
+					keyAllowed[column] = allowed ? 1 : 0;
+				}
+			}
+			const candidate = untouched(row, trip);
+			if (base + candidate.cost < endKey) {
+				endKey = base + candidate.cost;
+				end = { ...candidate, from };
+			}
+
+			let best = endKey;
+			let bestColumn = root;
+			for (let column = 0; column < touched; column++) {
+				if (visited[column] === 1 || at(key, column) >= best) continue;
+				best = at(key, column);
+				bestColumn = column;
+			}
+			reached = best;
+			if (bestColumn === root) break;
+			visited[bestColumn] = 1;
+			reachedAt[bestColumn] = reached;
+			from = bestColumn;
+			row = at(rowOfColumn, bestColumn);
+		}
+		if (end === undefined) throw new Error("path without an end");
+
+		// Keeps reduced costs non-negative, and zero on matched pairs.
+		for (const [index, pathRow] of pathRows.entries()) {
+			rowPotential[pathRow] =
+				at(rowPotential, pathRow) + reached - at(pathReachedAt, index);
+		}
+		for (let column = 0; column < touched; column++) {
+			if (visited[column] === 0) continue;
+			columnPotential[column] =
+				at(columnPotential, column) - (reached - at(reachedAt, column));
+		}
+
+		// Touch the path's last driver, then shift each pair along the path.
+		let column = touched;
+		touchedIds.push(end.driverId);
+		columnOf.set(end.driverId, column);
+		touchedXs[column] = end.cell.x;
+		touchedYs[column] = end.cell.y;
+		columnPotential[column] = 0;
+		let previous = end.from;
+		let allowed = end.allowed;
+		for (;;) {
+			const pathRow = previous === root ? start : at(rowOfColumn, previous);
+			rowOfColumn[column] = pathRow;
+			allowedOfColumn[column] = allowed ? 1 : 0;
+			columnOfRow[pathRow] = column;
+			if (previous === root) break;
+			column = previous;
+			previous = at(keyFrom, column);
+			allowed = keyAllowed[column] === 1;
+		}
+	}
+
+	const pairs: TripPair[] = [];
+	for (let row = 0; row < rows; row++) {
+		const column = at(columnOfRow, row);
+		if (column === unmatched || allowedOfColumn[column] === 0) continue;
+		pairs.push({ row, driverId: at(touchedIds, column) });
+	}
+	return pairs;
+}
+
+type Untouched = {
+	driverId: DriverId;
+	cell: Cell;
+	cost: number;
+	allowed: boolean;
+};
+
+const root = -1;
+const unmatched = -1;
