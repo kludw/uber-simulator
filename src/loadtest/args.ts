@@ -3,6 +3,8 @@
 import { parseArgs } from "node:util";
 import * as z from "zod";
 import type { Matching } from "../dispatch/brain.ts";
+import { specGrid } from "../shared/grid.ts";
+import { RegionLayout } from "../shared/regions.ts";
 import type { Result } from "../shared/result.ts";
 import type { SimConfig } from "../sim/services.ts";
 
@@ -27,16 +29,24 @@ const Args = z
 			.transform(Number)
 			.pipe(z.number().positive()),
 		"nats-monitoring-url": z.url({ protocol: /^https?$/ }),
+		regions: RegionLayout,
 	})
 	.refine((args) => args.drivers % args.shards === 0, {
 		error: "--drivers must split evenly over --shards",
 		path: ["drivers"],
-	});
+	})
+	.refine(
+		({ regions }) =>
+			regions.columns <= specGrid.width && regions.rows <= specGrid.height,
+		{ error: "more regions than grid cells across", path: ["regions"] },
+	);
 
 export type LoadtestArgs = Pick<
 	SimConfig,
 	"driverShards" | "requestsPerMinute"
 > & {
+	// One dispatch process per region (ADR 0050).
+	regions: RegionLayout;
 	matching: Matching;
 	ticks: number;
 	// How long to wait after tick T for the persister's backlog to empty.
@@ -65,6 +75,8 @@ export function parseLoadtestArgs(
 					type: "string",
 					default: "http://localhost:8222",
 				},
+				// One dispatch instance (ADR 0050).
+				regions: { type: "string", default: "1x1" },
 			},
 			strict: true,
 		}).values;
@@ -99,6 +111,7 @@ export function parseLoadtestArgs(
 				args.matching === "batched"
 					? { type: "batched", windowTicks: args["batch-window"] }
 					: { type: "greedy" },
+			regions: args.regions,
 			drainBoundMs: args["drain-minutes"] * 60_000,
 			natsMonitoringUrl: args["nats-monitoring-url"],
 		},

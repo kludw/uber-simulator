@@ -4,6 +4,7 @@ import type { ClickHouseConfig } from "../persistence/clickhouse.ts";
 import { cityDemand, type Demand } from "../rider/demand.ts";
 import { specGrid } from "../shared/grid.ts";
 import { RunId } from "../shared/messages.ts";
+import { oneRegion, Region, RegionLayout } from "../shared/regions.ts";
 import type { Result } from "../shared/result.ts";
 import type { SimConfig } from "./services.ts";
 
@@ -77,6 +78,12 @@ export function preferencesNamed(
 	return name === "picky" ? pickyPreset : { type: "accept_all" };
 }
 
+// Every process of a run must get the same value (ADR 0050).
+const Regions = RegionLayout.refine(
+	({ columns, rows }) => columns <= specGrid.width && rows <= specGrid.height,
+	{ error: "more regions than grid cells across" },
+).default(oneRegion);
+
 const Env = z.object({
 	NATS_URL: z.url(),
 	RUN_ID: RunId,
@@ -109,6 +116,7 @@ const Env = z.object({
 	SHIFTS: ShiftsName.default("off"),
 	// Driver shards only (ADR 0035).
 	PREFERENCES: PreferencesName.default("off"),
+	REGIONS: Regions,
 });
 
 export function parseServiceConfig(
@@ -138,6 +146,7 @@ export function parseServiceConfig(
 			demand: demandNamed(vars.DEMAND),
 			shifts: shiftsNamed(vars.SHIFTS),
 			preferences: preferencesNamed(vars.PREFERENCES),
+			regions: vars.REGIONS,
 		},
 	};
 }
@@ -224,6 +233,29 @@ export function parseShardIndex(
 		.safeParse(env);
 	if (!parsed.success) return invalidConfig(parsed.error);
 	return { ok: true, value: parsed.data.SHARD_INDEX };
+}
+
+// Dispatch processes only: which region of REGIONS this one owns. Reads
+// REGIONS itself, so a dispatch knows its region before the rest of its
+// config (its logs are tagged dispatch-<region>).
+export function parseRegionIndex(
+	env: Record<string, string | undefined>,
+): Result<Region, InvalidConfig> {
+	const parsed = z
+		.object({ REGIONS: Regions, REGION_INDEX: integer.pipe(Region) })
+		.refine(
+			({ REGIONS, REGION_INDEX }) =>
+				REGION_INDEX < REGIONS.columns * REGIONS.rows,
+			{
+				error: "outside REGIONS",
+				path: ["REGION_INDEX"],
+				// Only once both parsed: an index that isn't one is reported once.
+				when: (payload) => payload.issues.length === 0,
+			},
+		)
+		.safeParse(env);
+	if (!parsed.success) return invalidConfig(parsed.error);
+	return { ok: true, value: parsed.data.REGION_INDEX };
 }
 
 // Schemas are objects keyed by variable, so each issue's path starts with it.

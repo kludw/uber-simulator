@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { cityDemand } from "../rider/demand.ts";
 import { RunId } from "../shared/messages.ts";
+import { Region } from "../shared/regions.ts";
 import {
 	parseClickHouseConfig,
 	parsePersisterConfig,
+	parseRegionIndex,
 	parseServiceConfig,
 	parseShardIndex,
 	parseUiConfig,
@@ -31,7 +33,34 @@ describe("parseServiceConfig", () => {
 				demand: { type: "uniform" },
 				shifts: { type: "always_online" },
 				preferences: { type: "accept_all" },
+				regions: { columns: 1, rows: 1 },
 			},
+		});
+	});
+
+	test("REGIONS=2x1 splits dispatch into two regions", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			REGIONS: "2x1",
+		});
+
+		expect(parsed).toMatchObject({
+			ok: true,
+			value: { regions: { columns: 2, rows: 1 } },
+		});
+	});
+
+	test.each([["2"], ["0x1"], ["501x1"]])("rejects REGIONS %p", (regions) => {
+		expect(
+			parseServiceConfig({
+				NATS_URL: "nats://nats:4222",
+				RUN_ID: "run-1",
+				REGIONS: regions,
+			}),
+		).toMatchObject({
+			ok: false,
+			error: { type: "invalid_config", issues: [{ variable: "REGIONS" }] },
 		});
 	});
 
@@ -238,6 +267,28 @@ describe("parseShardIndex", () => {
 				error: {
 					type: "invalid_config",
 					issues: [{ variable: "SHARD_INDEX" }],
+				},
+			});
+		},
+	);
+});
+
+describe("parseRegionIndex", () => {
+	test("reads the region index within REGIONS", () => {
+		expect(parseRegionIndex({ REGIONS: "2x1", REGION_INDEX: "1" })).toEqual({
+			ok: true,
+			value: Region.parse(1),
+		});
+	});
+
+	test.each([[undefined], ["1"], ["-1"], ["one"]])(
+		"rejects REGION_INDEX %p for one region",
+		(index) => {
+			expect(parseRegionIndex({ REGION_INDEX: index })).toMatchObject({
+				ok: false,
+				error: {
+					type: "invalid_config",
+					issues: [{ variable: "REGION_INDEX" }],
 				},
 			});
 		},

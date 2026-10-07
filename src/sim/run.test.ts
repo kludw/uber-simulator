@@ -694,6 +694,27 @@ describe.skipIf(!natsUrl)("runOverNats", () => {
 		expect(runIds).toEqual(new Set([result.value.runId]));
 	});
 
+	// ADR 0050: one dispatch connection per region, each taking only its
+	// region's subjects. Offers for pickups in both halves show both work.
+	test("a 2x1 run breaks no invariant and both regions offer trips", async () => {
+		const config = {
+			...regionsConfig,
+			ticks: 600,
+			regions: { columns: 2, rows: 1 },
+		};
+		const { eventLog } = await runOnServer(config);
+
+		const offerRegions = new Set<number>();
+		for (const message of eventLog) {
+			if (message.type !== "offer") continue;
+			offerRegions.add(regionOf(config.regions, config.grid, message.pickup));
+		}
+		expect({
+			violations: checkInvariants(eventLog, config.grid),
+			offerRegions: [...offerRegions].toSorted(),
+		}).toEqual({ violations: [], offerRegions: [0, 1] });
+	}, 60_000);
+
 	test("a scarce-supply run breaks no invariant, completes and cancels trips", async () => {
 		const { eventLog } = await runOnServer(scarceConfig);
 

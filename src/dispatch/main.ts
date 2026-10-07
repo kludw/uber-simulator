@@ -1,8 +1,10 @@
-// Dispatch service process. Config: src/sim/config.ts.
-import { Region } from "../shared/regions.ts";
-import { readServiceConfig, runService } from "../sim/process.ts";
+// One dispatch instance's process; REGION_INDEX picks its region of REGIONS
+// (ADR 0050). Config: src/sim/config.ts.
+import { parseRegionIndex } from "../sim/config.ts";
+import { orExit, readServiceConfig, runService } from "../sim/process.ts";
 import { dispatchService } from "../sim/services.ts";
 
-const config = readServiceConfig("dispatch");
-// One region until REGION_INDEX (ADR 0050, #252).
-await runService(dispatchService(config, Region.parse(0)), config);
+// Untagged by region only while the region itself is invalid.
+const region = orExit("dispatch", parseRegionIndex(Bun.env));
+const config = readServiceConfig(`dispatch-${region}`);
+await runService(dispatchService(config, region), config);
