@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
+import {
+	type Cell,
+	type Coordinate,
+	cellIn,
+	type Grid,
+} from "../shared/grid.ts";
 import { DriverId } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
 import {
@@ -23,6 +28,11 @@ function cell(x: number, y: number): Cell {
 	return result.value;
 }
 
+function xy(x: number, y: number): [Coordinate, Coordinate] {
+	const at = cell(x, y);
+	return [at.x, at.y];
+}
+
 function driver(id: string, x: number, y: number) {
 	return { driverId: DriverId.parse(id), cell: cell(x, y) };
 }
@@ -33,33 +43,33 @@ function placed(
 ): IdleDrivers {
 	const index = startIdleDrivers(grid, search);
 	for (const { driverId, cell: at } of drivers)
-		placeDriver(index, driverId, at);
+		placeDriver(index, driverId, at.x, at.y);
 	return index;
 }
 
 describe("nearestIdle", () => {
 	test("returns the idle driver nearest to the pickup", () => {
 		const index = startIdleDrivers(grid);
-		placeDriver(index, DriverId.parse("d-1"), cell(15, 15));
-		placeDriver(index, DriverId.parse("d-2"), cell(6, 4));
-		placeDriver(index, DriverId.parse("d-3"), cell(0, 0));
+		placeDriver(index, DriverId.parse("d-1"), ...xy(15, 15));
+		placeDriver(index, DriverId.parse("d-2"), ...xy(6, 4));
+		placeDriver(index, DriverId.parse("d-3"), ...xy(0, 0));
 
 		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-2"));
 	});
 
 	test("finds a driver by the cell it last moved to", () => {
 		const index = startIdleDrivers(grid);
-		placeDriver(index, DriverId.parse("d-1"), cell(15, 15));
-		placeDriver(index, DriverId.parse("d-2"), cell(6, 4));
-		placeDriver(index, DriverId.parse("d-2"), cell(19, 19));
+		placeDriver(index, DriverId.parse("d-1"), ...xy(15, 15));
+		placeDriver(index, DriverId.parse("d-2"), ...xy(6, 4));
+		placeDriver(index, DriverId.parse("d-2"), ...xy(19, 19));
 
 		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-1"));
 	});
 
 	test("never returns a busy driver", () => {
 		const index = startIdleDrivers(grid);
-		placeDriver(index, DriverId.parse("d-1"), cell(15, 15));
-		placeDriver(index, DriverId.parse("d-2"), cell(6, 4));
+		placeDriver(index, DriverId.parse("d-1"), ...xy(15, 15));
+		placeDriver(index, DriverId.parse("d-2"), ...xy(6, 4));
 		markBusy(index, DriverId.parse("d-2"));
 
 		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-1"));
@@ -67,10 +77,10 @@ describe("nearestIdle", () => {
 
 	test("finds a freed driver by the cell it moved to while busy", () => {
 		const index = startIdleDrivers(grid);
-		placeDriver(index, DriverId.parse("d-1"), cell(8, 8));
-		placeDriver(index, DriverId.parse("d-2"), cell(15, 15));
+		placeDriver(index, DriverId.parse("d-1"), ...xy(8, 8));
+		placeDriver(index, DriverId.parse("d-2"), ...xy(15, 15));
 		markBusy(index, DriverId.parse("d-2"));
-		placeDriver(index, DriverId.parse("d-2"), cell(5, 6));
+		placeDriver(index, DriverId.parse("d-2"), ...xy(5, 6));
 		markFree(index, DriverId.parse("d-2"));
 
 		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-2"));
@@ -103,8 +113,8 @@ describe("nearestIdle", () => {
 
 	test("never returns a removed driver", () => {
 		const index = startIdleDrivers(grid);
-		placeDriver(index, DriverId.parse("d-1"), cell(15, 15));
-		placeDriver(index, DriverId.parse("d-2"), cell(6, 4));
+		placeDriver(index, DriverId.parse("d-1"), ...xy(15, 15));
+		placeDriver(index, DriverId.parse("d-2"), ...xy(6, 4));
 		removeDriver(index, DriverId.parse("d-2"));
 
 		expect(nearestIdle(index, cell(5, 5), none)).toBe(DriverId.parse("d-1"));
@@ -112,8 +122,8 @@ describe("nearestIdle", () => {
 
 	test("never returns a driver removed while busy once it is freed", () => {
 		const index = startIdleDrivers(grid);
-		placeDriver(index, DriverId.parse("d-1"), cell(15, 15));
-		placeDriver(index, DriverId.parse("d-2"), cell(6, 4));
+		placeDriver(index, DriverId.parse("d-1"), ...xy(15, 15));
+		placeDriver(index, DriverId.parse("d-2"), ...xy(6, 4));
 		markBusy(index, DriverId.parse("d-2"));
 		removeDriver(index, DriverId.parse("d-2"));
 		markFree(index, DriverId.parse("d-2"));
@@ -154,7 +164,7 @@ describe("idleDriversById", () => {
 			driver("d-1", 4, 4),
 		]);
 		markBusy(index, DriverId.parse("d-1"));
-		placeDriver(index, DriverId.parse("d-3"), cell(1, 2));
+		placeDriver(index, DriverId.parse("d-3"), ...xy(1, 2));
 
 		expect(idleDriversById(index)).toEqual([
 			driver("d-10", 2, 2),
@@ -252,7 +262,7 @@ function expectLinearScanPicks(seed: number, offGrid: OffGrid): void {
 			const driverId = randomDriver();
 			if (action <= 4) {
 				const at = randomCell(offGrid.drivers);
-				placeDriver(index, driverId, at);
+				placeDriver(index, driverId, at.x, at.y);
 				model.cells.set(driverId, at);
 			} else if (action === 5) {
 				removeDriver(index, driverId);
