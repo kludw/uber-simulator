@@ -383,13 +383,21 @@ describe("decideDispatch fleet size", () => {
 		driversWentOnline(tick(1), Region.parse(0), otherFleet, [
 			{ driverIndex: i1, cell: cell(1, 3) },
 		]),
-	])("rejects $type from a fleet of another size", (message) => {
-		const { outputs } = run([message]);
+	])(
+		"rejects $type from a fleet of another size, naming its own",
+		(message) => {
+			const { outputs } = run([message]);
 
-		expect(outputs).toEqual([
-			{ type: "input_rejected", reason: "fleet_size_mismatch", input: message },
-		]);
-	});
+			expect(outputs).toEqual([
+				{
+					type: "input_rejected",
+					reason: "fleet_size_mismatch",
+					input: message,
+					expectedFleetSize: 12,
+				},
+			]);
+		},
+	);
 
 	test("does not offer a trip to a driver only a fleet of another size reported", () => {
 		const { outputs } = run([

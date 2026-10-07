@@ -123,7 +123,9 @@ type DispatchOutput =
 	| TripCompleted
 	| TripCancelled
 	| TripStatus
-	| InputRejected<DriversWentOnline | DriversMoved, "fleet_size_mismatch">
+	| (InputRejected<DriversWentOnline | DriversMoved, "fleet_size_mismatch"> & {
+			expectedFleetSize: number;
+	  })
 	| InputRejected<OfferAccepted | OfferDeclined, NoPendingOffer["type"]>
 	| InputRejected<
 			DriverArrivedAtPickup | DriverArrivedAtDropoff | ConfirmTrip,
@@ -416,6 +418,7 @@ function onDriversAt(
 					type: "input_rejected",
 					reason: "fleet_size_mismatch",
 					input: message,
+					expectedFleetSize: state.fleetSize,
 				},
 			],
 		};
