@@ -1,6 +1,6 @@
 # 0033. Scale fixes: owned brain state, rectangular matching, streaming run checks
 
-- Status: Accepted
+- Status: Accepted (dense rectangular solve for queued ≤ idle superseded by 0051)
 - Date: 2026-10-03
 
 ## Context

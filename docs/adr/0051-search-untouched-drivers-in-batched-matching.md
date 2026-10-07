@@ -1,14 +1,14 @@
 # 0051. Search untouched drivers by nearest query in batched matching
 
 - Status: Accepted
+- Supersedes 0033's dense rectangular solve (for queued ≤ idle) and 0036's sentinel rule (sum of real costs + 1); 0030's objective, determinism and offers are kept
 - Date: 2026-10-07
-- Refines 0030 and 0033 (the solver only; objective, determinism and offers unchanged)
 
 ## Context
 
 Batched matching (ADR 0030) solves each batch window's queued trips × idle drivers exactly with a rectangular Hungarian solver (ADR 0033) that never stores the matrix (#213): each augmenting-path step asks for one trip's row of distances to every idle driver and scans it, so a batch costs O(steps × idle drivers). One dispatch instance holds 50k live and fails settle at 55k; `2x2` regions hold 100k ([After milestone 21](../performance.md#after-milestone-21)). Milestone 22's target: 100k at `1x1`, 150k at `2x2`.
 
-[Cheaper batched matching](../performance.md#cheaper-batched-matching) profiles it: the Hungarian loop plus row filling are 64-74% of dispatch's CPU live (50k-55k `1x1`, 100k `2x2`) and 87-95% in process (50k-100k). Yet each queued trip's augmenting path is short (2-4 steps on average) and ends at a driver no earlier path reached, so almost all of that work reads drivers no path ever uses.
+[Cheaper batched matching](../performance.md#cheaper-batched-matching) profiles it: the Hungarian loop plus row filling are 64-74% of dispatch's CPU live (50k-55k `1x1`, 100k `2x2`) and 87-95% in process (50k-100k). Yet each queued trip's augmenting path is short (2-4 steps on average), and, with queued ≤ idle, every path ends at a driver no earlier path matched, so each trip adds exactly one new driver to those any path has reached: almost all of the scanned drivers are never used.
 
 In the solver, an idle driver no path has reached yet ("untouched") still has dual potential 0 and no trip. So, from a trip on the path, the cheapest untouched driver is its nearest untouched allowed idle driver: a nearest-driver query, which the idle driver index already answers exactly (ADR 0036/0048).
 
@@ -39,7 +39,7 @@ We will make the batch solver work over touched drivers plus one nearest query p
 
 ## Consequences
 
-- A batch's cost now follows how far idle drivers are from pickups, not how many there are: at 100k in process 14-357 ms, highest mid-run when most drivers are busy. The nearest queries become the largest part of the solver (40% of dispatch at 100k, profiled).
+- A batch's cost now follows how far idle drivers are from pickups, not how many there are: at 100k in process 14-357 ms, highest mid-run when most drivers are busy. Its terms: one nearest query per path step (fewer with the cache), plus each step's scan of the touched drivers, O(queued × steps) per batch since at most one driver per queued trip is touched. The nearest queries are the largest part of the solver (40% of dispatch at 100k, profiled; the rest of the solver 17%).
 - Batched event logs may differ from master where several assignments are equally optimal (seen with `--preferences picky`); README outputs stay the same.
 - The trips > idle case keeps the dense solver and its cost, cheap there because the idle side is small.
 - Follow-up: implement (#241), then re-measure live limits per layout (#242).
