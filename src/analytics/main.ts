@@ -8,6 +8,7 @@ import { connectClickHouse } from "../persistence/clickhouse.ts";
 import { RunId } from "../shared/messages.ts";
 import { parseClickHouseConfig } from "../sim/config.ts";
 import { log, orExit } from "../sim/process.ts";
+import { dollars } from "../sim/summary.ts";
 import {
 	listRuns,
 	type RunReport,
@@ -88,6 +89,8 @@ async function printReport(runId: RunId): Promise<number> {
 function print(runId: RunId, report: RunReport): void {
 	console.log(`run id: ${runId}`);
 	console.log(`trips requested: ${report.trips.requested}`);
+	// Surge runs only (ADR 0054): surge-off runs print as before.
+	if (report.surge) console.log(`riders declined: ${report.surge.declined}`);
 	console.log(`trips completed: ${report.trips.completed}`);
 	console.log(`trips cancelled: ${report.trips.cancelled}`);
 	console.log(
@@ -99,6 +102,7 @@ function print(runId: RunId, report: RunReport): void {
 	console.log(
 		`completed trips per simulated minute: ${decimal(report.completedPerMinute)}`,
 	);
+	if (report.surge) console.log(`revenue: ${dollars(report.surge.revenue)}`);
 }
 
 function decimal(value: number | null): string {

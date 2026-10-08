@@ -10,6 +10,7 @@ import {
 	TripId,
 } from "../shared/messages.ts";
 import { Region } from "../shared/regions.ts";
+import { Fare, Surge } from "../shared/surge.ts";
 import {
 	compareSummaries,
 	createSummary,
@@ -167,6 +168,60 @@ describe("summarize", () => {
 	});
 });
 
+// ADR 0054: revenue is the fares of completed trips; a trip without one
+// (surge off) counts at base fare.
+describe("summarize surge", () => {
+	const priced: Message = {
+		type: "trip.requested",
+		tick: tick(1),
+		tripId: t1,
+		riderId: r1,
+		pickup: cell(1, 0),
+		dropoff: cell(2, 0),
+		surge: Surge.parse(1.5),
+		fare: Fare.parse(378),
+	};
+
+	test("revenue sums the fares of completed trips only", () => {
+		const log: Message[] = [
+			priced,
+			tripEvent("trip.offered", t1, 1),
+			tripEvent("trip.matched", t1, 1),
+			tripEvent("trip.picked_up", t1, 2),
+			tripEvent("trip.completed", t1, 3),
+			{ ...priced, tripId: t2, fare: Fare.parse(1000) },
+			{ ...priced, tripId: t3, fare: Fare.parse(2000) },
+			{ type: "trip.cancelled", tick: tick(5), tripId: t3, driverId: null },
+		];
+
+		expect(summarize(config, { eventLog: log, rejected: [] }).revenue).toBe(
+			378,
+		);
+	});
+
+	// pickup (1,0) to dropoff (2,0): 250 + 2 x 1 cents.
+	test("a completed trip without a fare counts at base fare", () => {
+		expect(summarize(config, { eventLog, rejected: [] }).revenue).toBe(252);
+	});
+
+	test("counts riders declined", () => {
+		const declined = (riderId: string, at: number): Message => ({
+			type: "rider.declined_surge",
+			tick: tick(at),
+			riderId: RiderId.parse(riderId),
+			pickup: cell(1, 0),
+			surge: Surge.parse(2),
+		});
+
+		const summary = summarize(config, {
+			eventLog: [declined("r-2", 1), declined("r-3", 2)],
+			rejected: [],
+		});
+
+		expect(summary.declined).toBe(2);
+	});
+});
+
 describe("createSummary", () => {
 	test("summarizes the messages observed as they come", () => {
 		const summary = createSummary(config);
@@ -178,6 +233,9 @@ describe("createSummary", () => {
 			drivers: 6,
 			trips: { requested: 3, completed: 1, cancelled: 1 },
 			meanTicksToPickup: 1,
+			declined: 0,
+			// t1 at base fare: 250 + 2 x 1 cell.
+			revenue: 252,
 			rejectedInputs: 2,
 			violations: [],
 		});
@@ -203,6 +261,8 @@ describe("compareSummaries", () => {
 		drivers: 100,
 		trips: { requested: 600, completed: 550, cancelled: 20 },
 		meanTicksToPickup: 101.25,
+		declined: 0,
+		revenue: 432_150,
 		rejectedInputs: 0,
 		violations: [],
 	};
@@ -210,6 +270,8 @@ describe("compareSummaries", () => {
 		...greedy,
 		trips: { requested: 600, completed: 548, cancelled: 25 },
 		meanTicksToPickup: null,
+		declined: 25,
+		revenue: 1_234_567,
 		violations: [
 			{
 				type: "illegal_trip_transition",
@@ -221,17 +283,34 @@ describe("compareSummaries", () => {
 		],
 	};
 
-	test("lines up each headline number of both strategies", () => {
-		expect(compareSummaries(greedy, batched)).toEqual([
-			{ metric: "trips requested", greedy: "600", batched: "600" },
-			{ metric: "trips completed", greedy: "550", batched: "548" },
-			{ metric: "trips cancelled", greedy: "20", batched: "25" },
+	test("lines up each headline number of both runs", () => {
+		expect(compareSummaries(greedy, batched, { surge: false })).toEqual([
+			{ metric: "trips requested", first: "600", second: "600" },
+			{ metric: "trips completed", first: "550", second: "548" },
+			{ metric: "trips cancelled", first: "20", second: "25" },
 			{
 				metric: "mean ticks from request to pickup",
-				greedy: "101.3",
-				batched: "n/a",
+				first: "101.3",
+				second: "n/a",
 			},
-			{ metric: "invariant violations", greedy: "0", batched: "1" },
+			{ metric: "invariant violations", first: "0", second: "1" },
+		]);
+	});
+
+	// ADR 0054: --compare-surge's rows.
+	test("with surge adds riders declined and revenue in dollars", () => {
+		expect(compareSummaries(greedy, batched, { surge: true })).toEqual([
+			{ metric: "trips requested", first: "600", second: "600" },
+			{ metric: "riders declined", first: "0", second: "25" },
+			{ metric: "trips completed", first: "550", second: "548" },
+			{ metric: "trips cancelled", first: "20", second: "25" },
+			{
+				metric: "mean ticks from request to pickup",
+				first: "101.3",
+				second: "n/a",
+			},
+			{ metric: "revenue", first: "$4,321.50", second: "$12,345.67" },
+			{ metric: "invariant violations", first: "0", second: "1" },
 		]);
 	});
 });

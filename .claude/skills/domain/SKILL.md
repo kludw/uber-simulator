@@ -32,9 +32,9 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Active trip**: a trip from `matched` until `completed` or `cancelled`; the UI draws its pickup-dropoff line (dots mode only).
 - **Draw mode**: what the UI's canvas draws, by fleet size (0053): `dots` up to 10,000 drivers (a dot per driver, trip lines, motion), `heatmap` above. **Heatmap**: the grid as **heatmap tiles** of 5 × 5 cells (not regions), recomputed once per tick: brightness by drivers against the mean, color by busy (non-idle) share, red by waiting riders (`heatmapOf`, `src/ui/render.ts`).
 - **Ended trip**: a `completed` or `cancelled` trip; no transition leaves it. Dispatch keeps it out of matching but still answers late and duplicate inputs for it.
-- **Summary**: a run's headline numbers (trip counts, mean ticks from request to pickup, rejected inputs, invariant violations), computed from its event log.
+- **Summary**: a run's headline numbers (trip counts, mean ticks from request to pickup, riders declined and revenue (printed with surge on), rejected inputs, invariant violations), computed from its event log.
 - **Load test**: the distributed stack at real time for a fleet size (`bun run loadtest`, 0037). **Settle latency** of tick t: receipt of the last event of tick t minus receipt of `clock.ticked` t, at the load test's observer. **Overrun**: a tick with an event arriving after `clock.ticked` t+1. **Persister backlog**: events published but not yet delivered to the persister (consumer `num_pending`); events it holds but hasn't acked (`num_ack_pending`) are in flight, not backlog (0046).
-- **Run report**: a persisted run's headline numbers queried from ClickHouse (`bun run report`, `src/analytics/report.ts`): trip counts, mean ticks from request to pickup and from pickup to completion, completed trips per simulated minute. Its trip counts and mean ticks to pickup agree with the summary of the same event log.
+- **Run report**: a persisted run's headline numbers queried from ClickHouse (`bun run report`, `src/analytics/report.ts`): trip counts, mean ticks from request to pickup and from pickup to completion, completed trips per simulated minute; riders declined and revenue for surge runs (any `zones.priced`). Its trip counts and mean ticks to pickup agree with the summary of the same event log.
 - **Input rejected**: brain output for an input addressed to one of its entities but invalid for that entity's state. Logged by the shell, never published.
 - **Violation**: a broken spec invariant (`docs/spec.md`) found in an event log, tagged by `type` (e.g. `illegal_trip_transition`).
 - **Replay**: republishing a stored run's events on `replay.<runId>.<live subject>`, in `tick, stream_seq` order, paced by tick from the first replayed tick (`bun run replay`, 0034). Never on `sim.*`.
@@ -81,7 +81,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 
 ## Pricing (0054)
 
-`src/shared/surge.ts`. Off by default; with surge off no message carries a price.
+`src/shared/surge.ts`. Off by default (`--surge on|off` for `bun run sim` and `bun run bench`, `SURGE` for `bun run dev`, `SimConfig.surge`); with surge off no message carries a price. `bun run sim -- --compare-surge`: the configured run with surge off and on, side by side.
 
 - **Surge**: multiplier on a fare, 1.0 to 2.0 (the cap) in 0.1 steps (`Surge`).
 - **Surge zone**: 50 × 50-cell square of the grid (500 m; 10 × 10 on the spec grid), numbered row-major from 0 (`zoneOf`). A zone cut by a region border is priced per part, each part by its region's dispatch (`zonePartBounds`); layouts whose columns and rows divide 10 cut none.
@@ -90,7 +90,8 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Max surge**: a rider's willingness to pay, uniform in [1.0, 3.0).
 - **Declined**: a rider leaving because its quote exceeds its max surge (`rider.declined_surge`); no trip.
 - **Fare**: integer cents, `(250 + 2 × distance) × surge` rounded ($2.50 + $2 per km), fixed at request (`fareOf`, `Fare`).
-- **Revenue**: sum of completed trips' fares.
+- **Revenue**: sum of completed trips' fares. The summary counts a trip without a fare (surge off) at base fare (`fareOf` at 1.0), so surge off and on compare on the same trips; `bun run report` sums event fares only.
+- **Declined rider requested** (`declined_rider_requested`): the violation of a rider in both a `rider.declined_surge` and a `trip.requested`, or in two declines.
 
 ## Events
 

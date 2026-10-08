@@ -26,9 +26,18 @@ describe("parseBenchArgs", () => {
 					demand: { type: "uniform" },
 					shifts: { type: "always_online" },
 					regions: { columns: 1, rows: 1 },
+					surge: false,
 				},
 				maxMinutes: undefined,
 			},
+		});
+	});
+
+	// ADR 0054.
+	test("--surge on prices trips with zone surge", () => {
+		expect(parseBenchArgs(["--surge", "on"])).toMatchObject({
+			ok: true,
+			value: { config: { surge: true } },
 		});
 	});
 

@@ -59,6 +59,38 @@ const regionsConfig = {
 	regions: { columns: 2, rows: 2 },
 };
 
+// ADR 0054: four surge zones, four drivers, far more requests than they
+// serve, so zones surge and riders decline.
+const surgeConfig = {
+	seed: 1,
+	ticks: 1200,
+	grid: { width: 100, height: 100 },
+	driverShards: { count: 1, driversPerShard: 4 },
+	requestsPerMinute: 20,
+	surge: true,
+};
+
+// What a run shows of surge: zones priced above 1.0, riders declined, and
+// trips requested with a fare.
+function surgeSeen(eventLog: readonly Message[]): {
+	surging: boolean;
+	declined: boolean;
+	priced: boolean;
+} {
+	return {
+		surging: eventLog.some(
+			(message) => message.type === "zones.priced" && message.zones.length > 0,
+		),
+		declined: eventLog.some(
+			(message) => message.type === "rider.declined_surge",
+		),
+		priced: eventLog.some(
+			(message) =>
+				message.type === "trip.requested" && message.fare !== undefined,
+		),
+	};
+}
+
 const regionOfCell = (cell: Cell): number =>
 	regionOf(regionsConfig.regions, regionsConfig.grid, cell);
 
@@ -279,6 +311,74 @@ describe("runInProcess", () => {
 				message.type === "trip.cancelled" && message.driverId !== null,
 		);
 		expect(freeingDriver).not.toBeEmpty();
+	});
+
+	test("a surge run breaks no invariant, surges zones, declines riders and prices trips", () => {
+		const { eventLog } = runInProcess({ ...surgeConfig, keepEventLog: true });
+
+		expect({
+			violations: checkInvariants(eventLog, surgeConfig.grid),
+			...surgeSeen(eventLog),
+		}).toEqual({
+			violations: [],
+			surging: true,
+			declined: true,
+			priced: true,
+		});
+	});
+
+	test("a surge run on the same seed gives an identical event log", () => {
+		expect(
+			runInProcess({ ...surgeConfig, keepEventLog: true }).eventLog,
+		).toEqual(runInProcess({ ...surgeConfig, keepEventLog: true }).eventLog);
+	});
+
+	// Surge off: every message as before surge existed.
+	test("a surge-off run publishes no price", () => {
+		const { eventLog } = runInProcess({
+			...surgeConfig,
+			surge: false,
+			keepEventLog: true,
+		});
+
+		expect({
+			pricedZones: eventLog.some((message) => message.type === "zones.priced"),
+			requestedWithSurge: eventLog.some(
+				(message) =>
+					(message.type === "request_trip" ||
+						message.type === "trip.requested") &&
+					message.surge !== undefined,
+			),
+			...surgeSeen(eventLog),
+		}).toEqual({
+			pricedZones: false,
+			requestedWithSurge: false,
+			surging: false,
+			declined: false,
+			priced: false,
+		});
+	});
+
+	// ADR 0054: a lost zones.priced leaves a rider on a stale quote until the
+	// next, a lost decline reaches no service; neither may break an invariant.
+	// 2x2 regions price their zone parts each.
+	test("with 1% of messages lost and surge on at 2x2, no invariant breaks", () => {
+		const { eventLog } = runInProcess({
+			...surgeConfig,
+			regions: { columns: 2, rows: 2 },
+			lossShare: 0.01,
+			keepEventLog: true,
+		});
+
+		expect({
+			violations: checkInvariants(eventLog, surgeConfig.grid),
+			...surgeSeen(eventLog),
+		}).toEqual({
+			violations: [],
+			surging: true,
+			declined: true,
+			priced: true,
+		});
 	});
 
 	// ADR 0041: a driver waiting at a pickup or dropoff confirms 10 ticks after
@@ -722,6 +822,22 @@ describe.skipIf(!natsUrl)("runOverNats", () => {
 			violations: checkInvariants(eventLog, config.grid),
 			offerRegions: [...offerRegions].toSorted(),
 		}).toEqual({ violations: [], offerRegions: [0, 1] });
+	}, 60_000);
+
+	// ADR 0054: prices reach riders over NATS; which update a rider saw at a
+	// spawn varies between runs, the invariants don't.
+	test("a surge run breaks no invariant, surges zones, declines riders and prices trips", async () => {
+		const { eventLog } = await runOnServer({ ...surgeConfig, ticks: 600 });
+
+		expect({
+			violations: checkInvariants(eventLog, surgeConfig.grid),
+			...surgeSeen(eventLog),
+		}).toEqual({
+			violations: [],
+			surging: true,
+			declined: true,
+			priced: true,
+		});
 	}, 60_000);
 
 	test("a scarce-supply run breaks no invariant, completes and cancels trips", async () => {

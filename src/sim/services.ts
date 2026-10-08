@@ -44,6 +44,9 @@ export type SimConfig = {
 	// Region layout, one dispatch instance per region (ADR 0050); one region
 	// when unset.
 	regions?: RegionLayout | undefined;
+	// Dispatch prices zones and trips, riders decline above their max surge
+	// (ADR 0054); off when unset.
+	surge?: boolean | undefined;
 };
 
 export type Rejected = InputRejected<Message, string>;
@@ -180,6 +183,7 @@ export function dispatchService(config: SimConfig, region: Region): SimService {
 						matching: config.matching,
 						regions: config.regions,
 						region,
+						surge: config.surge,
 					}),
 					outputs: [],
 				},
@@ -206,6 +210,7 @@ export function ridersService(config: SimConfig): SimService {
 						requestsPerMinute: config.requestsPerMinute,
 						demand: config.demand,
 						regions: config.regions,
+						surge: config.surge,
 					}),
 					outputs: [],
 				},
