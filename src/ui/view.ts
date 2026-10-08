@@ -127,7 +127,12 @@ export function forEachDriver(
 
 export function applyEvent(view: View, event: SimEvent): void {
 	switch (event.type) {
+		// The clock going back is a new run (live, or a replay watched again)
+		// even at the same fleet size: nothing of the old one may linger.
 		case "clock.ticked":
+			if (view.tick !== null && event.tick < view.tick) {
+				Object.assign(view, emptyView());
+			}
 			view.tick = event.tick;
 			return;
 		case "drivers.went_online":

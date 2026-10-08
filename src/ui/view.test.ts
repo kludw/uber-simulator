@@ -384,6 +384,46 @@ describe("fleet size", () => {
 	});
 });
 
+// A new run (live, or a replay watched twice) with the same fleet size: the
+// clock going back is the only sign of it.
+describe("new run", () => {
+	const oldRun: SimEvent[] = [
+		{ type: "clock.ticked", tick: tick(10) },
+		...trip,
+		online(i2, 3, cell(5, 5)),
+		requested(TripId.parse("t-2"), 9, pickup, dropoff),
+	];
+
+	test("a tick before the view's tick resets the view before it applies", () => {
+		const newRun: SimEvent[] = [
+			{ type: "clock.ticked", tick: tick(0) },
+			online(i2, 0, cell(7, 7)),
+		];
+		expect(viewOf([...oldRun, ...newRun])).toEqual(viewOf(newRun));
+	});
+
+	// A page joining mid-run, or a replay --from-tick into a fresh page.
+	test("a first tick keeps what came before it", () => {
+		const view = viewOf([...trip, { type: "clock.ticked", tick: tick(500) }]);
+		expect(view.tripsCompleted).toBe(1);
+	});
+
+	test.each([10, 11])(
+		"tick %p, not before the view's tick, keeps the view",
+		(at) => {
+			const view = viewOf([
+				...oldRun,
+				{ type: "clock.ticked", tick: tick(at) },
+			]);
+			expect({
+				completed: view.tripsCompleted,
+				waiting: view.waitingRiders.size,
+				drivers: [...driversOf(view).keys()],
+			}).toEqual({ completed: 1, waiting: 1, drivers: [i1, i2] });
+		},
+	);
+});
+
 // Over NATS only per-publisher order holds (ADR 0028): a driver's arrival can
 // reach the UI after dispatch's event that freed it.
 describe("late arrivals", () => {
