@@ -14,6 +14,7 @@ import {
 	RegionLayout,
 	regionBounds,
 } from "../shared/regions.ts";
+import { Zone } from "../shared/surge.ts";
 import {
 	type IdleDriver,
 	type IdleDrivers,
@@ -248,9 +249,9 @@ describe("idleCountsByZone", () => {
 
 		expect(idleCountsByZone(index)).toEqual(
 			new Map([
-				[0, 1],
-				[1, 2],
-				[3, 1],
+				[Zone.parse(0), 1],
+				[Zone.parse(1), 2],
+				[Zone.parse(3), 1],
 			]),
 		);
 	});
@@ -263,7 +264,7 @@ describe("idleCountsByZone", () => {
 		markBusy(index, id(2));
 		removeDriver(index, id(3));
 
-		expect(idleCountsByZone(index)).toEqual(new Map([[0, 1]]));
+		expect(idleCountsByZone(index)).toEqual(new Map([[Zone.parse(0), 1]]));
 	});
 });
 

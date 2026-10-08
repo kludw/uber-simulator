@@ -2001,15 +2001,15 @@ describe("decideDispatch pricing", () => {
 		]);
 	}
 
-	function priced(
-		inputs: DispatchInput[],
-		options: {
-			surge?: boolean;
-			matching?: Matching;
-			regions?: RegionLayout;
-			region?: Region;
-		} = { surge: true },
-	) {
+	type Options = {
+		surge: boolean;
+		matching?: Matching;
+		regions?: RegionLayout;
+		region?: Region;
+	};
+
+	// The last input's outputs of one type.
+	function outputsOf(type: string, inputs: DispatchInput[], options: Options) {
 		let state = startDispatch({
 			grid: zonedGrid,
 			fleetSize,
@@ -2021,8 +2021,16 @@ describe("decideDispatch pricing", () => {
 			({ state, outputs } = decideDispatch(state, input, random));
 		}
 		return outputs.filter(
-			(output) => (output as { type: string }).type === "zones.priced",
+			(output) => (output as { type: string }).type === type,
 		);
+	}
+
+	function priced(inputs: DispatchInput[], options: Options = { surge: true }) {
+		return outputsOf("zones.priced", inputs, options);
+	}
+
+	function requested(inputs: DispatchInput[], surge: boolean) {
+		return outputsOf("trip.requested", inputs, { surge });
 	}
 
 	test("prices zones after matching: offered trips are still unmatched, their drivers busy", () => {
@@ -2135,6 +2143,57 @@ describe("decideDispatch pricing", () => {
 				tick: tick(30),
 				region: Region.parse(1),
 				zones: [{ zone: 1, surge: 2 }],
+			},
+		]);
+	});
+
+	// Distance (10, 10) to (140, 90): 210 cells, so a base fare of
+	// 250 + 2 * 210 = 670 cents.
+	test("prices a requested trip at its rider's quote", () => {
+		const outputs = requested([request(1, at(10, 10), 1.4)], true);
+
+		expect(outputs).toEqual([
+			{
+				type: "trip.requested",
+				tick: tick(1),
+				tripId: TripId.parse("t-1"),
+				riderId: RiderId.parse("r-1"),
+				pickup: at(10, 10),
+				dropoff: at(140, 90),
+				surge: 1.4,
+				fare: 938,
+			},
+		]);
+	});
+
+	test("prices a requested trip without a quote at 1.0", () => {
+		const outputs = requested([request(1, at(10, 10))], true);
+
+		expect(outputs).toEqual([
+			{
+				type: "trip.requested",
+				tick: tick(1),
+				tripId: TripId.parse("t-1"),
+				riderId: RiderId.parse("r-1"),
+				pickup: at(10, 10),
+				dropoff: at(140, 90),
+				surge: 1,
+				fare: 670,
+			},
+		]);
+	});
+
+	test("prices no requested trip with surge off, even one with a quote", () => {
+		const outputs = requested([request(1, at(10, 10), 1.4)], false);
+
+		expect(outputs).toEqual([
+			{
+				type: "trip.requested",
+				tick: tick(1),
+				tripId: TripId.parse("t-1"),
+				riderId: RiderId.parse("r-1"),
+				pickup: at(10, 10),
+				dropoff: at(140, 90),
 			},
 		]);
 	});
