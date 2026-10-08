@@ -62,7 +62,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
   - `offline` -> `idle` (available) -> `en_route` (heading to pickup) -> `at_pickup` (arrived at pickup, waiting for dispatch) -> `on_trip` (rider aboard) -> `at_dropoff` (arrived at dropoff, waiting for dispatch) -> `idle`.
   - `idle` -> `offline` (online period over; a driver on a trip finishes it first). `offline` drivers don't move and decline every offer.
   - `at_pickup` | `at_dropoff`: every 10 ticks without a trip event, sends `confirm_trip` for its stage (0041). `trip_status` for that trip and stage: pickup + `picked_up` -> `on_trip`; dropoff + `completed` -> `idle`; `released` -> `idle`. Any other `trip_status` is ignored.
-- **Wander target**: random cell an idle driver drives toward; new one picked on arrival.
+- **Wander target**: cell an idle driver drives toward: its chase target when a surge area is in chase reach, else a random cell (shard's stream); new one picked on arrival, on going online, and when its trip ends or is released.
 - **Shifts**: driver shard config (0032). `always_online` (default): every driver online the whole run. `shifts`: each driver alternates **online periods** and **offline periods**, lengths uniform in `onlineTicks` / `offlineTicks`; starts online with probability `startOnlineShare`. An offline period counts from the tick the driver actually went offline. Selected per run by name (`shiftsNamed`): `off` = `always_online`, `on` = the one shift preset (online 1200-2400, offline 300-900, start share 0.8).
 - **Preferences**: driver shard config (0035): whether idle drivers decline offers. `accept_all` (default): accept every offer while idle. `picky`: each driver gets a **max pickup distance** (Manhattan, cells), uniform integer in `maxPickupDistance` `[min, max]`, drawn once at start; an idle driver declines an offer whose pickup is farther than that from its cell, else declines with probability `declineShare`. Non-idle drivers decline regardless. Selected per run by name (`preferencesNamed`): `off` = `accept_all`, `picky` = the one picky preset (max pickup 20-80, decline share 0.1).
 
@@ -91,6 +91,10 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Declined**: a rider leaving because its quote exceeds its max surge (`rider.declined_surge`); no trip.
 - **Fare**: integer cents, `(250 + 2 × distance) × surge` rounded ($2.50 + $2 per km), fixed at request (`fareOf`, `Fare`).
 - **Revenue**: sum of completed trips' fares. The summary counts a trip without a fare (surge off) at base fare (`fareOf` at 1.0), so surge off and on compare on the same trips; `bun run report` sums event fares only.
+- **Zone distance**: Manhattan distance between surge zones in zone columns and rows (`zoneDistance`); 1 zone = 50 cells.
+- **Chase**: an idle driver heading for a surge area instead of a random cell (0055). Driver shards keep the last `zones.priced` per region; on the tick after any `zones.priced`, every idle driver whose target is not in a surge area re-picks. Busy and offline drivers never chase.
+- **Chase reach**: 4 zones by zone distance (200 cells, 2 km).
+- **Chase target**: a uniform cell of the surge area nearest the driver's zone within chase reach (ties: higher surge, lower region, lower zone), drawn from child stream `chase:<tick>`; replaces the random wander target while chasing.
 - **Declined rider requested** (`declined_rider_requested`): the violation of a rider in both a `rider.declined_surge` and a `trip.requested`, or in two declines.
 
 ## Events
