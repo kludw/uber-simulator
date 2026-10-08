@@ -388,16 +388,36 @@ describe("fleet size", () => {
 // clock going back is the only sign of it.
 describe("new run", () => {
 	const oldRun: SimEvent[] = [
-		{ type: "clock.ticked", tick: tick(10) },
 		...trip,
+		{ type: "clock.ticked", tick: tick(10) },
 		online(i2, 3, cell(5, 5)),
 		requested(TripId.parse("t-2"), 9, pickup, dropoff),
 	];
 
-	test("a tick before the view's tick resets the view before it applies", () => {
+	// The clock publishes from tick 1; shards announce their start-up fleet
+	// at tick 0, before it (one message per shard).
+	test.each([
+		["the same", fleetSize],
+		["another", 20],
+	])("a tick 0 message starts the view over at %s fleet size", (_, size) => {
 		const newRun: SimEvent[] = [
-			{ type: "clock.ticked", tick: tick(0) },
-			online(i2, 0, cell(7, 7)),
+			driversWentOnline(tick(0), Region.parse(0), size, [
+				{ driverIndex: i1, cell: cell(7, 7) },
+			]),
+			driversWentOnline(tick(0), Region.parse(0), size, [
+				{ driverIndex: i2, cell: cell(8, 8) },
+			]),
+			{ type: "clock.ticked", tick: tick(1) },
+		];
+		expect(viewOf([...oldRun, ...newRun])).toEqual(viewOf(newRun));
+	});
+
+	// A run not starting at tick 0: a replay --from-tick into a page further
+	// along.
+	test("a clock tick before the view's tick starts the view over", () => {
+		const newRun: SimEvent[] = [
+			{ type: "clock.ticked", tick: tick(5) },
+			moved(i2, 5, cell(7, 7)),
 		];
 		expect(viewOf([...oldRun, ...newRun])).toEqual(viewOf(newRun));
 	});
