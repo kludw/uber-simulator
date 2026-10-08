@@ -2052,6 +2052,28 @@ describe("decideDispatch pricing", () => {
 		]);
 	});
 
+	// d1 takes t-1 on tick 1: one unmatched trip against no idle driver is
+	// 1.0, where counting the matched trip too would be 2.0.
+	test("never counts matched trips as unmatched", () => {
+		const outputs = priced([
+			request(1, at(10, 10)),
+			request(2, at(20, 10)),
+			online(1, at(11, 10)),
+			ticked(1),
+			accepted(TripId.parse("t-1"), d1),
+			ticked(30),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "zones.priced",
+				tick: tick(30),
+				region: Region.parse(0),
+				zones: [],
+			},
+		]);
+	});
+
 	// Batched with a 7-tick window: nothing is matched on tick 30.
 	test("prices each zone from its own unmatched trips and idle drivers, in zone order", () => {
 		const outputs = priced(
