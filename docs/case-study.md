@@ -16,15 +16,6 @@ All runs are on GitHub's `ubuntu-latest` runner. That detail turned out to matte
 ## The live limit per milestone
 
 ```mermaid
----
-config:
-  xyChart:
-    width: 800
-    height: 420
-  themeVariables:
-    xyChart:
-      plotColorPalette: "#2563eb, #d97706"
----
 xychart-beta
   title "Live limit, one dispatch process (thousands of drivers)"
   x-axis [M13, M14, M16, M17, M18, M19, M20, M21, M22, M25]
