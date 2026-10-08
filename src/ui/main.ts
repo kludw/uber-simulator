@@ -100,12 +100,12 @@ async function watch(): Promise<void> {
 		}
 	})();
 
-	let view = emptyView();
+	const view = emptyView();
 	let panelPending = false;
 	for await (const received of subscription) {
 		const event = decode(received);
 		if (event === null) continue;
-		view = applyEvent(view, event);
+		applyEvent(view, event);
 		renderer.show(view);
 		// Many events per tick; the panel only needs the latest view per frame.
 		if (panelPending) continue;

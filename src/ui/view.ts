@@ -1,17 +1,29 @@
-import type { Cell } from "../shared/grid.ts";
-import type {
-	DriverArrivedAtDropoff,
-	DriverArrivedAtPickup,
-	DriverId,
-	DriversMoved,
-	DriversWentOnline,
-	SimEvent,
-	Tick,
-	TripId,
+import { type DriverIndex, driverIndexOf } from "../shared/fleet.ts";
+import { type Cell, type Coordinate, cellAt } from "../shared/grid.ts";
+import {
+	type DriverArrivedAtDropoff,
+	type DriverArrivedAtPickup,
+	type DriverId,
+	type DriversMoved,
+	type DriversWentOnline,
+	forEachDriverAt,
+	type SimEvent,
+	type Tick,
+	type TripId,
 } from "../shared/messages.ts";
-import { forEachMove, forEachWentOnline } from "../shared/messages.ts";
 
 type DriverState = "idle" | "en_route" | "at_pickup" | "on_trip" | "at_dropoff";
+
+// Code k + 1 in Drivers.states is driverStates[k]; 0 is a driver not shown
+// (offline, or not seen yet).
+const driverStates: readonly DriverState[] = [
+	"idle",
+	"en_route",
+	"at_pickup",
+	"on_trip",
+	"at_dropoff",
+];
+const notShown = 0;
 
 export type DriverView = {
 	state: DriverState;
@@ -20,19 +32,34 @@ export type DriverView = {
 	movedAt: Tick;
 };
 
+// Drivers by driver index (ADR 0053), one entry per driver of the fleet:
+// applying a message costs its own size, never the fleet's. Coordinates fit
+// 16 bits: the grid is 500 × 500 (spec).
+type Drivers = {
+	xs: Uint16Array;
+	ys: Uint16Array;
+	previousXs: Uint16Array;
+	previousYs: Uint16Array;
+	movedAt: Uint32Array;
+	states: Uint8Array;
+};
+
 // One per trip from request until pickup or cancel.
 export type WaitingRider = { pickup: Cell; dropoff: Cell; requestedAt: Tick };
 
 // One per trip from match until completion or cancel.
 export type ActiveTrip = { driverId: DriverId; pickup: Cell; dropoff: Cell };
 
+// Owned by the page and updated in place by applyEvent (as brains own their
+// state, ADR 0033): readers take a snapshot to compare before and after.
 export type View = {
 	// Last clock.ticked seen; null before the first.
 	tick: Tick | null;
-	drivers: ReadonlyMap<DriverId, DriverView>;
-	driversPerState: Readonly<Record<DriverState, number>>;
-	waitingRiders: ReadonlyMap<TripId, WaitingRider>;
-	activeTrips: ReadonlyMap<TripId, ActiveTrip>;
+	// Sized by the fleetSize of drivers.* messages; empty until the first.
+	drivers: Drivers;
+	driversPerState: Record<DriverState, number>;
+	waitingRiders: Map<TripId, WaitingRider>;
+	activeTrips: Map<TripId, ActiveTrip>;
 	tripsCompleted: number;
 	tripsCancelled: number;
 	// Over trips seen from request to pickup (pickups of them); null until the
@@ -44,7 +71,7 @@ export type View = {
 export function emptyView(): View {
 	return {
 		tick: null,
-		drivers: new Map(),
+		drivers: driversOfFleet(0),
 		driversPerState: {
 			idle: 0,
 			en_route: 0,
@@ -61,79 +88,111 @@ export function emptyView(): View {
 	};
 }
 
-export function applyEvent(view: View, event: SimEvent): View {
+function driversOfFleet(fleetSize: number): Drivers {
+	return {
+		xs: new Uint16Array(fleetSize),
+		ys: new Uint16Array(fleetSize),
+		previousXs: new Uint16Array(fleetSize),
+		previousYs: new Uint16Array(fleetSize),
+		movedAt: new Uint32Array(fleetSize),
+		states: new Uint8Array(fleetSize),
+	};
+}
+
+// Visits the drivers shown, in index order.
+export function forEachDriver(
+	view: View,
+	visit: (index: DriverIndex, driver: DriverView) => void,
+): void {
+	const { xs, ys, previousXs, previousYs, movedAt } = view.drivers;
+	for (let i = 0; i < view.drivers.states.length; i++) {
+		const state = stateAt(view, i);
+		if (state === null) continue;
+		visit(i as DriverIndex, {
+			state,
+			cell: cellAt((xs[i] ?? 0) as Coordinate, (ys[i] ?? 0) as Coordinate),
+			previousCell: cellAt(
+				(previousXs[i] ?? 0) as Coordinate,
+				(previousYs[i] ?? 0) as Coordinate,
+			),
+			movedAt: (movedAt[i] ?? 0) as Tick,
+		});
+	}
+}
+
+export function applyEvent(view: View, event: SimEvent): void {
 	switch (event.type) {
 		case "clock.ticked":
-			return { ...view, tick: event.tick };
+			view.tick = event.tick;
+			return;
 		case "drivers.went_online":
-			return withWentOnline(view, event);
+			applyWentOnline(view, event);
+			return;
 		case "drivers.moved":
-			return withMoves(view, event);
-		case "trip.requested": {
-			const waitingRiders = new Map(view.waitingRiders);
-			waitingRiders.set(event.tripId, {
+			applyMoves(view, event);
+			return;
+		case "trip.requested":
+			view.waitingRiders.set(event.tripId, {
 				pickup: event.pickup,
 				dropoff: event.dropoff,
 				requestedAt: event.tick,
 			});
-			return { ...view, waitingRiders };
-		}
+			return;
 		case "trip.matched": {
-			const next = withDriverState(view, event.driverId, "en_route");
+			setDriverState(view, event.driverId, "en_route");
 			const rider = view.waitingRiders.get(event.tripId);
-			if (rider === undefined) return next;
-			const activeTrips = new Map(view.activeTrips);
-			activeTrips.set(event.tripId, {
+			if (rider === undefined) return;
+			view.activeTrips.set(event.tripId, {
 				driverId: event.driverId,
 				pickup: rider.pickup,
 				dropoff: rider.dropoff,
 			});
-			return { ...next, activeTrips };
+			return;
 		}
 		case "driver.arrived_at_pickup":
-			return withArrival(view, event, "at_pickup");
+			applyArrival(view, event, "at_pickup");
+			return;
 		case "trip.picked_up": {
-			const next = withDriverState(
-				withoutWaitingRider(view, event.tripId),
-				event.driverId,
-				"on_trip",
-			);
+			setDriverState(view, event.driverId, "on_trip");
 			const rider = view.waitingRiders.get(event.tripId);
-			if (rider === undefined) return next;
+			if (rider === undefined) return;
+			view.waitingRiders.delete(event.tripId);
 			const waited = event.tick - rider.requestedAt;
-			const pickups = next.pickups + 1;
-			const total = (next.meanTicksToPickup ?? 0) * next.pickups + waited;
-			return { ...next, pickups, meanTicksToPickup: total / pickups };
+			const total = (view.meanTicksToPickup ?? 0) * view.pickups + waited;
+			view.pickups++;
+			view.meanTicksToPickup = total / view.pickups;
+			return;
 		}
 		case "driver.arrived_at_dropoff":
-			return withArrival(view, event, "at_dropoff");
-		case "trip.completed": {
-			const next = withoutActiveTrip(view, event.tripId);
-			return withDriverState(
-				{ ...next, tripsCompleted: next.tripsCompleted + 1 },
-				event.driverId,
-				"idle",
-			);
-		}
-		case "trip.cancelled": {
-			const ended = withoutActiveTrip(
-				withoutWaitingRider(view, event.tripId),
-				event.tripId,
-			);
-			const next = { ...ended, tripsCancelled: ended.tripsCancelled + 1 };
-			if (event.driverId === null) return next;
-			return withDriverState(next, event.driverId, "idle");
-		}
+			applyArrival(view, event, "at_dropoff");
+			return;
+		case "trip.completed":
+			view.activeTrips.delete(event.tripId);
+			view.tripsCompleted++;
+			setDriverState(view, event.driverId, "idle");
+			return;
+		case "trip.cancelled":
+			view.waitingRiders.delete(event.tripId);
+			view.activeTrips.delete(event.tripId);
+			view.tripsCancelled++;
+			if (event.driverId !== null) {
+				setDriverState(view, event.driverId, "idle");
+			}
+			return;
 		// Offline drivers leave the view (ADR 0032): they emit nothing until
 		// back online, so a UI joining mid-run could not count them anyway.
 		// Later events naming one (cancel, decline, expiry) find no driver.
-		case "driver.went_offline":
-			return withoutDriver(view, event.driverId);
+		case "driver.went_offline": {
+			const index = shownIndexOf(view, event.driverId);
+			if (index === null) return;
+			setState(view, index, null);
+			return;
+		}
 		// Offers don't change a driver's state until trip.matched.
 		case "trip.offered":
 		case "trip.offer_declined":
 		case "trip.offer_expired":
-			return view;
+			return;
 		default: {
 			const unhandled: never = event;
 			throw new Error(`unhandled event: ${JSON.stringify(unhandled)}`);
@@ -141,109 +200,88 @@ export function applyEvent(view: View, event: SimEvent): View {
 	}
 }
 
-function withDriverState(
+// The index of a shown driver, else null: an ID not made by driverIdAt, an
+// index outside the fleet (or no fleet size yet), or a driver not shown are
+// all ignored like an unknown driver (ADR 0053).
+function shownIndexOf(view: View, driverId: DriverId): number | null {
+	const index = driverIndexOf(driverId);
+	if (index === null || stateAt(view, index) === null) return null;
+	return index;
+}
+
+function setDriverState(
 	view: View,
 	driverId: DriverId,
 	state: DriverState,
-): View {
-	const driver = view.drivers.get(driverId);
-	if (driver === undefined) return view;
-	return withDriver(view, driverId, { ...driver, state });
+): void {
+	const index = shownIndexOf(view, driverId);
+	if (index === null) return;
+	setState(view, index, state);
 }
 
-// An unknown driver (UI joined mid-run) appears at the arrival cell; a known
-// one is already there, its drivers.moved comes first. A known idle driver's
-// arrival is late: over NATS it can follow dispatch's event that freed the
-// driver (offer expired, trip cancelled; ADR 0028), so it is ignored.
-function withArrival(
+// A known idle driver's arrival is late: over NATS it can follow dispatch's
+// event that freed the driver (offer expired, trip cancelled; ADR 0028), so
+// it is ignored. An unknown driver appears with its next move (ADR 0053).
+function applyArrival(
 	view: View,
 	arrival: DriverArrivedAtPickup | DriverArrivedAtDropoff,
 	state: DriverState,
-): View {
-	const driver = view.drivers.get(arrival.driverId);
-	if (driver?.state === "idle") return view;
-	if (driver !== undefined) {
-		return withDriverState(view, arrival.driverId, state);
-	}
-	return withDriver(view, arrival.driverId, {
-		state,
-		cell: arrival.cell,
-		previousCell: arrival.cell,
-		movedAt: arrival.tick,
+): void {
+	const index = shownIndexOf(view, arrival.driverId);
+	if (index === null) return;
+	if (stateAt(view, index) === "idle") return;
+	setState(view, index, state);
+}
+
+function stateAt(view: View, index: number): DriverState | null {
+	return driverStates[(view.drivers.states[index] ?? notShown) - 1] ?? null;
+}
+
+// The only place a driver's state changes, so driversPerState always matches
+// drivers.states. null: not shown.
+function setState(view: View, index: number, state: DriverState | null): void {
+	const previous = stateAt(view, index);
+	if (previous !== null) view.driversPerState[previous]--;
+	if (state !== null) view.driversPerState[state]++;
+	view.drivers.states[index] =
+		state === null ? notShown : driverStates.indexOf(state) + 1;
+}
+
+// A message of another fleet size is a new run (or a replay): nothing of the
+// old one may linger (ADR 0053), so the view starts over, keeping the tick.
+// From no fleet size yet, trip changes seen so far are kept.
+function fitFleet(view: View, fleetSize: number): void {
+	const current = view.drivers.states.length;
+	if (fleetSize === current) return;
+	if (current !== 0) Object.assign(view, emptyView(), { tick: view.tick });
+	view.drivers = driversOfFleet(fleetSize);
+}
+
+// A move keeps its driver's state; an unknown driver (the UI joined mid-run)
+// is idle, the most common state, until its next state event.
+function applyMoves(view: View, moved: DriversMoved): void {
+	fitFleet(view, moved.fleetSize);
+	const drivers = view.drivers;
+	forEachDriverAt(moved, (index, x, y) => {
+		const shown = stateAt(view, index) !== null;
+		drivers.previousXs[index] = shown ? (drivers.xs[index] ?? x) : x;
+		drivers.previousYs[index] = shown ? (drivers.ys[index] ?? y) : y;
+		drivers.xs[index] = x;
+		drivers.ys[index] = y;
+		drivers.movedAt[index] = moved.tick;
+		if (!shown) setState(view, index, "idle");
 	});
 }
 
-// withDriver, withWentOnline, withMoves and withoutDriver are the only places
-// drivers change, so driversPerState always matches drivers.
-function withDriver(view: View, driverId: DriverId, driver: DriverView): View {
-	const drivers = new Map(view.drivers);
-	const driversPerState = { ...view.driversPerState };
-	const previous = drivers.get(driverId);
-	if (previous !== undefined) driversPerState[previous.state]--;
-	driversPerState[driver.state]++;
-	drivers.set(driverId, driver);
-	return { ...view, drivers, driversPerState };
-}
-
-// One copy of drivers per message, not per move: a message carries up to
-// 5,000 moves (ADR 0045). A move keeps its driver's state; an unknown driver
-// (the UI joined mid-run) is idle, the most common state, until its next
-// state event.
-function withMoves(view: View, moved: DriversMoved): View {
-	const drivers = new Map(view.drivers);
-	const driversPerState = { ...view.driversPerState };
-	forEachMove(moved, (driverId, cell) => {
-		const previous = drivers.get(driverId);
-		if (previous === undefined) driversPerState.idle++;
-		drivers.set(driverId, {
-			state: previous?.state ?? "idle",
-			cell,
-			previousCell: previous?.cell ?? cell,
-			movedAt: moved.tick,
-		});
+function applyWentOnline(view: View, wentOnline: DriversWentOnline): void {
+	fitFleet(view, wentOnline.fleetSize);
+	const drivers = view.drivers;
+	forEachDriverAt(wentOnline, (index, x, y) => {
+		drivers.previousXs[index] = x;
+		drivers.previousYs[index] = y;
+		drivers.xs[index] = x;
+		drivers.ys[index] = y;
+		drivers.movedAt[index] = wentOnline.tick;
+		setState(view, index, "idle");
 	});
-	return { ...view, drivers, driversPerState };
-}
-
-// One copy of drivers per message, as for moves: at start a message carries
-// up to 5,000 drivers (ADR 0049).
-function withWentOnline(view: View, wentOnline: DriversWentOnline): View {
-	const drivers = new Map(view.drivers);
-	const driversPerState = { ...view.driversPerState };
-	forEachWentOnline(wentOnline, (driverId, cell) => {
-		const previous = drivers.get(driverId);
-		if (previous !== undefined) driversPerState[previous.state]--;
-		driversPerState.idle++;
-		drivers.set(driverId, {
-			state: "idle",
-			cell,
-			previousCell: cell,
-			movedAt: wentOnline.tick,
-		});
-	});
-	return { ...view, drivers, driversPerState };
-}
-
-function withoutDriver(view: View, driverId: DriverId): View {
-	const previous = view.drivers.get(driverId);
-	if (previous === undefined) return view;
-	const drivers = new Map(view.drivers);
-	const driversPerState = { ...view.driversPerState };
-	driversPerState[previous.state]--;
-	drivers.delete(driverId);
-	return { ...view, drivers, driversPerState };
-}
-
-function withoutWaitingRider(view: View, tripId: TripId): View {
-	if (!view.waitingRiders.has(tripId)) return view;
-	const waitingRiders = new Map(view.waitingRiders);
-	waitingRiders.delete(tripId);
-	return { ...view, waitingRiders };
-}
-
-function withoutActiveTrip(view: View, tripId: TripId): View {
-	if (!view.activeTrips.has(tripId)) return view;
-	const activeTrips = new Map(view.activeTrips);
-	activeTrips.delete(tripId);
-	return { ...view, activeTrips };
 }
