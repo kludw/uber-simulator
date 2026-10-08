@@ -1,5 +1,6 @@
 // The service processes a launcher (`bun run dev`, `bun run loadtest`) starts
 // after the persister. Each gets the run's environment plus `env`.
+import * as z from "zod";
 import { oneRegion } from "../shared/regions.ts";
 import type { ServiceConfig } from "./config.ts";
 
@@ -31,4 +32,48 @@ export function serviceProcesses(config: ServiceConfig): ServiceProcess[] {
 		// subscribe.
 		{ name: "clock", entrypoint: "src/clock/main.ts", env: shared },
 	];
+}
+
+// `bun run demo`'s defaults (ADR 0053): 100k drivers at the spec's ratio of
+// requests to drivers, a city that moves (hotspots, shifts). A variable set
+// in `env` wins, e.g. DRIVERS_PER_SHARD=200000 for 400k.
+const demoDefaults = {
+	DRIVER_SHARDS: "2",
+	DRIVERS_PER_SHARD: "50000",
+	REQUESTS_PER_MINUTE: "10000",
+	DEMAND: "city",
+	SHIFTS: "on",
+	PREFERENCES: "off",
+	MATCHING: "greedy",
+	REGIONS: "1x1",
+	SPEED: "1",
+	SEED: "1",
+	UI_PORT: "3000",
+};
+
+export function demoEnv(
+	env: Record<string, string | undefined>,
+): Record<string, string> {
+	const set = Object.entries(env).filter(
+		(entry): entry is [string, string] => entry[1] !== undefined,
+	);
+	return { ...demoDefaults, ...Object.fromEntries(set) };
+}
+
+// The UI server's log line once it listens (`src/ui/serve.ts`).
+const UiStarted = z.object({ type: z.literal("started"), url: z.string() });
+
+// The URL `bun run demo` prints: only once the UI listens, so it lands after
+// the start-up burst of service logs.
+export function uiStartedUrl(line: string): string | null {
+	let entry: unknown;
+	try {
+		entry = JSON.parse(line);
+	} catch (error) {
+		// Not a JSON log entry.
+		if (error instanceof SyntaxError) return null;
+		throw error;
+	}
+	const started = UiStarted.safeParse(entry);
+	return started.success ? started.data.url : null;
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { RunId } from "../shared/messages.ts";
-import { serviceProcesses } from "./launch.ts";
+import { demoEnv, serviceProcesses, uiStartedUrl } from "./launch.ts";
 
 describe("serviceProcesses", () => {
 	test("starts one dispatch per region, every process on the same layout, the clock last", () => {
@@ -48,5 +48,55 @@ describe("serviceProcesses", () => {
 				env: { REGIONS: "2x1" },
 			},
 		]);
+	});
+});
+
+describe("demoEnv", () => {
+	test("with nothing set, runs 100k drivers on city demand with shifts on port 3000", () => {
+		expect(demoEnv({})).toEqual({
+			DRIVER_SHARDS: "2",
+			DRIVERS_PER_SHARD: "50000",
+			REQUESTS_PER_MINUTE: "10000",
+			DEMAND: "city",
+			SHIFTS: "on",
+			PREFERENCES: "off",
+			MATCHING: "greedy",
+			REGIONS: "1x1",
+			SPEED: "1",
+			SEED: "1",
+			UI_PORT: "3000",
+		});
+	});
+
+	test("a variable set in the environment wins over its demo default", () => {
+		expect(
+			demoEnv({
+				DRIVERS_PER_SHARD: "200000",
+				NATS_URL: "nats://localhost:4222",
+				SEED: undefined,
+			}),
+		).toMatchObject({
+			DRIVERS_PER_SHARD: "200000",
+			NATS_URL: "nats://localhost:4222",
+			SEED: "1",
+		});
+	});
+});
+
+describe("uiStartedUrl", () => {
+	test("reads the URL from the UI server's started line", () => {
+		expect(
+			uiStartedUrl(
+				'{"service":"ui","type":"started","url":"http://localhost:3000/"}',
+			),
+		).toBe("http://localhost:3000/");
+	});
+
+	test("any other line has no URL", () => {
+		expect(
+			["not json", '{"service":"ui","type":"stopped"}', "[1, 2]"].map(
+				uiStartedUrl,
+			),
+		).toEqual([null, null, null]);
 	});
 });
