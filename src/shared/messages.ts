@@ -302,8 +302,28 @@ export const RequestTrip = z.object({
 	pickup: Cell,
 	dropoff: Cell,
 	region: OwningRegion,
+	surge: z.number().optional(),
 });
 export type RequestTrip = z.infer<typeof RequestTrip>;
+
+// SPIKE: surge zones of one region above 1.0.
+export const ZonesPriced = z.object({
+	type: z.literal("zones.priced"),
+	tick: Tick,
+	region: Region,
+	zones: z.array(z.int()),
+	surges: z.array(z.number()),
+});
+export type ZonesPriced = z.infer<typeof ZonesPriced>;
+
+export const RiderDeclinedSurge = z.object({
+	type: z.literal("rider.declined_surge"),
+	tick: Tick,
+	riderId: RiderId,
+	pickup: Cell,
+	surge: z.number(),
+});
+export type RiderDeclinedSurge = z.infer<typeof RiderDeclinedSurge>;
 
 export const RequestTripAccepted = z.object({
 	type: z.literal("request_trip_accepted"),
@@ -376,6 +396,7 @@ export const TripRequested = z.object({
 	riderId: RiderId,
 	pickup: Cell,
 	dropoff: Cell,
+	surge: z.number().optional(),
 });
 export type TripRequested = z.infer<typeof TripRequested>;
 
@@ -407,6 +428,8 @@ const Message = z.discriminatedUnion("type", [
 	CancelTripRejected,
 	ConfirmTrip,
 	TripStatus,
+	ZonesPriced,
+	RiderDeclinedSurge,
 ]);
 export type Message = z.infer<typeof Message>;
 
@@ -435,12 +458,12 @@ export function isOneOf<Type extends MessageType>(
 // commands, or command replies.
 export type SimEvent = Extract<
 	Message,
-	{ type: `${"clock" | "driver" | "drivers" | "trip"}.${string}` }
+	{ type: `${"clock" | "driver" | "drivers" | "trip" | "zones" | "rider"}.${string}` }
 >;
 
 // sim.events.> carries only events, but a payload is untrusted.
 export function isSimEvent(message: Message): message is SimEvent {
-	return /^(clock|drivers?|trip)\./.test(message.type);
+	return /^(clock|drivers?|trip|zones|rider)\./.test(message.type);
 }
 
 // Issues are Zod's plain data (code, path, message), fine to log; ZodError

@@ -73,6 +73,7 @@ if (compare) {
 	console.log(
 		`mean ticks from request to pickup: ${summary.meanTicksToPickup?.toFixed(1) ?? "n/a"}`,
 	);
+	if (process.env.SPIKE_PRINT) console.log(`SPIKE ${JSON.stringify(summary.spike)}`);
 	console.log(`rejected inputs: ${summary.rejectedInputs}`);
 	console.log(`invariant violations: ${summary.violations.length}`);
 	printAndFailOnViolations(null, summary);

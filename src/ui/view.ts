@@ -198,6 +198,8 @@ export function applyEvent(view: View, event: SimEvent): void {
 		case "trip.offered":
 		case "trip.offer_declined":
 		case "trip.offer_expired":
+		case "zones.priced":
+		case "rider.declined_surge":
 			return;
 		default: {
 			const unhandled: never = event;

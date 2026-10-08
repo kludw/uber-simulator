@@ -29,7 +29,9 @@ import type {
 	TripPickedUp,
 	TripRequested,
 	TripStatus,
+	ZonesPriced,
 } from "../shared/messages.ts";
+import { surge, surgeOf, zoneOf } from "../shared/surge.ts";
 import { forEachDriverAt } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 import {
@@ -88,6 +90,7 @@ export type DispatchState = {
 	trips: Map<TripId, Trip>;
 	endedTrips: Map<TripId, EndedTrip>;
 	drivers: IdleDrivers;
+	region: Region;
 };
 
 // ADR 0030: batched matches only on ticks that are multiples of windowTicks.
@@ -123,6 +126,7 @@ type DispatchOutput =
 	| TripCompleted
 	| TripCancelled
 	| TripStatus
+	| ZonesPriced
 	| (InputRejected<DriversWentOnline | DriversMoved, "fleet_size_mismatch"> & {
 			expectedFleetSize: number;
 	  })
@@ -165,6 +169,7 @@ export function startDispatch(config: {
 		matching,
 		trips: new Map(),
 		endedTrips: new Map(),
+		region: config.region ?? Region.parse(0),
 		drivers: startIdleDrivers(
 			config.grid,
 			config.fleetSize,
@@ -250,6 +255,9 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 			throw new Error(`unhandled matching: ${unhandled}`);
 		}
 	}
+	if (surge.on && ticked.tick % surge.everyTicks === 0) {
+		outputs.push(zonesPriced(state, ticked.tick));
+	}
 	// After offering, so an expired trip and its driver wait for the next tick
 	// (ADR 0018); offers made this tick are never due.
 	for (const trip of state.trips.values()) {
@@ -267,6 +275,30 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 	}
 	state.tick = ticked.tick;
 	return { state, outputs };
+}
+
+// SPIKE: riders without a driver vs idle drivers per zone, after matching.
+function zonesPriced(state: DispatchState, tick: Tick): ZonesPriced {
+	const waiting = new Map<number, number>();
+	const idle = new Map<number, number>();
+	for (const trip of state.trips.values()) {
+		if (trip.state !== "requested") continue;
+		const zone = zoneOf(state.grid, trip.pickup);
+		waiting.set(zone, (waiting.get(zone) ?? 0) + 1);
+	}
+	for (const driver of idleDriversById(state.drivers)) {
+		const zone = zoneOf(state.grid, driver.cell);
+		idle.set(zone, (idle.get(zone) ?? 0) + 1);
+	}
+	const zones: number[] = [];
+	const surges: number[] = [];
+	for (const zone of [...waiting.keys()].sort((a, b) => a - b)) {
+		const multiplier = surgeOf(waiting.get(zone) ?? 0, idle.get(zone) ?? 0);
+		if (multiplier <= 1) continue;
+		zones.push(zone);
+		surges.push(multiplier);
+	}
+	return { type: "zones.priced", tick, region: state.region, zones, surges };
 }
 
 type OfferPair = { trip: QueuedTrip; driverId: DriverId };
@@ -357,6 +389,7 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 				riderId: request.riderId,
 				pickup: request.pickup,
 				dropoff: request.dropoff,
+				...(request.surge === undefined ? {} : { surge: request.surge }),
 			},
 		],
 	};

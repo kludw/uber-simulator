@@ -6,13 +6,16 @@ import type {
 	InputRejected,
 	RequestTrip,
 	RequestTripRejected,
+	RiderDeclinedSurge,
 	RiderId,
 	Tick,
 	TripCancelled,
 	TripCompleted,
 	TripId,
 	TripPickedUp,
+	ZonesPriced,
 } from "../shared/messages.ts";
+import { surge, zoneOf } from "../shared/surge.ts";
 import type { Random } from "../shared/random.ts";
 import {
 	oneRegion,
@@ -46,6 +49,7 @@ export type RidersState = {
 	demand: Demand;
 	spawned: number;
 	riders: Map<TripId, Rider>;
+	surges: Map<string, number>;
 };
 
 export type RidersInput =
@@ -54,9 +58,10 @@ export type RidersInput =
 	| TripCompleted
 	| TripCancelled
 	| CancelTripRejected
-	| RequestTripRejected;
+	| RequestTripRejected
+	| ZonesPriced;
 
-type RidersOutput = RequestTrip | CancelTrip | Rejected;
+type RidersOutput = RequestTrip | CancelTrip | RiderDeclinedSurge | Rejected;
 
 type Rejected = InputRejected<
 	| TripPickedUp
@@ -85,6 +90,7 @@ export function startRiders(config: {
 		demand,
 		spawned: 0,
 		riders: new Map(),
+		surges: new Map(),
 	};
 }
 
@@ -106,6 +112,15 @@ export function decideRiders(
 			return onCancelRejected(state, input);
 		case "request_trip_rejected":
 			return onRequestRejected(state, input);
+		case "zones.priced": {
+			for (const key of [...state.surges.keys()]) {
+				if (key.startsWith(`${input.region}:`)) state.surges.delete(key);
+			}
+			input.zones.forEach((zone, i) => {
+				state.surges.set(`${input.region}:${zone}`, input.surges[i] ?? 1);
+			});
+			return { state, outputs: [] };
+		}
 		default: {
 			const unhandled: never = input;
 			throw new Error(`unhandled riders input: ${unhandled}`);
@@ -207,6 +222,7 @@ function onTick(
 	// Children keyed by tick: the same label would replay the same draws every tick.
 	const demand = random.child(`demand:${input.tick}`);
 	const patience = random.child(`patience:${input.tick}`);
+	const willingness = random.child(`willingness:${input.tick}`);
 	const spawnCount = poisson(state.requestsPerMinute / 60, demand);
 	const nextPickup = pickupsForTick(state.demand, state.grid, input.tick, {
 		root: random,
@@ -247,6 +263,23 @@ function onTick(
 			requestedAt: input.tick,
 			patience: patience.int(120, 300),
 		};
+		let quoted: number | undefined;
+		if (surge.on) {
+			quoted =
+				state.surges.get(`${rider.region}:${zoneOf(state.grid, pickup)}`) ??
+				1;
+			const maxSurge = 1 + willingness.float() * (surge.maxWilling - 1);
+			if (quoted > maxSurge) {
+				outputs.push({
+					type: "rider.declined_surge",
+					tick: input.tick,
+					riderId: rider.id,
+					pickup,
+					surge: quoted,
+				});
+				continue;
+			}
+		}
 		state.riders.set(rider.tripId, rider);
 		outputs.push({
 			type: "request_trip",
@@ -256,6 +289,7 @@ function onTick(
 			pickup,
 			dropoff,
 			region: rider.region,
+			...(quoted === undefined ? {} : { surge: quoted }),
 		});
 	}
 	return { state, outputs };

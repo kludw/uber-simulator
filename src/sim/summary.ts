@@ -1,4 +1,5 @@
 import type { Message, Tick, TripId } from "../shared/messages.ts";
+import { fareOf } from "../shared/surge.ts";
 import { createInvariantChecker, type Violation } from "./invariants.ts";
 import type { RunConfig, RunResult } from "./run.ts";
 
@@ -7,6 +8,7 @@ export type Summary = {
 	ticks: number;
 	drivers: number;
 	trips: { requested: number; completed: number; cancelled: number };
+	spike: { declined: number; revenue: number; surgedRequests: number; meanQuoted: number; zoneUpdates: number; surgingZoneEntries: number };
 	// null when no trip was picked up.
 	meanTicksToPickup: number | null;
 	rejectedInputs: number;
@@ -50,7 +52,7 @@ export function createSummary(config: RunConfig): RunSummary {
 	};
 }
 
-export type TripSummary = Pick<Summary, "trips" | "meanTicksToPickup">;
+export type TripSummary = Pick<Summary, "trips" | "meanTicksToPickup" | "spike">;
 
 // The summary's trip numbers alone, for event logs without a RunConfig
 // (stored runs, ADR 0034). Memory grows with trips, not with messages.
@@ -60,6 +62,9 @@ export function createTripSummary(): {
 } {
 	const trips = { requested: 0, completed: 0, cancelled: 0 };
 	const requestedAt = new Map<TripId, Tick>();
+	const fares = new Map<TripId, number>();
+	const spike = { declined: 0, revenue: 0, surgedRequests: 0, meanQuoted: 0, zoneUpdates: 0, surgingZoneEntries: 0 };
+	let quotedSum = 0;
 	let pickups = 0;
 	let ticksToPickup = 0;
 	return {
@@ -68,6 +73,16 @@ export function createTripSummary(): {
 				case "trip.requested":
 					trips.requested++;
 					requestedAt.set(message.tripId, message.tick);
+					fares.set(message.tripId, fareOf(message.pickup, message.dropoff, message.surge ?? 1));
+					quotedSum += message.surge ?? 1;
+					if ((message.surge ?? 1) > 1) spike.surgedRequests++;
+					break;
+				case "rider.declined_surge":
+					spike.declined++;
+					break;
+				case "zones.priced":
+					spike.zoneUpdates++;
+					spike.surgingZoneEntries += message.zones.length;
 					break;
 				case "trip.picked_up": {
 					const at = requestedAt.get(message.tripId);
@@ -78,6 +93,7 @@ export function createTripSummary(): {
 				}
 				case "trip.completed":
 					trips.completed++;
+					spike.revenue += fares.get(message.tripId) ?? 0;
 					break;
 				case "trip.cancelled":
 					trips.cancelled++;
@@ -86,6 +102,7 @@ export function createTripSummary(): {
 		},
 		result: () => ({
 			trips: { ...trips },
+			spike: { ...spike, meanQuoted: trips.requested === 0 ? 0 : quotedSum / trips.requested },
 			meanTicksToPickup: pickups === 0 ? null : ticksToPickup / pickups,
 		}),
 	};
