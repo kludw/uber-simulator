@@ -34,7 +34,32 @@ describe("parseServiceConfig", () => {
 				shifts: { type: "always_online" },
 				preferences: { type: "accept_all" },
 				regions: { columns: 1, rows: 1 },
+				surge: false,
 			},
+		});
+	});
+
+	// ADR 0054: dispatch prices zones, riders decline above their max surge.
+	test("SURGE=on prices trips with zone surge", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			SURGE: "on",
+		});
+
+		expect(parsed).toMatchObject({ ok: true, value: { surge: true } });
+	});
+
+	test("names an unknown SURGE", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			SURGE: "yes",
+		});
+
+		expect(parsed).toMatchObject({
+			ok: false,
+			error: { type: "invalid_config", issues: [{ variable: "SURGE" }] },
 		});
 	});
 

@@ -68,4 +68,24 @@ describe("benchReport", () => {
 			].join("\n"),
 		);
 	});
+
+	// ADR 0054: surge-off output stays as it was.
+	test("a run with surge on says so after its regions", () => {
+		const report = benchReport(
+			{ ...config, surge: true },
+			{
+				tickMs: [1],
+				messages: 1,
+				peakRssBytes: 2 ** 20,
+				heapBytes: 2 ** 20,
+				heapObjects: 1,
+				status: { type: "finished" },
+			},
+		);
+
+		expect(report.split("\n").slice(5, 7)).toEqual([
+			"regions: 2x1",
+			"surge: on",
+		]);
+	});
 });

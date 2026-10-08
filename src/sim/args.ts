@@ -10,6 +10,7 @@ import {
 	PreferencesName,
 	preferencesNamed,
 	ShiftsName,
+	SurgeName,
 	shiftsNamed,
 } from "./config.ts";
 import type { RunConfig } from "./run.ts";
@@ -18,6 +19,8 @@ export type SimArgs = {
 	bus: "in-memory" | "nats";
 	// Greedy and batched on the same config, side by side (ADR 0030).
 	compare: boolean;
+	// The configured matching with surge off and on, side by side (ADR 0054).
+	compareSurge: boolean;
 	matching: "greedy" | "batched";
 	// Batched only.
 	windowTicks: number;
@@ -52,6 +55,8 @@ const Args = z
 		matching: z.enum(["greedy", "batched"]),
 		"batch-window": integerArg.pipe(z.int().positive()),
 		compare: z.boolean(),
+		"compare-surge": z.boolean(),
+		surge: SurgeName,
 		demand: DemandName,
 		shifts: ShiftsName,
 		preferences: PreferencesName,
@@ -62,6 +67,14 @@ const Args = z
 	.refine((args) => !(args.compare && args.bus === "nats"), {
 		error: "--compare runs in process only",
 		path: ["compare"],
+	})
+	.refine((args) => !(args["compare-surge"] && args.bus === "nats"), {
+		error: "--compare-surge runs in process only",
+		path: ["compare-surge"],
+	})
+	.refine((args) => !(args.compare && args["compare-surge"]), {
+		error: "--compare and --compare-surge are exclusive",
+		path: ["compare-surge"],
 	})
 	.refine(
 		({ regions }) =>
@@ -82,6 +95,9 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 				matching: { type: "string", default: "greedy" },
 				"batch-window": { type: "string", default: "5" },
 				compare: { type: "boolean", default: false },
+				"compare-surge": { type: "boolean", default: false },
+				// Off: no message carries a price (ADR 0054).
+				surge: { type: "string", default: "off" },
 				// Spec defaults (docs/spec.md).
 				demand: { type: "string", default: "uniform" },
 				shifts: { type: "string", default: "off" },
@@ -114,6 +130,7 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 		value: {
 			bus: args.bus,
 			compare: args.compare,
+			compareSurge: args["compare-surge"],
 			matching: args.matching,
 			windowTicks: args["batch-window"],
 			demandName: args.demand,
@@ -130,6 +147,7 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 				shifts: shiftsNamed(args.shifts),
 				preferences: preferencesNamed(args.preferences),
 				regions: args.regions,
+				surge: args.surge === "on",
 			},
 		},
 	};

@@ -78,6 +78,10 @@ export function preferencesNamed(
 	return name === "picky" ? pickyPreset : { type: "accept_all" };
 }
 
+// Surge pricing selectable by name, from env (SURGE) or the CLI (--surge).
+// Every process of a run must get the same value (ADR 0054).
+export const SurgeName = z.enum(["off", "on"]);
+
 // Every process of a run must get the same value (ADR 0050).
 const Regions = RegionLayout.refine(
 	({ columns, rows }) => columns <= specGrid.width && rows <= specGrid.height,
@@ -117,6 +121,7 @@ const Env = z.object({
 	// Driver shards only (ADR 0035).
 	PREFERENCES: PreferencesName.default("off"),
 	REGIONS: Regions,
+	SURGE: SurgeName.default("off"),
 });
 
 export function parseServiceConfig(
@@ -147,6 +152,7 @@ export function parseServiceConfig(
 			shifts: shiftsNamed(vars.SHIFTS),
 			preferences: preferencesNamed(vars.PREFERENCES),
 			regions: vars.REGIONS,
+			surge: vars.SURGE === "on",
 		},
 	};
 }

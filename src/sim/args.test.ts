@@ -9,6 +9,7 @@ describe("parseSimArgs", () => {
 			value: {
 				bus: "in-memory",
 				compare: false,
+				compareSurge: false,
 				matching: "greedy",
 				windowTicks: 5,
 				demandName: "uniform",
@@ -24,6 +25,7 @@ describe("parseSimArgs", () => {
 					shifts: { type: "always_online" },
 					preferences: { type: "accept_all" },
 					regions: { columns: 1, rows: 1 },
+					surge: false,
 				},
 			},
 		});
@@ -34,6 +36,21 @@ describe("parseSimArgs", () => {
 		expect(parseSimArgs(["--regions", "2x2"])).toMatchObject({
 			ok: true,
 			value: { config: { regions: { columns: 2, rows: 2 } } },
+		});
+	});
+
+	// ADR 0054.
+	test("--surge on prices trips with zone surge", () => {
+		expect(parseSimArgs(["--surge", "on"])).toMatchObject({
+			ok: true,
+			value: { config: { surge: true } },
+		});
+	});
+
+	test("--compare-surge runs surge off and on side by side", () => {
+		expect(parseSimArgs(["--compare-surge"])).toMatchObject({
+			ok: true,
+			value: { compareSurge: true },
 		});
 	});
 
@@ -104,6 +121,9 @@ describe("parseSimArgs", () => {
 		[["--drivers-per-shard", "0"]],
 		[["--seed", "1.5"]],
 		[["--compare", "--bus", "nats"]],
+		[["--compare-surge", "--bus", "nats"]],
+		[["--compare", "--compare-surge"]],
+		[["--surge", "yes"]],
 		[["--regions", "2"]],
 		// The spec grid is 500 cells wide and high.
 		[["--regions", "501x1"]],
