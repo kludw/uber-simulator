@@ -384,6 +384,66 @@ describe("fleet size", () => {
 	});
 });
 
+// A new run (live, or a replay watched twice) with the same fleet size: the
+// clock going back is the only sign of it.
+describe("new run", () => {
+	const oldRun: SimEvent[] = [
+		...trip,
+		{ type: "clock.ticked", tick: tick(10) },
+		online(i2, 3, cell(5, 5)),
+		requested(TripId.parse("t-2"), 9, pickup, dropoff),
+	];
+
+	// The clock publishes from tick 1; shards announce their start-up fleet
+	// at tick 0, before it (one message per shard).
+	test.each([
+		["the same", fleetSize],
+		["another", 20],
+	])("a tick 0 message starts the view over at %s fleet size", (_, size) => {
+		const newRun: SimEvent[] = [
+			driversWentOnline(tick(0), Region.parse(0), size, [
+				{ driverIndex: i1, cell: cell(7, 7) },
+			]),
+			driversWentOnline(tick(0), Region.parse(0), size, [
+				{ driverIndex: i2, cell: cell(8, 8) },
+			]),
+			{ type: "clock.ticked", tick: tick(1) },
+		];
+		expect(viewOf([...oldRun, ...newRun])).toEqual(viewOf(newRun));
+	});
+
+	// A run not starting at tick 0: a replay --from-tick into a page further
+	// along.
+	test("a clock tick before the view's tick starts the view over", () => {
+		const newRun: SimEvent[] = [
+			{ type: "clock.ticked", tick: tick(5) },
+			moved(i2, 5, cell(7, 7)),
+		];
+		expect(viewOf([...oldRun, ...newRun])).toEqual(viewOf(newRun));
+	});
+
+	// A page joining mid-run, or a replay --from-tick into a fresh page.
+	test("a first tick keeps what came before it", () => {
+		const view = viewOf([...trip, { type: "clock.ticked", tick: tick(500) }]);
+		expect(view.tripsCompleted).toBe(1);
+	});
+
+	test.each([10, 11])(
+		"tick %p, not before the view's tick, keeps the view",
+		(at) => {
+			const view = viewOf([
+				...oldRun,
+				{ type: "clock.ticked", tick: tick(at) },
+			]);
+			expect({
+				completed: view.tripsCompleted,
+				waiting: view.waitingRiders.size,
+				drivers: [...driversOf(view).keys()],
+			}).toEqual({ completed: 1, waiting: 1, drivers: [i1, i2] });
+		},
+	);
+});
+
 // Over NATS only per-publisher order holds (ADR 0028): a driver's arrival can
 // reach the UI after dispatch's event that freed it.
 describe("late arrivals", () => {

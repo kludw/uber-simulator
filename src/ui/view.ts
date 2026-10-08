@@ -126,6 +126,7 @@ export function forEachDriver(
 }
 
 export function applyEvent(view: View, event: SimEvent): void {
+	startOverOnNewRun(view, event);
 	switch (event.type) {
 		case "clock.ticked":
 			view.tick = event.tick;
@@ -203,6 +204,21 @@ export function applyEvent(view: View, event: SimEvent): void {
 			throw new Error(`unhandled event: ${JSON.stringify(unhandled)}`);
 		}
 	}
+}
+
+// A new run (live, or a replay watched again) even at the same fleet size:
+// nothing of the old one may linger. The clock publishes from tick 1, so a
+// tick 0 message after a tick is the new run's start-up (drivers going
+// online before its first clock tick); the view takes tick 0 so its own
+// tick 1 doesn't start over again. A clock tick going back is a run not
+// starting at 0 (a replay --from-tick). A first tick never starts over: a
+// mid-run join keeps what it has seen.
+function startOverOnNewRun(view: View, event: SimEvent): void {
+	if (view.tick === null) return;
+	const startUp = event.tick === 0 && view.tick !== 0;
+	const clockBack = event.type === "clock.ticked" && event.tick < view.tick;
+	if (!startUp && !clockBack) return;
+	Object.assign(view, emptyView(), { tick: event.tick });
 }
 
 // The index of a shown driver, else null: an ID not made by driverIdAt, an
