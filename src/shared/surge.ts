@@ -17,6 +17,19 @@ export function zoneOf(grid: Grid, cell: Cell): Zone {
 	return (row * zoneColumns(grid) + column) as Zone;
 }
 
+export function zoneCount(grid: Grid): number {
+	return zoneColumns(grid) * Math.ceil(grid.height / zoneCells);
+}
+
+// Manhattan distance between zones in zone columns and rows (ADR 0055).
+export function zoneDistance(grid: Grid, a: Zone, b: Zone): number {
+	const columns = zoneColumns(grid);
+	return (
+		Math.abs((a % columns) - (b % columns)) +
+		Math.abs(Math.floor(a / columns) - Math.floor(b / columns))
+	);
+}
+
 // Inclusive corners of the zone's part inside the region, null if the zone
 // lies outside it. A zone cut by a region border is priced per part, each by
 // its region's dispatch.

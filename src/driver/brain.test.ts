@@ -14,6 +14,7 @@ import {
 } from "../shared/messages.ts";
 import { createRandom, type Random } from "../shared/random.ts";
 import { Region, RegionLayout } from "../shared/regions.ts";
+import { Surge, Zone } from "../shared/surge.ts";
 import {
 	type DriverShardInput,
 	type DriverShardState,
@@ -2064,5 +2065,383 @@ describe("driver shard determinism", () => {
 
 	test("same seed and inputs give identical outputs with shifts", () => {
 		expect(run(42, shifts)).toEqual(run(42, shifts));
+	});
+});
+
+// ADR 0055. 300 x 100 cells: surge zones 0-5 on the top row, 6-11 below.
+describe("decideDriverShard chasing surge", () => {
+	const surgeGrid: Grid = { width: 300, height: 100 };
+	const region0 = Region.parse(0);
+
+	function at(x: number, y: number): Cell {
+		const result = cellIn(surgeGrid, x, y);
+		if (!result.ok) throw new Error(`test cell (${x}, ${y}) outside grid`);
+		return result.value;
+	}
+
+	function priced(
+		zones: [number, number][],
+		region: Region = region0,
+	): DriverShardInput {
+		return {
+			type: "zones.priced",
+			tick: tick(0),
+			region,
+			zones: zones.map(([zone, surge]) => ({
+				zone: Zone.parse(zone),
+				surge: Surge.parse(surge),
+			})),
+		};
+	}
+
+	// Drivers d-1, d-2, ... idle at cells, given prices, then ticked once on
+	// tick 5 with random.
+	function tickedWithPrices(
+		cells: [number, number][],
+		prices: DriverShardInput[],
+		random: Random,
+		regions?: RegionLayout,
+	) {
+		let { state } = startDriverShard(
+			{
+				grid: surgeGrid,
+				...shard(i1, cells.length),
+				tick: tick(0),
+				regions,
+			},
+			scriptedRandom(cells.flat()),
+		);
+		for (const input of prices) {
+			state = decideDriverShard(state, input, scriptedRandom([])).state;
+		}
+		return decideDriverShard(
+			state,
+			{ type: "clock.ticked", tick: tick(5) },
+			random,
+		).outputs;
+	}
+
+	test("an idle driver picking a target heads for a cell of the nearest surge area in reach", () => {
+		// d-1 in zone 6 (column 0, row 1): zones 2 and 9 are 3 zones away,
+		// zone 8 (cells 100-149, 50-99) 2: target (120, 60).
+		const outputs = tickedWithPrices(
+			[[10, 60]],
+			[
+				priced([
+					[2, 2],
+					[8, 1.3],
+					[9, 1.2],
+				]),
+			],
+			shiftRandom([], { "chase:5": [120, 60] }),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(11, 60) },
+			]),
+		]);
+	});
+
+	test("an idle driver with no surge area in reach wanders to a random cell", () => {
+		// d-1 in zone 0; zone 11 is 6 zones away. Wander target (0, 99).
+		const outputs = tickedWithPrices(
+			[[0, 0]],
+			[priced([[11, 2]])],
+			scriptedRandom([0, 99]),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(0, 1) },
+			]),
+		]);
+	});
+
+	test("a surge area 4 zones away is in reach", () => {
+		// d-1 in zone 0; zone 10 (cells 200-249, 50-99) is 4 + 1 = 5 away, zone
+		// 4 (200-249, 0-49) 4.
+		const outputs = tickedWithPrices(
+			[[0, 0]],
+			[
+				priced([
+					[4, 1.1],
+					[10, 2],
+				]),
+			],
+			shiftRandom([], { "chase:5": [200, 0] }),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(1, 0) },
+			]),
+		]);
+	});
+
+	test("of surge areas equally near, a driver heads for the higher surge", () => {
+		// d-1 in zone 7: zones 6 and 8 1 away, 8 (100-149, 50-99) higher.
+		const outputs = tickedWithPrices(
+			[[75, 75]],
+			[
+				priced([
+					[6, 1.5],
+					[8, 1.6],
+				]),
+			],
+			shiftRandom([], { "chase:5": [100, 75] }),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(76, 75) },
+			]),
+		]);
+	});
+
+	test("of surge areas equally near and surging, a driver heads for the lower zone", () => {
+		// d-1 in zone 7: zones 1 (50-99, 0-49) and 8 1 away, same surge.
+		const outputs = tickedWithPrices(
+			[[75, 75]],
+			[
+				priced([
+					[1, 1.5],
+					[8, 1.5],
+				]),
+			],
+			shiftRandom([], { "chase:5": [75, 49] }),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(75, 74) },
+			]),
+		]);
+	});
+
+	test("an idle driver in a surging zone picks its next cell in that zone", () => {
+		// d-1 in zone 7, surging less than zone 8 next to it.
+		const outputs = tickedWithPrices(
+			[[75, 75]],
+			[
+				priced([
+					[7, 1.1],
+					[8, 2],
+				]),
+			],
+			shiftRandom([], { "chase:5": [50, 75] }),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(74, 75) },
+			]),
+		]);
+	});
+
+	// 3x1 regions: borders at x = 100 and 200, inside no zone; 6x1 would cut
+	// none either, so 4x1 on a 300-cell grid: borders at 75, 150, 225 cut
+	// zones 1 and 4 (and 7, 10).
+	describe("with a zone cut by a region border", () => {
+		const regions = RegionLayout.parse("4x1");
+
+		test("a driver heads for the cut zone's part in the lower region on equal surge", () => {
+			// d-1 in zone 0; zone 1 priced by regions 0 (50-74) and 1 (75-99).
+			const outputs = tickedWithPrices(
+				[[10, 10]],
+				[priced([[1, 1.5]], Region.parse(1)), priced([[1, 1.5]])],
+				shiftRandom([], { "chase:5": [74, 10] }),
+				regions,
+			);
+			expect(outputs).toEqual([
+				driversMoved(tick(5), region0, fleetSize, [
+					{ driverIndex: i1, cell: at(11, 10) },
+				]),
+			]);
+		});
+
+		test("a driver heads for the cut zone's part that surges higher", () => {
+			const outputs = tickedWithPrices(
+				[[10, 10]],
+				[priced([[1, 1.5]]), priced([[1, 1.6]], Region.parse(1))],
+				shiftRandom([], { "chase:5": [75, 10] }),
+				regions,
+			);
+			expect(outputs).toEqual([
+				driversMoved(tick(5), region0, fleetSize, [
+					{ driverIndex: i1, cell: at(11, 10) },
+				]),
+			]);
+		});
+	});
+
+	test("drivers chasing in one tick draw their cells in turn from the tick's chase stream", () => {
+		// d-1 and d-2 in zone 0, zone 1 surging: targets (50, 0) and (99, 49).
+		const outputs = tickedWithPrices(
+			[
+				[0, 0],
+				[49, 49],
+			],
+			[priced([[1, 1.5]])],
+			shiftRandom([], { "chase:5": [50, 0, 99, 49] }),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(1, 0) },
+				{ driverIndex: i2, cell: at(50, 49) },
+			]),
+		]);
+	});
+
+	// d-1 starts at a cell, then takes each input with its random; the last
+	// input's outputs.
+	function fed(start: [number, number], steps: [DriverShardInput, Random][]) {
+		let { state } = startDriverShard(
+			{ grid: surgeGrid, ...shard(i1, 1), tick: tick(0) },
+			scriptedRandom(start),
+		);
+		let outputs: unknown[] = [];
+		for (const [input, random] of steps) {
+			const decided = decideDriverShard(state, input, random);
+			state = decided.state;
+			outputs = decided.outputs;
+		}
+		return outputs;
+	}
+
+	const ticked = (n: number): DriverShardInput => ({
+		type: "clock.ticked",
+		tick: tick(n),
+	});
+	const noDraws = () => scriptedRandom([]);
+
+	test("on the tick after new prices, an idle driver heading outside any surge area chases", () => {
+		// Tick 1: wander target (0, 99), d-1 at (0, 1). Zone 1 surges: on tick
+		// 2 d-1 heads for (99, 1) instead.
+		const outputs = fed(
+			[0, 0],
+			[
+				[ticked(1), scriptedRandom([0, 99])],
+				[priced([[1, 1.5]]), noDraws()],
+				[ticked(2), shiftRandom([], { "chase:2": [99, 1] })],
+			],
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(2), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(1, 1) },
+			]),
+		]);
+	});
+
+	test("on the tick after new prices, an idle driver heading into a surge area keeps its target", () => {
+		// Tick 1: wander target (60, 10) in zone 1, which then surges.
+		const outputs = fed(
+			[0, 0],
+			[
+				[ticked(1), scriptedRandom([60, 10])],
+				[priced([[1, 1.5]]), noDraws()],
+				[ticked(2), noDraws()],
+			],
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(2), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(2, 0) },
+			]),
+		]);
+	});
+
+	test("on the tick after new prices, an idle driver with no surge area in reach keeps its target", () => {
+		const outputs = fed(
+			[0, 0],
+			[
+				[ticked(1), scriptedRandom([0, 99])],
+				[priced([[5, 1.5]]), noDraws()],
+				[ticked(2), noDraws()],
+			],
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(2), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(0, 2) },
+			]),
+		]);
+	});
+
+	test("an idle driver coming into reach of surge later keeps its target until new prices", () => {
+		// Zone 11 surges, out of reach from zone 1 (5 zones); d-1 heading for
+		// (50, 99) enters zone 7 (4 zones) on tick 3 and keeps going.
+		const outputs = fed(
+			[50, 47],
+			[
+				[ticked(1), scriptedRandom([50, 99])],
+				[priced([[11, 1.5]]), noDraws()],
+				[ticked(2), noDraws()],
+				[ticked(3), noDraws()],
+				[ticked(4), noDraws()],
+			],
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(4), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(50, 51) },
+			]),
+		]);
+	});
+
+	test("prices equal to the last still re-pick targets on the next tick", () => {
+		// Zone 11 surges; d-1 comes into reach on tick 3 (see above), then the
+		// same prices arrive again: on tick 4 it heads for (250, 99).
+		const outputs = fed(
+			[50, 47],
+			[
+				[ticked(1), scriptedRandom([50, 99])],
+				[priced([[11, 1.5]]), noDraws()],
+				[ticked(2), noDraws()],
+				[ticked(3), noDraws()],
+				[priced([[11, 1.5]]), noDraws()],
+				[ticked(4), shiftRandom([], { "chase:4": [250, 99] })],
+			],
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(4), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(51, 50) },
+			]),
+		]);
+	});
+
+	test("same seed, inputs and prices give identical outputs", () => {
+		function run() {
+			const random = createRandom(42);
+			let { state } = startDriverShard(
+				{ grid: surgeGrid, ...shard(i1, 2), tick: tick(0) },
+				random,
+			);
+			const outputs: unknown[] = [];
+			for (let n = 1; n <= 60; n++) {
+				if (n % 30 === 1) {
+					state = decideDriverShard(
+						state,
+						priced([[n % 12, 1.5]]),
+						random,
+					).state;
+				}
+				const decided = decideDriverShard(state, ticked(n), random);
+				state = decided.state;
+				outputs.push(...decided.outputs);
+			}
+			return outputs;
+		}
+		expect(run()).toEqual(run());
+	});
+
+	test("a chase leaves other drivers' wander draws unshifted", () => {
+		// d-1 in zone 6 chases zone 7 at (50, 50); d-2 in zone 5, out of reach,
+		// draws wander target (299, 0) from the shard's stream.
+		const outputs = tickedWithPrices(
+			[
+				[0, 50],
+				[299, 49],
+			],
+			[priced([[7, 1.5]])],
+			shiftRandom([299, 0], { "chase:5": [50, 50] }),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(1, 50) },
+				{ driverIndex: i2, cell: at(299, 48) },
+			]),
+		]);
 	});
 });
