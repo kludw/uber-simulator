@@ -58,3 +58,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0052 | [Driver indexes in moves](0052-driver-indexes-in-moves.md) | Accepted |
 | 0053 | [Scale the UI in the browser](0053-scale-the-ui-in-the-browser.md) | Accepted |
 | 0054 | [Price trips with zone surge](0054-price-trips-with-zone-surge.md) | Accepted |
+| 0055 | [Idle drivers chase the nearest surge area](0055-idle-drivers-chase-surge.md) | Accepted |
