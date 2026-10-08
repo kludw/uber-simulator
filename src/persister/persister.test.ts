@@ -558,7 +558,9 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 	// A connection on which fetches get no heartbeats and no end-of-batch
 	// status, so a fetch that hasn't filled its batch fails with "heartbeats
 	// missed" after about 1 s, keeping whatever it received: the failure a
-	// starved NATS server causes.
+	// starved NATS server causes. Depends on @nats-io/jetstream internals
+	// (3.4.0): a fetch reads its inbox through `nc.subscribe` with a callback,
+	// and statuses arrive there as messages with a header `code`.
 	function withoutFetchStatuses(nc: NatsConnection): NatsConnection {
 		return new Proxy(nc, {
 			get(target, property) {

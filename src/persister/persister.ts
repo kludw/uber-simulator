@@ -163,7 +163,7 @@ export async function startPersister(options: {
 		};
 		const retryDelaysMs = options.retryDelaysMs ?? defaultRetryDelaysMs;
 		let failedFetches = 0;
-		let fetching = fetchBatch(consumer, options.nats);
+		let fetching = fetchBatch(consumer);
 		for (;;) {
 			const fetchStart = now();
 			const fetched = await fetching;
@@ -181,7 +181,7 @@ export async function startPersister(options: {
 				options.log({ type: "fetch_failed", attempt: failedFetches, cause });
 				if (stop.signal.aborted) break;
 				await Bun.sleep(delay);
-				fetching = fetchBatch(consumer, options.nats);
+				fetching = fetchBatch(consumer);
 				continue;
 			}
 			failedFetches = 0;
@@ -189,7 +189,7 @@ export async function startPersister(options: {
 			// acked (ADR 0044). Once stopping, none is fetched, so every batch
 			// fetched is persisted before the loop ends.
 			const stopping = stop.signal.aborted;
-			if (!stopping) fetching = fetchBatch(consumer, options.nats);
+			if (!stopping) fetching = fetchBatch(consumer);
 			const batch = fetched.value;
 			if (batch.length > 0) {
 				const fetchMs = now() - fetchStart;
@@ -247,14 +247,15 @@ async function ensureConsumer(
 }
 
 // Never rejects, so a fetch running in the background can't go unhandled.
-// A fetch can fail after receiving messages (heartbeats missed under load);
-// those are nacked for prompt redelivery, so they never wait out the ack
-// wait, also when the failure ends the loop on stop (ADR 0044). A closed or
-// draining connection can't send the naks (publish throws); the ack wait
-// covers them then.
+// A fetch can fail after receiving messages; those are nacked for prompt
+// redelivery, so they don't wait out the ack wait, also when the failure ends
+// the loop on stop (ADR 0044). Heartbeats missed (a starved server) is fully
+// covered: every message received was consumed here first. A terminal
+// status in the batch (e.g. 409) can end it with messages not yet consumed;
+// those wait out the ack wait. On a closed connection the client drops the
+// naks; the ack wait covers those too.
 async function fetchBatch(
 	consumer: Consumer,
-	nats: NatsConnection,
 ): Promise<Result<JsMsg[], unknown>> {
 	const received: JsMsg[] = [];
 	try {
@@ -265,9 +266,6 @@ async function fetchBatch(
 		for await (const message of messages) received.push(message);
 		return { ok: true, value: received };
 	} catch (cause) {
-		if (nats.isClosed() || nats.isDraining()) {
-			return { ok: false, error: cause };
-		}
 		for (const message of received) message.nak();
 		return { ok: false, error: cause };
 	}
