@@ -277,6 +277,8 @@ bun run replay -- --run <run id> --speed 5
 
 The view, canvas, and side panel are the live ones; the status says `replay <run id>`. A malformed run id shows `invalid replay run id` and connects nowhere. Any other NATS subscriber on `replay.<run id>.>` works too.
 
+A run stored with today's events (`drivers.moved` / `drivers.went_online` by driver index, any `REGIONS`, any fleet size, so dots or the heatmap above 10,000 drivers) replays to the same view as live: an integration test stores a fresh 2x1 run with shifts through the persister, replays it, and compares the page's view at the end of ticks 1, 100, 200, 300 and at the end (`src/replay/main.test.ts`). Older stored runs replay their trip events, but their driver messages are skipped (`stored_event_skipped`): runs stored before [ADR 0052](docs/adr/0052-driver-indexes-in-moves.md) (driver IDs instead of indexes), or before [0047](docs/adr/0047-driver-moves-as-parallel-arrays.md) / [0049](docs/adr/0049-publish-drivers-going-online-in-batches.md) (one message per driver). With no `drivers.*` message the page has no fleet size, so it shows no drivers, and driver counts stay 0; waiting riders, trip lines and trip counters still show. Runs stored before regions ([ADR 0050](docs/adr/0050-split-dispatch-by-region.md)) parse as region 0.
+
 ![Replay of a stored run at --speed 5: drivers, trips, side panel, status replay <run id>](docs/images/ui-replay.jpg)
 
 ### Benchmark
