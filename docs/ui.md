@@ -89,7 +89,7 @@ ADR 0053 slice 2: above 10,000 drivers the canvas draws the 5 × 5-cell tile hea
   | 960 s | 1,015 | 226,563 | 43.6 / 36.4 |
 
   The growth is the active-trip map, about 140 bytes per trip, not a leak: a 400k uniform run holds about 227k active trips from tick 700 on (trips average about 350 ticks across the grid), far more than the about 18k seen in the first 80 ticks (Today's UI). Dots would draw a line per active trip; the heatmap draws none.
-- **What it shows**: with `city` demand at 100k, downtown and the airport stand out as red tiles of waiting riders; idle drivers gather toward the grid's middle (wander targets are uniform, so paths cross the center more often), so the edges are darker.
+- **What it shows**: with `city` demand at 100k, downtown and the airport stand out as red tiles of waiting riders; idle drivers gather toward the grid's middle (likely because wander targets are uniform, so paths cross the center more often; not measured), so the edges are darker.
 
 ## Decision
 
