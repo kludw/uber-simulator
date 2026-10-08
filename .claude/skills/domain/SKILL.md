@@ -79,6 +79,19 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Command**: request to the owner of some state (`request_trip`, `cancel_trip`, `confirm_trip` to dispatch). Events are facts; commands may be rejected. Dispatch replies to the sender (not an event): `request_trip_accepted` (tripId), or `request_trip_rejected` (tripId, `error` tagged by `type`, e.g. `duplicate_trip_id`). Same for `cancel_trip`: `cancel_trip_accepted` / `cancel_trip_rejected` (`unknown_trip`, `invalid_transition`). Drivers send one command: `confirm_trip` (tripId, driverId, **stage** `pickup` | `dropoff`, cell), asking dispatch about the trip they wait on (0041). Dispatch runs it as that stage's arrival, stays silent (pending offer to that driver, pickup stage), rejects it, or replies `trip_status` (tripId, driverId, stage echoed, status `picked_up` | `completed` | `released`). **Released**: the trip is not this driver's (unknown, cancelled, its offer expired or was declined, another driver's).
 - **ETA**: ticks until a driver reaches a cell.
 
+## Pricing (0054)
+
+`src/shared/surge.ts`. Off by default; with surge off no message carries a price.
+
+- **Surge**: multiplier on a fare, 1.0 to 2.0 (the cap) in 0.1 steps (`Surge`).
+- **Surge zone**: 50 × 50-cell square of the grid (500 m; 10 × 10 on the spec grid), numbered row-major from 0 (`zoneOf`). A zone cut by a region border is priced per part, each part by its region's dispatch (`zonePartBounds`); layouts whose columns and rows divide 10 cut none.
+- **Pricing**: dispatch setting each of its zones' surge every 30 ticks (the **pricing interval**) from its **unmatched trips** (`requested`, queued or offered, no driver yet, by pickup) against its idle drivers: `surgeOf(unmatched, idle)` = unmatched / max(idle, 1), rounded to 0.1, clamped to [1.0, 2.0]. Not "waiting", which is a rider state and the UI's waiting riders.
+- **Quote**: the surge a spawned rider sees for its pickup's (region, zone), 1.0 if none seen.
+- **Max surge**: a rider's willingness to pay, uniform in [1.0, 3.0).
+- **Declined**: a rider leaving because its quote exceeds its max surge (`rider.declined_surge`); no trip.
+- **Fare**: integer cents, `(250 + 2 × distance) × surge` rounded ($2.50 + $2 per km), fixed at request (`fareOf`, `Fare`).
+- **Revenue**: sum of completed trips' fares.
+
 ## Events
 
 1. Named `<entity>.<past-tense-verb>`:
@@ -87,9 +100,12 @@ Living document. New concept in code = add term here in same change. Meaning shi
    - `driver.went_offline`, `driver.arrived_at_pickup`, `driver.arrived_at_dropoff`
    - `drivers.went_online` (tick, `fleetSize`, `driverIndexes`, `xs`, `ys`: the driver with index `driverIndexes[i]` online at cell `(xs[i], ys[i])`, 0052): one shard's drivers of one region going online in one tick (at start, or a shift change), at most 5,000 per message, regions in index order, published first in the shard's tick, before its `drivers.moved`; none when no driver went online (0049). Built with `driversWentOnline`, read with `forEachWentOnline`.
    - `drivers.moved` (tick, `fleetSize`, `driverIndexes`, `xs`, `ys`: move i is the driver with index `driverIndexes[i]` to cell `(xs[i], ys[i])`, 0052): one shard's moves of one tick owned by one region (idle: cell before the move; busy: trip's, 0050), at most 5,000 per message, regions in index order, published before the shard's other events of that tick; none when no driver moved (0045, shape 0047). Built with `driversMoved`, read with `forEachMove` (`src/shared/messages.ts`), each visit one **move** (driver ID and cell); `forEachDriverAt` reads either message as driver index and coordinates without a Cell (dispatch, which keeps its drivers in an array by index and rejects a message whose `fleetSize` differs from its config, `fleet_size_mismatch`).
+   - `zones.priced` (tick, `region`, `zones`: `{ zone, surge }` per zone of the region above 1.0, in zone order; zones not listed are 1.0): one region's prices every pricing tick, empty when nothing surges (0054). Carries a region but is not regioned: one subject for every subscriber.
+   - `rider.declined_surge` (tick, `riderId`, `pickup`, `surge`): the first rider event (0054).
+   - With surge on, `request_trip` carries the rider's quote as `surge`, and `trip.requested` the trip's `surge` and `fare` (both or neither).
 2. Same name used as event `type` in code, NATS subject suffix, ClickHouse event type value.
 3. Invalid state transition = domain error (see `errors` skill), never silently ignored.
 
 ## Not in scope yet
 
-Pricing, surge, ratings, real roads/routing, multi-rider pooling. Don't model until asked.
+Ratings, real roads/routing, multi-rider pooling. Don't model until asked.

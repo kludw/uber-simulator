@@ -11,6 +11,7 @@ import {
 	TripId,
 } from "../shared/messages.ts";
 import { Region } from "../shared/regions.ts";
+import { Surge, Zone } from "../shared/surge.ts";
 import {
 	applyEvent,
 	type DriverView,
@@ -565,3 +566,25 @@ function cancelled(
 ): SimEvent {
 	return { type: "trip.cancelled", tick: tick(at), tripId, driverId };
 }
+
+// ADR 0054: the view ignores surge until the UI shows it (#297).
+describe("surge", () => {
+	test("zones priced and riders declining change nothing", () => {
+		const surgeEvents: SimEvent[] = [
+			{
+				type: "zones.priced",
+				tick: tick(11),
+				region: Region.parse(0),
+				zones: [{ zone: Zone.parse(0), surge: Surge.parse(1.5) }],
+			},
+			{
+				type: "rider.declined_surge",
+				tick: tick(11),
+				riderId: RiderId.parse("r-2"),
+				pickup,
+				surge: Surge.parse(1.5),
+			},
+		];
+		expect(viewOf([...trip, ...surgeEvents])).toEqual(viewOf(trip));
+	});
+});

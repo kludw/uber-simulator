@@ -11,6 +11,7 @@ import {
 	TripId,
 } from "../shared/messages.ts";
 import { Region } from "../shared/regions.ts";
+import { Fare, Surge, Zone } from "../shared/surge.ts";
 import { toRow } from "./rows.ts";
 
 const tick = Tick.parse(12);
@@ -123,6 +124,39 @@ describe("toRow", () => {
 		[
 			{ type: "trip.cancelled", tick, tripId, driverId: null },
 			{ tripId: "t-3", driverId: "", riderId: "" },
+		],
+		// Surge (ADR 0054): prices in the payload, a decline names its rider.
+		[
+			{
+				type: "zones.priced",
+				tick,
+				region: Region.parse(0),
+				zones: [{ zone: Zone.parse(4), surge: Surge.parse(1.5) }],
+			},
+			{ tripId: "", driverId: "", riderId: "" },
+		],
+		[
+			{
+				type: "rider.declined_surge",
+				tick,
+				riderId,
+				pickup: cell,
+				surge: Surge.parse(1.5),
+			},
+			{ tripId: "", driverId: "", riderId: "r-3" },
+		],
+		[
+			{
+				type: "trip.requested",
+				tick,
+				tripId,
+				riderId,
+				pickup: cell,
+				dropoff: cell,
+				surge: Surge.parse(1.5),
+				fare: Fare.parse(375),
+			},
+			{ tripId: "t-3", driverId: "", riderId: "r-3" },
 		],
 	];
 

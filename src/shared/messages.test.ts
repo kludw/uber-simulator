@@ -25,6 +25,7 @@ import {
 	TripId,
 } from "./messages.ts";
 import { Region } from "./regions.ts";
+import { Fare, Surge, Zone } from "./surge.ts";
 
 type OutputOf<Brain extends (...args: never[]) => { outputs: unknown[] }> =
 	ReturnType<Brain>["outputs"][number];
@@ -174,6 +175,44 @@ const samples: Message[] = [
 		stage: "pickup",
 		status: "released",
 	},
+	// Surge (ADR 0054).
+	{
+		type: "request_trip",
+		tick,
+		tripId,
+		riderId,
+		pickup,
+		dropoff,
+		region: Region.parse(0),
+		surge: Surge.parse(1.4),
+	},
+	{
+		type: "trip.requested",
+		tick,
+		tripId,
+		riderId,
+		pickup,
+		dropoff,
+		surge: Surge.parse(1.4),
+		fare: Fare.parse(277),
+	},
+	{
+		type: "zones.priced",
+		tick,
+		region: Region.parse(1),
+		zones: [
+			{ zone: Zone.parse(3), surge: Surge.parse(1.1) },
+			{ zone: Zone.parse(12), surge: Surge.parse(2) },
+		],
+	},
+	{ type: "zones.priced", tick, region: Region.parse(0), zones: [] },
+	{
+		type: "rider.declined_surge",
+		tick,
+		riderId,
+		pickup,
+		surge: Surge.parse(1.8),
+	},
 ];
 
 test.each(samples.map((message) => [message.type, message]))(
@@ -193,6 +232,28 @@ const oneMove = {
 	ys: [0],
 };
 const oneOnline = { ...oneMove, type: "drivers.went_online" };
+const oneRequest = {
+	type: "request_trip",
+	tick: 1,
+	tripId: "t-1",
+	riderId: "r-1",
+	pickup: { x: 0, y: 0 },
+	dropoff: { x: 0, y: 0 },
+	region: 0,
+};
+const oneRequested = {
+	...oneRequest,
+	type: "trip.requested",
+	region: undefined,
+	surge: 1.2,
+	fare: 300,
+};
+const onePriced = {
+	type: "zones.priced",
+	tick: 1,
+	region: 0,
+	zones: [{ zone: 0, surge: 1.5 }],
+};
 
 const invalidInputs: [string, unknown][] = [
 	["not an object", "clock.ticked"],
@@ -331,6 +392,38 @@ const invalidInputs: [string, unknown][] = [
 			ys: [0],
 		},
 	],
+	// Surge (ADR 0054): 1.0 to 2.0 in tenths; zones.priced lists only > 1.0.
+	["request with a surge below 1.0", { ...oneRequest, surge: 0.9 }],
+	["request with a surge above the cap", { ...oneRequest, surge: 2.1 }],
+	["request with a surge between tenths", { ...oneRequest, surge: 1.25 }],
+	["trip requested with a zero fare", { ...oneRequested, fare: 0 }],
+	["trip requested with a fractional fare", { ...oneRequested, fare: 2.5 }],
+	[
+		"trip requested with a surge but no fare",
+		{ ...oneRequested, surge: 1.2, fare: undefined },
+	],
+	[
+		"trip requested with a fare but no surge",
+		{ ...oneRequested, surge: undefined },
+	],
+	["zones priced without a region", { ...onePriced, region: undefined }],
+	["zone priced at 1.0", { ...onePriced, zones: [{ zone: 0, surge: 1 }] }],
+	[
+		"zone priced between tenths",
+		{ ...onePriced, zones: [{ zone: 0, surge: 1.15 }] },
+	],
+	["negative zone", { ...onePriced, zones: [{ zone: -1, surge: 1.5 }] }],
+	["fractional zone", { ...onePriced, zones: [{ zone: 0.5, surge: 1.5 }] }],
+	[
+		"decline at a surge above the cap",
+		{
+			type: "rider.declined_surge",
+			tick: 1,
+			riderId: "r-1",
+			pickup: { x: 0, y: 0 },
+			surge: 2.5,
+		},
+	],
 ];
 
 test.each(invalidInputs)("rejects %s as invalid_message", (_case, input) => {
@@ -351,6 +444,19 @@ test("isSimEvent tells events from offers, replies, and commands", () => {
 		{ type: "offer_accepted", tripId, driverId, region: Region.parse(0) },
 		{ type: "cancel_trip", tripId, region: Region.parse(0) },
 		{ type: "cancel_trip_accepted", tripId },
+		{
+			type: "zones.priced",
+			tick: Tick.parse(1),
+			region: Region.parse(0),
+			zones: [],
+		},
+		{
+			type: "rider.declined_surge",
+			tick: Tick.parse(1),
+			riderId: RiderId.parse("r-1"),
+			pickup: cell(0, 0),
+			surge: Surge.parse(1.5),
+		},
 	];
 
 	expect(messages.map(isSimEvent)).toEqual([
@@ -360,6 +466,8 @@ test("isSimEvent tells events from offers, replies, and commands", () => {
 		false,
 		false,
 		false,
+		true,
+		true,
 	]);
 });
 
