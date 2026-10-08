@@ -1,12 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { DriverIndex } from "../shared/fleet.ts";
+import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import type { Cell } from "../shared/grid.ts";
-import { driversWentOnline, type Tick } from "../shared/messages.ts";
+import {
+	driversWentOnline,
+	RiderId,
+	type Tick,
+	TripId,
+} from "../shared/messages.ts";
 import { Region } from "../shared/regions.ts";
 import {
 	cellToPixel,
 	drawModeOf,
 	driverPosition,
+	heatmapOf,
 	noTickTiming,
 	observeTick,
 	tickFraction,
@@ -111,14 +117,20 @@ describe("tickFraction", () => {
 	});
 });
 
-// One driver online, at (0, 0), in a fleet of fleetSize.
-function viewOfFleet(fleetSize: number): View {
+// Drivers 0, 1, ... of a fleet of fleetSize online (idle) at cells, in order.
+function viewOfFleet(fleetSize: number, cells: Cell[] = [cell(0, 0)]): View {
 	const view = emptyView();
 	applyEvent(
 		view,
-		driversWentOnline(1 as Tick, Region.parse(0), fleetSize, [
-			{ driverIndex: DriverIndex.parse(0), cell: cell(0, 0) },
-		]),
+		driversWentOnline(
+			1 as Tick,
+			Region.parse(0),
+			fleetSize,
+			cells.map((at, index) => ({
+				driverIndex: DriverIndex.parse(index),
+				cell: at,
+			})),
+		),
 	);
 	return view;
 }
@@ -134,5 +146,60 @@ describe("drawModeOf", () => {
 
 	test("draws the heatmap for a fleet of 10,001 drivers", () => {
 		expect(drawModeOf(viewOfFleet(10_001))).toBe("heatmap");
+	});
+});
+
+describe("heatmapOf", () => {
+	// Two tiles of 5 × 5 cells side by side.
+	const twoTiles = { width: 10, height: 5 };
+
+	test("an empty city is one city-colored pixel per tile", () => {
+		expect(heatmapOf(emptyView(), twoTiles)).toEqual({
+			columns: 2,
+			rows: 1,
+			rgba: new Uint8ClampedArray([22, 27, 34, 255, 22, 27, 34, 255]),
+		});
+	});
+
+	// Mean 1.5 drivers per tile: full brightness at 3 (twice the mean).
+	test("brightens a tile from city color to idle grey by its drivers against twice the mean", () => {
+		const view = viewOfFleet(3, [cell(0, 0), cell(4, 4), cell(5, 0)]);
+		expect(heatmapOf(view, twoTiles).rgba).toEqual(
+			new Uint8ClampedArray([100, 108, 117, 255, 61, 67, 75, 255]),
+		);
+	});
+
+	test("colors a tile of busy drivers busy green, whatever their trip stage", () => {
+		const view = viewOfFleet(2, [cell(0, 0), cell(1, 1)]);
+		for (const index of [0, 1]) {
+			applyEvent(view, {
+				type: "trip.matched",
+				tick: 2 as Tick,
+				tripId: TripId.parse(`t-${index}`),
+				driverId: driverIdAt(2, DriverIndex.parse(index)),
+			});
+		}
+		expect(heatmapOf(view, twoTiles).rgba).toEqual(
+			new Uint8ClampedArray([63, 185, 80, 255, 22, 27, 34, 255]),
+		);
+	});
+
+	// Red in full from 3 waiting riders up.
+	test("turns a tile red by the riders waiting for pickup in it", () => {
+		const view = emptyView();
+		const pickups = [cell(0, 0), cell(5, 0), cell(9, 4), cell(6, 2)];
+		for (const [index, pickup] of pickups.entries()) {
+			applyEvent(view, {
+				type: "trip.requested",
+				tick: 1 as Tick,
+				tripId: TripId.parse(`t-${index}`),
+				riderId: RiderId.parse(`r-${index}`),
+				pickup,
+				dropoff: cell(0, 0),
+			});
+		}
+		expect(heatmapOf(view, twoTiles).rgba).toEqual(
+			new Uint8ClampedArray([100, 59, 61, 255, 255, 123, 114, 255]),
+		);
 	});
 });

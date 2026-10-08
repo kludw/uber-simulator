@@ -1,4 +1,4 @@
-import type { Grid } from "../shared/grid.ts";
+import type { Cell, Grid } from "../shared/grid.ts";
 import type { Tick } from "../shared/messages.ts";
 import {
 	type DriverView,
@@ -38,6 +38,82 @@ export type DrawMode = "dots" | "heatmap";
 // By the fleet size of the latest drivers.* message (ADR 0053).
 export function drawModeOf(view: View): DrawMode {
 	return fleetSizeOf(view) > dotsUpTo ? "heatmap" : "dots";
+}
+
+// A tile's drivers are colored from idle to busy (any state but idle) by
+// their busy share; waiting riders turn it red.
+export const heatmapColors = {
+	idle: driverColors.idle,
+	busy: driverColors.on_trip,
+	waitingRiders: waitingRiderColor,
+};
+
+// Heatmap tiles are square, this many cells a side (ADR 0053).
+const cellsPerTile = 5;
+const ridersForFullRed = 3;
+
+// One pixel per heatmap tile, row-major, 4 bytes (RGBA) each: an ImageData's
+// data, drawn scaled up to the city.
+export type Heatmap = { columns: number; rows: number; rgba: Uint8ClampedArray };
+
+export function heatmapOf(view: View, grid: Grid): Heatmap {
+	const columns = Math.ceil(grid.width / cellsPerTile);
+	const rows = Math.ceil(grid.height / cellsPerTile);
+	const tiles = columns * rows;
+	const tileOf = (cell: Cell) =>
+		Math.floor(cell.y / cellsPerTile) * columns +
+		Math.floor(cell.x / cellsPerTile);
+	const drivers = new Uint32Array(tiles);
+	const busy = new Uint32Array(tiles);
+	const waiting = new Uint32Array(tiles);
+	let shown = 0;
+	forEachDriver(view, (_index, driver) => {
+		const tile = tileOf(driver.cell);
+		drivers[tile]++;
+		if (driver.state !== "idle") busy[tile]++;
+		shown++;
+	});
+	for (const rider of view.waitingRiders.values()) {
+		waiting[tileOf(rider.pickup)]++;
+	}
+	// A tile at twice the mean is at full brightness.
+	const fullAt = (2 * shown) / tiles;
+	const city = rgbOf(cityColor);
+	const idle = rgbOf(heatmapColors.idle);
+	const busyColor = rgbOf(heatmapColors.busy);
+	const red = rgbOf(heatmapColors.waitingRiders);
+	const rgba = new Uint8ClampedArray(tiles * 4);
+	for (let tile = 0; tile < tiles; tile++) {
+		const inTile = drivers[tile] ?? 0;
+		const lit =
+			inTile === 0
+				? city
+				: mix(
+						city,
+						mix(idle, busyColor, (busy[tile] ?? 0) / inTile),
+						Math.min(1, inTile / fullAt),
+					);
+		const redShare = Math.min(1, (waiting[tile] ?? 0) / ridersForFullRed);
+		rgba.set([...mix(lit, red, redShare), 255], tile * 4);
+	}
+	return { columns, rows, rgba };
+}
+
+type Rgb = [number, number, number];
+
+// "#rrggbb" -> [r, g, b].
+function rgbOf(hex: string): Rgb {
+	const value = Number.parseInt(hex.slice(1), 16);
+	return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
+}
+
+// share 0: from; 1: to.
+function mix(from: Rgb, to: Rgb, share: number): Rgb {
+	return [
+		Math.round(from[0] + (to[0] - from[0]) * share),
+		Math.round(from[1] + (to[1] - from[1]) * share),
+		Math.round(from[2] + (to[2] - from[2]) * share),
+	];
 }
 
 // Scales the grid uniformly to fit the canvas and centers it (letterboxed),
