@@ -346,9 +346,9 @@ How many drivers? Live (the distributed stack over NATS, `bun run loadtest`, 600
 | Matching | `1x1` | `2x1` | `2x2` |
 | --- | ---: | ---: | ---: |
 | greedy | 600k | 600k | 500k |
-| batched | 150k | 225k | 250k |
+| batched | 150k | 250k | 300k |
 
-Greedy is highest with one dispatch process (split greedy layouts are spot-checks); batched gains from regions (batched split layouts not re-measured since [ADR 0052](docs/adr/0052-driver-indexes-in-moves.md)). Both fail settle first, on the runner's 2 physical cores, and near the limit the verdict depends on the runner's CPU model. In process (`bun run bench`, no NATS), one greedy run kept real time at 500k with demand capped below the spec ratio (a bug since fixed); batched predates [ADR 0051](docs/adr/0051-search-untouched-drivers-in-batched-matching.md); neither is re-measured. Runs, what fails first, and how to measure: [docs/performance.md](docs/performance.md).
+Greedy is highest with one dispatch process (split greedy layouts are spot-checks); batched gains from regions. Both fail settle first: greedy on the runner's 2 physical cores, batched on dispatch's batch step; near the limit the verdict depends on the runner's CPU model. In process (`bun run bench`, no NATS, 300-tick runs), greedy keeps p95 under 610 ms per tick at 800k and batched at 200k (two runs each). Runs, what fails first, and how to measure: [docs/performance.md](docs/performance.md).
 
 ### Load test
 

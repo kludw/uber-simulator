@@ -165,12 +165,12 @@ From [performance.md](performance.md#current-live-limits):
 | Matching | `1x1` | `2x1` | `2x2` |
 | --- | ---: | ---: | ---: |
 | greedy | 600k | 600k (spot-check) | 500k (spot-check) |
-| batched | 150k | 225k (before ADR 0052) | 250k (before ADR 0052) |
+| batched | 150k | 250k | 300k |
 
 What fails first ([What fails first](performance.md#what-fails-first)):
 
 - **Greedy**: settle, in every layout, from CPU contention on the runner's 2 cores. Failing `1x1` runs count 2.10-2.82 runner cores against 1.31-1.96 for passing 600k runs; the driver shards are now the largest CPU user, and dispatch's tick is split about evenly between moves and matching.
-- **Batched `1x1`**: dispatch's batch step on the slowest CPU model.
+- **Batched**: dispatch's batch step on the slowest CPU model, in every layout.
 - **Not limiting**: the persister and NATS slow consumers.
 
-What's next ([Next steps](performance.md#next-steps)): more physical cores (a larger or self-hosted runner) or less CPU per tick in every service, starting with a profile of the driver shards at 600k-700k; a profile of batched `1x1` at 175k; re-measuring batched split layouts after ADR 0052; and re-measuring the in-process ceiling with correct demand.
+What's next ([Next steps](performance.md#next-steps)): more physical cores (a larger or self-hosted runner) or less CPU per tick in every service, starting with a profile of the driver shards at 600k-700k; a profile of batched `1x1` at 175k and `2x1` at 275k; and bracketing greedy `2x1` / `2x2` between their spot-checks. In process (`bun run bench`), greedy keeps up at 800k and batched at 200k ([In-process ceiling](performance.md#in-process-ceiling)).
