@@ -2141,4 +2141,168 @@ describe("decideDriverShard chasing surge", () => {
 			]),
 		]);
 	});
+
+	test("an idle driver with no surge area in reach wanders to a random cell", () => {
+		// d-1 in zone 0; zone 11 is 6 zones away. Wander target (0, 99).
+		const outputs = tickedWithPrices(
+			[[0, 0]],
+			[priced([[11, 2]])],
+			scriptedRandom([0, 99]),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(0, 1) },
+			]),
+		]);
+	});
+
+	test("a surge area 4 zones away is in reach", () => {
+		// d-1 in zone 0; zone 10 (cells 200-249, 50-99) is 4 + 1 = 5 away, zone
+		// 4 (200-249, 0-49) 4.
+		const outputs = tickedWithPrices(
+			[[0, 0]],
+			[
+				priced([
+					[4, 1.1],
+					[10, 2],
+				]),
+			],
+			shiftRandom([], { "chase:5": [200, 0] }),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(1, 0) },
+			]),
+		]);
+	});
+
+	test("of surge areas equally near, a driver heads for the higher surge", () => {
+		// d-1 in zone 7: zones 6 and 8 1 away, 8 (100-149, 50-99) higher.
+		const outputs = tickedWithPrices(
+			[[75, 75]],
+			[
+				priced([
+					[6, 1.5],
+					[8, 1.6],
+				]),
+			],
+			shiftRandom([], { "chase:5": [100, 75] }),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(76, 75) },
+			]),
+		]);
+	});
+
+	test("of surge areas equally near and surging, a driver heads for the lower zone", () => {
+		// d-1 in zone 7: zones 1 (50-99, 0-49) and 8 1 away, same surge.
+		const outputs = tickedWithPrices(
+			[[75, 75]],
+			[
+				priced([
+					[1, 1.5],
+					[8, 1.5],
+				]),
+			],
+			shiftRandom([], { "chase:5": [75, 49] }),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(75, 74) },
+			]),
+		]);
+	});
+
+	test("an idle driver in a surging zone picks its next cell in that zone", () => {
+		// d-1 in zone 7, surging less than zone 8 next to it.
+		const outputs = tickedWithPrices(
+			[[75, 75]],
+			[
+				priced([
+					[7, 1.1],
+					[8, 2],
+				]),
+			],
+			shiftRandom([], { "chase:5": [50, 75] }),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(74, 75) },
+			]),
+		]);
+	});
+
+	// 3x1 regions: borders at x = 100 and 200, inside no zone; 6x1 would cut
+	// none either, so 4x1 on a 300-cell grid: borders at 75, 150, 225 cut
+	// zones 1 and 4 (and 7, 10).
+	describe("with a zone cut by a region border", () => {
+		const regions = RegionLayout.parse("4x1");
+
+		test("a driver heads for the cut zone's part in the lower region on equal surge", () => {
+			// d-1 in zone 0; zone 1 priced by regions 0 (50-74) and 1 (75-99).
+			const outputs = tickedWithPrices(
+				[[10, 10]],
+				[priced([[1, 1.5]], Region.parse(1)), priced([[1, 1.5]])],
+				shiftRandom([], { "chase:5": [74, 10] }),
+				regions,
+			);
+			expect(outputs).toEqual([
+				driversMoved(tick(5), region0, fleetSize, [
+					{ driverIndex: i1, cell: at(11, 10) },
+				]),
+			]);
+		});
+
+		test("a driver heads for the cut zone's part that surges higher", () => {
+			const outputs = tickedWithPrices(
+				[[10, 10]],
+				[priced([[1, 1.5]]), priced([[1, 1.6]], Region.parse(1))],
+				shiftRandom([], { "chase:5": [75, 10] }),
+				regions,
+			);
+			expect(outputs).toEqual([
+				driversMoved(tick(5), region0, fleetSize, [
+					{ driverIndex: i1, cell: at(11, 10) },
+				]),
+			]);
+		});
+	});
+
+	test("drivers chasing in one tick draw their cells in turn from the tick's chase stream", () => {
+		// d-1 and d-2 in zone 0, zone 1 surging: targets (50, 0) and (99, 49).
+		const outputs = tickedWithPrices(
+			[
+				[0, 0],
+				[49, 49],
+			],
+			[priced([[1, 1.5]])],
+			shiftRandom([], { "chase:5": [50, 0, 99, 49] }),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(1, 0) },
+				{ driverIndex: i2, cell: at(50, 49) },
+			]),
+		]);
+	});
+
+	test("a chase leaves other drivers' wander draws unshifted", () => {
+		// d-1 in zone 6 chases zone 7 at (50, 50); d-2 in zone 5, out of reach,
+		// draws wander target (299, 0) from the shard's stream.
+		const outputs = tickedWithPrices(
+			[
+				[0, 50],
+				[299, 49],
+			],
+			[priced([[7, 1.5]])],
+			shiftRandom([299, 0], { "chase:5": [50, 50] }),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(1, 50) },
+				{ driverIndex: i2, cell: at(299, 48) },
+			]),
+		]);
+	});
 });
