@@ -96,6 +96,8 @@ ADR 0053 slice 2: above 10,000 drivers the canvas draws the 5 × 5-cell tile hea
 
 [ADR 0053](adr/0053-scale-the-ui-in-the-browser.md): keep the direct NATS subscription; the view keeps drivers by driver index in typed arrays and updates in place, so applying a message costs its own size; above 10,000 drivers (chosen: dots measured at 10k and 100k only) the canvas draws a tile heatmap once per tick instead of a dot per driver.
 
+A new run on an open page resets the view, so nothing of the old one lingers: a `drivers.*` message of another fleet size (ADR 0053), or a `clock.ticked` before the view's tick, which also catches a same-size new run and a replay watched twice ([#289](https://github.com/kludw/uber-simulator/issues/289)). It refines 0053's reset trigger, not the decision. A replay `--from-tick` later than where the page's previous replay ended looks like that run going on and is not detected.
+
 ## Reproduce
 
 On `272-exp-ui-scale`, with the local infra up and `bun run dev` running at a fleet size:
