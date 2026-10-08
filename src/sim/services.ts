@@ -72,6 +72,7 @@ const driverShardInputs = [
 	"trip.cancelled",
 	"trip.offer_expired",
 	"trip_status",
+	"zones.priced",
 ] as const satisfies readonly DriverShardInput["type"][];
 
 const dispatchInputs = [
