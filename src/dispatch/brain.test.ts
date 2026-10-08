@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
-import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
+import {
+	type Cell,
+	type Coordinate,
+	cellAt,
+	cellIn,
+	type Grid,
+} from "../shared/grid.ts";
 import {
 	type DriverId,
 	driversMoved,
@@ -12,6 +18,7 @@ import {
 } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
 import { Region, RegionLayout } from "../shared/regions.ts";
+import { Surge } from "../shared/surge.ts";
 import {
 	type DispatchInput,
 	type DispatchState,
@@ -1963,5 +1970,262 @@ describe.each<Matching>([
 			},
 			{ type: "trip.offered", tick: tick(4), tripId: t2, driverId: d1 },
 		]);
+	});
+});
+
+// ADR 0054: a 150 x 100 grid is 3 x 2 surge zones of 50 x 50 cells, zone 0
+// top left, zone 4 bottom middle.
+describe("decideDispatch pricing", () => {
+	const zonedGrid: Grid = { width: 150, height: 100 };
+
+	function at(x: number, y: number): Cell {
+		return cellAt(x as Coordinate, y as Coordinate);
+	}
+
+	function request(n: number, pickup: Cell, surge?: number): DispatchInput {
+		return {
+			type: "request_trip",
+			tick: tick(1),
+			tripId: TripId.parse(`t-${n}`),
+			riderId: RiderId.parse(`r-${n}`),
+			pickup,
+			dropoff: at(140, 90),
+			region: Region.parse(0),
+			...(surge === undefined ? {} : { surge: Surge.parse(surge) }),
+		};
+	}
+
+	function online(index: number, cell: Cell): DispatchInput {
+		return driversWentOnline(tick(0), Region.parse(0), fleetSize, [
+			{ driverIndex: DriverIndex.parse(index), cell },
+		]);
+	}
+
+	type Options = {
+		surge: boolean;
+		matching?: Matching;
+		regions?: RegionLayout;
+		region?: Region;
+	};
+
+	// The last input's outputs of one type.
+	function outputsOf(type: string, inputs: DispatchInput[], options: Options) {
+		let state = startDispatch({
+			grid: zonedGrid,
+			fleetSize,
+			tick: tick(0),
+			...options,
+		});
+		let outputs: unknown[] = [];
+		for (const input of inputs) {
+			({ state, outputs } = decideDispatch(state, input, random));
+		}
+		return outputs.filter(
+			(output) => (output as { type: string }).type === type,
+		);
+	}
+
+	function priced(inputs: DispatchInput[], options: Options = { surge: true }) {
+		return outputsOf("zones.priced", inputs, options);
+	}
+
+	function requested(inputs: DispatchInput[], surge: boolean) {
+		return outputsOf("trip.requested", inputs, { surge });
+	}
+
+	test("prices zones after matching: offered trips are still unmatched, their drivers busy", () => {
+		const outputs = priced([
+			request(1, at(10, 10)),
+			request(2, at(20, 10)),
+			online(1, at(11, 10)),
+			online(2, at(21, 10)),
+			ticked(30),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "zones.priced",
+				tick: tick(30),
+				region: Region.parse(0),
+				zones: [{ zone: 0, surge: 2 }],
+			},
+		]);
+	});
+
+	// d1 takes t-1 on tick 1: one unmatched trip against no idle driver is
+	// 1.0, where counting the matched trip too would be 2.0.
+	test("never counts matched trips as unmatched", () => {
+		const outputs = priced([
+			request(1, at(10, 10)),
+			request(2, at(20, 10)),
+			online(1, at(11, 10)),
+			ticked(1),
+			accepted(TripId.parse("t-1"), d1),
+			ticked(30),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "zones.priced",
+				tick: tick(30),
+				region: Region.parse(0),
+				zones: [],
+			},
+		]);
+	});
+
+	// Batched with a 7-tick window: nothing is matched on tick 30.
+	test("prices each zone from its own unmatched trips and idle drivers, in zone order", () => {
+		const outputs = priced(
+			[
+				request(1, at(60, 60)),
+				request(2, at(70, 60)),
+				request(3, at(80, 60)),
+				request(4, at(90, 60)),
+				online(1, at(60, 70)),
+				online(2, at(70, 70)),
+				online(3, at(80, 70)),
+				request(5, at(60, 10)),
+				request(6, at(70, 10)),
+				request(7, at(80, 10)),
+				request(8, at(90, 10)),
+				request(9, at(95, 10)),
+				online(4, at(60, 20)),
+				online(5, at(70, 20)),
+				request(10, at(10, 10)),
+				online(6, at(10, 20)),
+				online(7, at(20, 20)),
+				online(8, at(30, 20)),
+				ticked(30),
+			],
+			{ surge: true, matching: { type: "batched", windowTicks: 7 } },
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "zones.priced",
+				tick: tick(30),
+				region: Region.parse(0),
+				zones: [
+					{ zone: 1, surge: 2 },
+					{ zone: 4, surge: 1.3 },
+				],
+			},
+		]);
+	});
+
+	test("publishes an empty price list when no zone surges", () => {
+		const outputs = priced([
+			request(1, at(10, 10)),
+			online(1, at(140, 90)),
+			ticked(30),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "zones.priced",
+				tick: tick(30),
+				region: Region.parse(0),
+				zones: [],
+			},
+		]);
+	});
+
+	test("prices only every 30 ticks", () => {
+		const outputs = priced([
+			request(1, at(10, 10)),
+			request(2, at(20, 10)),
+			ticked(29),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	// 2x1 regions split zone 1 (x 50-99) at x 75: region 1 prices its part
+	// from its own trips and drivers, never region 0's idle drivers.
+	test("prices a zone cut by a region border from the region's part only", () => {
+		const outputs = priced(
+			[
+				request(1, at(80, 10)),
+				request(2, at(90, 10)),
+				online(1, at(60, 10)),
+				online(2, at(70, 10)),
+				ticked(30),
+			],
+			{
+				surge: true,
+				regions: RegionLayout.parse("2x1"),
+				region: Region.parse(1),
+			},
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "zones.priced",
+				tick: tick(30),
+				region: Region.parse(1),
+				zones: [{ zone: 1, surge: 2 }],
+			},
+		]);
+	});
+
+	// Distance (10, 10) to (140, 90): 210 cells, so a base fare of
+	// 250 + 2 * 210 = 670 cents.
+	test("prices a requested trip at its rider's quote", () => {
+		const outputs = requested([request(1, at(10, 10), 1.4)], true);
+
+		expect(outputs).toEqual([
+			{
+				type: "trip.requested",
+				tick: tick(1),
+				tripId: TripId.parse("t-1"),
+				riderId: RiderId.parse("r-1"),
+				pickup: at(10, 10),
+				dropoff: at(140, 90),
+				surge: 1.4,
+				fare: 938,
+			},
+		]);
+	});
+
+	test("prices a requested trip without a quote at 1.0", () => {
+		const outputs = requested([request(1, at(10, 10))], true);
+
+		expect(outputs).toEqual([
+			{
+				type: "trip.requested",
+				tick: tick(1),
+				tripId: TripId.parse("t-1"),
+				riderId: RiderId.parse("r-1"),
+				pickup: at(10, 10),
+				dropoff: at(140, 90),
+				surge: 1,
+				fare: 670,
+			},
+		]);
+	});
+
+	test("prices no requested trip with surge off, even one with a quote", () => {
+		const outputs = requested([request(1, at(10, 10), 1.4)], false);
+
+		expect(outputs).toEqual([
+			{
+				type: "trip.requested",
+				tick: tick(1),
+				tripId: TripId.parse("t-1"),
+				riderId: RiderId.parse("r-1"),
+				pickup: at(10, 10),
+				dropoff: at(140, 90),
+			},
+		]);
+	});
+
+	test("publishes no prices with surge off", () => {
+		const outputs = priced(
+			[request(1, at(10, 10)), request(2, at(20, 10)), ticked(30)],
+			{ surge: false },
+		);
+
+		expect(outputs).toEqual([]);
 	});
 });

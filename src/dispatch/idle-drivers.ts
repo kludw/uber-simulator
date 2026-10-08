@@ -7,6 +7,7 @@ import {
 	type Grid,
 } from "../shared/grid.ts";
 import type { DriverId } from "../shared/messages.ts";
+import { type Zone, zoneOf } from "../shared/surge.ts";
 
 export type IdleDriver = { driverId: DriverId; cell: Cell };
 
@@ -219,6 +220,20 @@ function forget(drivers: Drivers, driver: Driver): void {
 
 export function idleCount(idle: IdleDrivers): number {
 	return idle[internals].idleCount;
+}
+
+// Idle drivers per surge zone of their cell (pricing, ADR 0054); zones without
+// one are missing. A pass over the buckets, no collecting or sorting.
+export function idleCountsByZone(idle: IdleDrivers): Map<Zone, number> {
+	const drivers = idle[internals];
+	const counts = new Map<Zone, number>();
+	for (const bucket of drivers.buckets) {
+		for (const { x, y } of bucket) {
+			const zone = zoneOf(drivers.grid, cellAt(x, y));
+			counts.set(zone, (counts.get(zone) ?? 0) + 1);
+		}
+	}
+	return counts;
 }
 
 // Idle drivers and their cells, ordered by ID (batched matching's columns).

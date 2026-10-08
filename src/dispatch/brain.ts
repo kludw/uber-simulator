@@ -29,6 +29,7 @@ import type {
 	TripPickedUp,
 	TripRequested,
 	TripStatus,
+	ZonesPriced,
 } from "../shared/messages.ts";
 import { forEachDriverAt } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
@@ -39,9 +40,18 @@ import {
 	regionBounds,
 } from "../shared/regions.ts";
 import {
+	type Fare,
+	fareOf,
+	Surge,
+	surgeOf,
+	type Zone,
+	zoneOf,
+} from "../shared/surge.ts";
+import {
 	type IdleDriver,
 	type IdleDrivers,
 	idleCount,
+	idleCountsByZone,
 	idleDriversById,
 	markBusy,
 	markFree,
@@ -79,12 +89,16 @@ import {
 // offline declines (ADR 0032).
 // tick: last clock tick, stamped on events caused by non-tick inputs.
 // fleetSize: the run's fleet, from dispatch's own config (ADR 0052).
+// region: the region this instance owns, named in zones.priced.
+// surge: whether it prices zones and trips (ADR 0054).
 // trips, endedTrips, and drivers are owned and updated in place (ADR 0033).
 export type DispatchState = {
 	grid: Grid;
 	fleetSize: number;
 	tick: Tick;
 	matching: Matching;
+	region: Region;
+	surge: boolean;
 	trips: Map<TripId, Trip>;
 	endedTrips: Map<TripId, EndedTrip>;
 	drivers: IdleDrivers;
@@ -123,6 +137,7 @@ type DispatchOutput =
 	| TripCompleted
 	| TripCancelled
 	| TripStatus
+	| ZonesPriced
 	| (InputRejected<DriversWentOnline | DriversMoved, "fleet_size_mismatch"> & {
 			expectedFleetSize: number;
 	  })
@@ -137,9 +152,15 @@ type Decision = { state: DispatchState; outputs: DispatchOutput[] };
 // ADR 0018.
 const offerTimeoutTicks = 3;
 
+// ADR 0054.
+const pricingIntervalTicks = 30;
+// A request without a quote (ADR 0054: a zone not priced is 1.0).
+const noSurge = Surge.parse(1);
+
 // fleetSize: driver shards' count × driversPerShard (ADR 0052).
 // regions, region: the layout and the region this instance owns (ADR 0050);
 // missing = one region.
+// surge: price zones and trips (ADR 0054); missing = off.
 export function startDispatch(config: {
 	grid: Grid;
 	fleetSize: number;
@@ -147,6 +168,7 @@ export function startDispatch(config: {
 	matching?: Matching | undefined;
 	regions?: RegionLayout;
 	region?: Region;
+	surge?: boolean;
 }): DispatchState {
 	const matching = config.matching ?? { type: "greedy" };
 	// Parsed at the edge; a bad window here is a caller bug.
@@ -158,21 +180,20 @@ export function startDispatch(config: {
 			`windowTicks ${matching.windowTicks} is not a positive integer`,
 		);
 	}
+	const region = config.region ?? Region.parse(0);
 	return {
 		grid: config.grid,
 		fleetSize: config.fleetSize,
 		tick: config.tick,
 		matching,
+		region,
+		surge: config.surge ?? false,
 		trips: new Map(),
 		endedTrips: new Map(),
 		drivers: startIdleDrivers(
 			config.grid,
 			config.fleetSize,
-			regionBounds(
-				config.regions ?? oneRegion,
-				config.grid,
-				config.region ?? Region.parse(0),
-			),
+			regionBounds(config.regions ?? oneRegion, config.grid, region),
 		),
 	};
 }
@@ -250,6 +271,10 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 			throw new Error(`unhandled matching: ${unhandled}`);
 		}
 	}
+	// After offering, so the counts are what matching left (ADR 0054).
+	if (state.surge && ticked.tick % pricingIntervalTicks === 0) {
+		outputs.push(zonesPriced(state, ticked.tick));
+	}
 	// After offering, so an expired trip and its driver wait for the next tick
 	// (ADR 0018); offers made this tick are never due.
 	for (const trip of state.trips.values()) {
@@ -267,6 +292,24 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 	}
 	state.tick = ticked.tick;
 	return { state, outputs };
+}
+
+// Each zone (its part in this region) with unmatched trips, by pickup,
+// against its idle drivers; only zones above 1.0, in zone order.
+function zonesPriced(state: DispatchState, tick: Tick): ZonesPriced {
+	const unmatched = new Map<Zone, number>();
+	for (const trip of state.trips.values()) {
+		if (trip.state !== "requested") continue;
+		const zone = zoneOf(state.grid, trip.pickup);
+		unmatched.set(zone, (unmatched.get(zone) ?? 0) + 1);
+	}
+	const idle = idleCountsByZone(state.drivers);
+	const zones: { zone: Zone; surge: Surge }[] = [];
+	for (const zone of [...unmatched.keys()].sort((a, b) => a - b)) {
+		const surge = surgeOf(unmatched.get(zone) ?? 0, idle.get(zone) ?? 0);
+		if (surge > 1) zones.push({ zone, surge });
+	}
+	return { type: "zones.priced", tick, region: state.region, zones };
 }
 
 type OfferPair = { trip: QueuedTrip; driverId: DriverId };
@@ -357,9 +400,16 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 				riderId: request.riderId,
 				pickup: request.pickup,
 				dropoff: request.dropoff,
+				...(state.surge ? price(request) : {}),
 			},
 		],
 	};
+}
+
+// The rider's quote is the trip's price, fixed from here (ADR 0054).
+function price(request: RequestTrip): { surge: Surge; fare: Fare } {
+	const surge = request.surge ?? noSurge;
+	return { surge, fare: fareOf(request.pickup, request.dropoff, surge) };
 }
 
 function onCancelTrip(state: DispatchState, command: CancelTrip): Decision {

@@ -14,10 +14,12 @@ import {
 	RegionLayout,
 	regionBounds,
 } from "../shared/regions.ts";
+import { Zone } from "../shared/surge.ts";
 import {
 	type IdleDriver,
 	type IdleDrivers,
 	idleCount,
+	idleCountsByZone,
 	idleDriversById,
 	markBusy,
 	markFree,
@@ -226,6 +228,43 @@ describe("idleCount", () => {
 		removeDriver(index, id(2));
 
 		expect(idleCount(index)).toBe(1);
+	});
+});
+
+describe("idleCountsByZone", () => {
+	// 2 x 2 surge zones of 50 x 50 cells (ADR 0054): zone 1 is top right.
+	const zonedGrid: Grid = { width: 100, height: 100 };
+
+	function zonedAt(x: number, y: number): [Coordinate, Coordinate] {
+		return [x as Coordinate, y as Coordinate];
+	}
+
+	test("counts idle drivers by the zone of their cell", () => {
+		const index = startIdleDrivers(zonedGrid, fleetSize);
+		placeDriverAt(index, i(1), ...zonedAt(10, 10));
+		placeDriverAt(index, i(2), ...zonedAt(60, 10));
+		placeDriverAt(index, i(3), ...zonedAt(99, 49));
+		placeDriverAt(index, i(4), ...zonedAt(10, 60));
+		placeDriverAt(index, i(4), ...zonedAt(55, 60));
+
+		expect(idleCountsByZone(index)).toEqual(
+			new Map([
+				[Zone.parse(0), 1],
+				[Zone.parse(1), 2],
+				[Zone.parse(3), 1],
+			]),
+		);
+	});
+
+	test("never counts busy or offline drivers", () => {
+		const index = startIdleDrivers(zonedGrid, fleetSize);
+		placeDriverAt(index, i(1), ...zonedAt(10, 10));
+		placeDriverAt(index, i(2), ...zonedAt(20, 10));
+		placeDriverAt(index, i(3), ...zonedAt(30, 10));
+		markBusy(index, id(2));
+		removeDriver(index, id(3));
+
+		expect(idleCountsByZone(index)).toEqual(new Map([[Zone.parse(0), 1]]));
 	});
 });
 
