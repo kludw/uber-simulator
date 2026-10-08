@@ -6,6 +6,7 @@
 		"sim": "bun src/sim/main.ts",
 		"dev": "bun src/sim/dev.ts",
 		"ui": "bun src/ui/serve.ts",
+		"demo": "bun src/sim/demo.ts",
 		"db:migrate": "bun src/persistence/migrate.ts",
 		"report": "bun src/analytics/main.ts",
 		"replay": "bun src/replay/main.ts",
