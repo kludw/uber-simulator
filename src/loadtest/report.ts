@@ -129,6 +129,7 @@ export function loadtestReport(
 		`requests per minute: ${args.requestsPerMinute}`,
 		`matching: ${matching.type === "batched" ? `batched (window ${matching.windowTicks} ticks)` : "greedy"}`,
 		`regions: ${args.regions.columns}x${args.regions.rows}`,
+		`surge: ${args.surge ? "on" : "off"}`,
 		`ticks: ${args.ticks} (${settle.ticksObserved} observed), speed 1`,
 		`host: ${measurement.host.cpus} CPUs (${measurement.host.cpuModel}), load average ${load1.toFixed(2)} ${load5.toFixed(2)} ${load15.toFixed(2)} (1, 5, 15 min, at end)`,
 		`settle ms: mean ${settle.settleMs.mean.toFixed(1)}, p95 ${settle.settleMs.p95.toFixed(1)}, max ${settle.settleMs.max.toFixed(1)}`,

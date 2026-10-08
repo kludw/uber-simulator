@@ -57,6 +57,7 @@ const runEnv: Record<string, string | undefined> = {
 	SHIFTS: "off",
 	PREFERENCES: "off",
 	REGIONS: `${regions.columns}x${regions.rows}`,
+	SURGE: args.value.surge ? "on" : "off",
 };
 const serviceConfig = parseServiceConfig(runEnv);
 if (!serviceConfig.ok) fail(JSON.stringify(serviceConfig.error), 2);
