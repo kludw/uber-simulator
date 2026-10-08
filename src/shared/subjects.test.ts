@@ -18,6 +18,7 @@ import {
 	subjectFor,
 	subscriptionSubject,
 } from "./subjects.ts";
+import { Surge } from "./surge.ts";
 
 const tick = Tick.parse(1);
 const tripId = TripId.parse("t-1");
@@ -190,6 +191,22 @@ describe("subjectFor", () => {
 				status: "released",
 			},
 			"sim.replies.trip_status",
+		],
+		// ADR 0054: carries a region but is not one of the regioned types, so
+		// every subscriber takes one subject.
+		[
+			{ type: "zones.priced", tick, region, zones: [] },
+			"sim.events.zones.priced",
+		],
+		[
+			{
+				type: "rider.declined_surge",
+				tick,
+				riderId,
+				pickup: cell,
+				surge: Surge.parse(1.5),
+			},
+			"sim.events.rider.declined_surge",
 		],
 	];
 

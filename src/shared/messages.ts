@@ -3,6 +3,7 @@ import { type DriverIndex, driverIdAt } from "./fleet.ts";
 import { Cell, type Coordinate, cellAt } from "./grid.ts";
 import { Region } from "./regions.ts";
 import type { Result } from "./result.ts";
+import { Fare, Surge, Zone } from "./surge.ts";
 
 // IDs are valid NATS subject tokens (sim.offers.<driverId>, ADR 0028).
 const idPattern = /^[A-Za-z0-9_-]+$/;
@@ -302,8 +303,39 @@ export const RequestTrip = z.object({
 	pickup: Cell,
 	dropoff: Cell,
 	region: OwningRegion,
+	// The rider's quote, the price of the trip (ADR 0054); absent with surge off.
+	surge: Surge.optional(),
 });
 export type RequestTrip = z.infer<typeof RequestTrip>;
+
+// One region's surge zones above 1.0, in zone order, every pricing tick
+// (ADR 0054); zones not listed are 1.0, so it is published even when empty.
+// Zones are below the grid's zone count: not checked here, a message can't
+// know the grid (like Cell).
+export const ZonesPriced = z.object({
+	type: z.literal("zones.priced"),
+	tick: Tick,
+	region: Region,
+	zones: z.array(
+		z.object({
+			zone: Zone,
+			surge: Surge.refine((surge) => surge > 1, {
+				error: "a priced zone surges above 1.0",
+			}),
+		}),
+	),
+});
+export type ZonesPriced = z.infer<typeof ZonesPriced>;
+
+// A spawned rider whose quote exceeded its max surge: it leaves, no trip.
+export const RiderDeclinedSurge = z.object({
+	type: z.literal("rider.declined_surge"),
+	tick: Tick,
+	riderId: RiderId,
+	pickup: Cell,
+	surge: Surge,
+});
+export type RiderDeclinedSurge = z.infer<typeof RiderDeclinedSurge>;
 
 export const RequestTripAccepted = z.object({
 	type: z.literal("request_trip_accepted"),
@@ -369,14 +401,24 @@ export const TripStatus = z.object({
 });
 export type TripStatus = z.infer<typeof TripStatus>;
 
-export const TripRequested = z.object({
-	type: z.literal("trip.requested"),
-	tick: Tick,
-	tripId: TripId,
-	riderId: RiderId,
-	pickup: Cell,
-	dropoff: Cell,
-});
+// surge and fare: the trip's price, fixed at request (ADR 0054); both absent
+// with surge off.
+export const TripRequested = z
+	.object({
+		type: z.literal("trip.requested"),
+		tick: Tick,
+		tripId: TripId,
+		riderId: RiderId,
+		pickup: Cell,
+		dropoff: Cell,
+		surge: Surge.optional(),
+		fare: Fare.optional(),
+	})
+	.refine(
+		(requested) =>
+			(requested.surge === undefined) === (requested.fare === undefined),
+		{ error: "surge and fare come together" },
+	);
 export type TripRequested = z.infer<typeof TripRequested>;
 
 // Every message published on the bus (ADR 0027). InputRejected is not one:
@@ -407,6 +449,8 @@ const Message = z.discriminatedUnion("type", [
 	CancelTripRejected,
 	ConfirmTrip,
 	TripStatus,
+	ZonesPriced,
+	RiderDeclinedSurge,
 ]);
 export type Message = z.infer<typeof Message>;
 
@@ -435,12 +479,14 @@ export function isOneOf<Type extends MessageType>(
 // commands, or command replies.
 export type SimEvent = Extract<
 	Message,
-	{ type: `${"clock" | "driver" | "drivers" | "trip"}.${string}` }
+	{
+		type: `${"clock" | "driver" | "drivers" | "trip" | "zones" | "rider"}.${string}`;
+	}
 >;
 
 // sim.events.> carries only events, but a payload is untrusted.
 export function isSimEvent(message: Message): message is SimEvent {
-	return /^(clock|drivers?|trip)\./.test(message.type);
+	return /^(clock|drivers?|trip|zones|rider)\./.test(message.type);
 }
 
 // Issues are Zod's plain data (code, path, message), fine to log; ZodError

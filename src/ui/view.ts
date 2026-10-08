@@ -199,6 +199,10 @@ export function applyEvent(view: View, event: SimEvent): void {
 		case "trip.offer_declined":
 		case "trip.offer_expired":
 			return;
+		// Surge (ADR 0054) is not shown yet (#297).
+		case "zones.priced":
+		case "rider.declined_surge":
+			return;
 		default: {
 			const unhandled: never = event;
 			throw new Error(`unhandled event: ${JSON.stringify(unhandled)}`);
