@@ -18,6 +18,9 @@ All runs are on GitHub's `ubuntu-latest` runner. That detail turned out to matte
 ```mermaid
 ---
 config:
+  xyChart:
+    width: 800
+    height: 420
   themeVariables:
     xyChart:
       plotColorPalette: "#2563eb, #d97706"
@@ -87,6 +90,9 @@ From 200k, settle failed first, set by dispatch's one thread. A CPU profile at 2
 ```mermaid
 ---
 config:
+  xyChart:
+    width: 800
+    height: 420
   themeVariables:
     xyChart:
       plotColorPalette: "#2563eb, #d97706, #6b7280"
