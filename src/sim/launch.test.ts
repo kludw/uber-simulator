@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { RunId } from "../shared/messages.ts";
-import { demoEnv, serviceProcesses } from "./launch.ts";
+import { demoEnv, serviceProcesses, uiStartedUrl } from "./launch.ts";
 
 describe("serviceProcesses", () => {
 	test("starts one dispatch per region, every process on the same layout, the clock last", () => {
@@ -80,5 +80,23 @@ describe("demoEnv", () => {
 			NATS_URL: "nats://localhost:4222",
 			SEED: "1",
 		});
+	});
+});
+
+describe("uiStartedUrl", () => {
+	test("reads the URL from the UI server's started line", () => {
+		expect(
+			uiStartedUrl(
+				'{"service":"ui","type":"started","url":"http://localhost:3000/"}',
+			),
+		).toBe("http://localhost:3000/");
+	});
+
+	test("any other line has no URL", () => {
+		expect(
+			["not json", '{"service":"ui","type":"stopped"}', "[1, 2]"].map(
+				uiStartedUrl,
+			),
+		).toEqual([null, null, null]);
 	});
 });

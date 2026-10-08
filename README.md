@@ -6,7 +6,7 @@ Status: milestones 1 to 26 done. Driver brain places drivers, wanders idle ones,
 
 ## Demo
 
-After [Setup](#setup), one command starts local infra (`docker compose up -d --wait`), the services (`bun run dev`) and the UI (`bun run ui`), and prints the UI URL (`http://localhost:3000/`). Ctrl+C stops the services and the UI; infra keeps running (`docker compose down` stops it):
+After [Setup](#setup), one command starts local infra (`docker compose up -d --wait`), the services (`bun run dev`) and the UI (`bun run ui`), and prints the UI URL (`[demo] UI: http://localhost:3000/`) once the UI listens. Ctrl+C stops the services and the UI; infra keeps running (`docker compose down` stops it). Exit code 0 stopped by Ctrl+C, 1 `docker` not found, `docker compose up` failed, or the services or the UI exited on their own (e.g. invalid config in `.env`: `bun run dev` exits 2, then the demo 1):
 
 ```bash
 bun run demo
