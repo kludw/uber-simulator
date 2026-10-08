@@ -243,13 +243,18 @@ export function applyEvent(view: View, event: SimEvent): void {
 // tick 0 message after a tick is the new run's start-up (drivers going
 // online before its first clock tick); the view takes tick 0 so its own
 // tick 1 doesn't start over again. A clock tick going back is a run not
-// starting at 0 (a replay --from-tick). A first tick never starts over: a
+// starting at 0 (a replay --from-tick); one skipping a tick means the view
+// missed events (a replay --from-tick past where the last one ended, or a
+// live page that lost a clock.ticked as a slow consumer). The same tick
+// again or the next one keeps the view. A first tick never starts over: a
 // mid-run join keeps what it has seen.
 function startOverOnNewRun(view: View, event: SimEvent): void {
 	if (view.tick === null) return;
 	const startUp = event.tick === 0 && view.tick !== 0;
-	const clockBack = event.type === "clock.ticked" && event.tick < view.tick;
-	if (!startUp && !clockBack) return;
+	const clockJumped =
+		event.type === "clock.ticked" &&
+		(event.tick < view.tick || event.tick > view.tick + 1);
+	if (!startUp && !clockJumped) return;
 	Object.assign(view, emptyView(), { tick: event.tick });
 }
 
