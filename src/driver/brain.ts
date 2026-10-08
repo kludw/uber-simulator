@@ -1,6 +1,8 @@
 import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import {
 	type Cell,
+	Coordinate,
+	cellAt,
 	distance,
 	type Grid,
 	randomCell,
@@ -27,6 +29,7 @@ import type {
 	TripOfferExpired,
 	TripPickedUp,
 	TripStatus,
+	ZonesPriced,
 } from "../shared/messages.ts";
 import { driversMoved, driversWentOnline } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
@@ -36,6 +39,14 @@ import {
 	type RegionLayout,
 	regionOf,
 } from "../shared/regions.ts";
+import {
+	type Surge,
+	type Zone,
+	zoneCount,
+	zoneDistance,
+	zoneOf,
+	zonePartBounds,
+} from "../shared/surge.ts";
 
 // region: the trip's, its pickup's region, from the offer until the trip
 // is over; the driver's trip messages go there (ADR 0050).
@@ -134,6 +145,9 @@ type Schedule = {
 // that order. Entries are replaced in place (ADR 0033, 0036): replacing a
 // key's value keeps its position, so never delete and re-insert one.
 // schedule: null when always online. picky: null when accepting all.
+// prices: the last zones.priced per region, by zone; zones not listed are
+// 1.0. pricesChanged: a zones.priced arrived since the last tick, which
+// rebuilds chaseTable (ADR 0055).
 export type DriverShardState = {
 	grid: Grid;
 	regions: RegionLayout;
@@ -141,7 +155,17 @@ export type DriverShardState = {
 	drivers: Map<DriverId, Driver>;
 	schedule: Schedule | null;
 	picky: Picky | null;
+	prices: Map<Region, Map<Zone, Surge>>;
+	pricesChanged: boolean;
+	chaseTable: ChaseTable;
 };
+
+// By zone: the bounds of the nearest surge area within chase reach. Zones
+// with none are absent; empty without prices.
+type ChaseTable = Map<Zone, { min: Cell; max: Cell }>;
+
+// In zones (ADR 0055).
+const chaseReach = 4;
 
 export type DriverShardInput =
 	| ClockTicked
@@ -150,7 +174,8 @@ export type DriverShardInput =
 	| TripCompleted
 	| TripCancelled
 	| TripOfferExpired
-	| TripStatus;
+	| TripStatus
+	| ZonesPriced;
 
 export function startDriverShard(
 	config: {
@@ -218,6 +243,9 @@ export function startDriverShard(
 		drivers,
 		schedule,
 		picky,
+		prices: new Map(),
+		pricesChanged: false,
+		chaseTable: new Map(),
 	};
 	const online: ByRegion = new Map();
 	for (const driver of drivers.values()) {
@@ -352,6 +380,8 @@ export function decideDriverShard(
 			return onTripEnded(state, input);
 		case "trip_status":
 			return onTripStatus(state, input);
+		case "zones.priced":
+			return onPriced(state, input);
 		default: {
 			const unhandled: never = input;
 			throw new Error(`unhandled driver shard input: ${unhandled}`);
@@ -554,6 +584,17 @@ function onTripStatus(state: DriverShardState, status: TripStatus): Decision {
 	return ignored;
 }
 
+// Prices replace the region's whole; even equal ones re-pick targets on the
+// next tick (ADR 0055).
+function onPriced(state: DriverShardState, priced: ZonesPriced): Decision {
+	state.prices.set(
+		priced.region,
+		new Map(priced.zones.map(({ zone, surge }) => [zone, surge])),
+	);
+	state.pricesChanged = true;
+	return { state, outputs: [] };
+}
+
 function onTick(
 	state: DriverShardState,
 	input: ClockTicked,
@@ -563,6 +604,23 @@ function onTick(
 	const moves: ByRegion = new Map();
 	const outputs: DriverShardOutput[] = [];
 	const { drivers, schedule } = state;
+	const repick = state.pricesChanged;
+	if (repick) {
+		state.chaseTable = chaseTableOf(state);
+		state.pricesChanged = false;
+	}
+	// Chase draws come from their own stream, taken once a driver chases, so
+	// the shard's stream (wander and placement draws) is not shifted by them.
+	let chaseStream: Random | null = null;
+	const chaseTarget = (driver: IdleDriver): Cell | null => {
+		const area = state.chaseTable.get(zoneOf(state.grid, driver.cell));
+		if (area === undefined) return null;
+		chaseStream ??= random.child(`chase:${input.tick}`);
+		return cellAt(
+			Coordinate.parse(chaseStream.int(area.min.x, area.max.x)),
+			Coordinate.parse(chaseStream.int(area.min.y, area.max.y)),
+		);
+	};
 	// Only existing keys are set while iterating: order stays by ID.
 	for (const driver of drivers.values()) {
 		const changed =
@@ -592,10 +650,11 @@ function onTick(
 		switch (driver.state) {
 			case "idle": {
 				const region = regionOf(state.regions, state.grid, driver.cell);
-				drivers.set(
-					driver.id,
-					wander(driver, state.grid, random, inRegion(moves, region)),
-				);
+				const target =
+					driver.wanderTarget === null
+						? (chaseTarget(driver) ?? randomCell(state.grid, random))
+						: driver.wanderTarget;
+				drivers.set(driver.id, wander(driver, target, inRegion(moves, region)));
 				break;
 			}
 			case "en_route":
@@ -748,13 +807,54 @@ type OfflineDriver = Extract<Driver, { state: "offline" }>;
 type EnRouteDriver = Extract<Driver, { state: "en_route" }>;
 type OnTripDriver = Extract<Driver, { state: "on_trip" }>;
 
+// Nearest surge area by zone distance within chase reach, ties to the
+// higher surge, then the lower region, then the lower zone.
+function chaseTableOf(state: DriverShardState): ChaseTable {
+	const areas = [...state.prices]
+		.toSorted(([a], [b]) => a - b)
+		.flatMap(([region, zones]) =>
+			[...zones]
+				.toSorted(([a], [b]) => a - b)
+				.flatMap(([zone, surge]) => {
+					const bounds = zonePartBounds(
+						state.regions,
+						state.grid,
+						region,
+						zone,
+					);
+					return bounds === null ? [] : [{ zone, surge, bounds }];
+				}),
+		);
+	const table: ChaseTable = new Map();
+	if (areas.length === 0) return table;
+	for (let own = 0; own < zoneCount(state.grid); own++) {
+		let nearest: {
+			distance: number;
+			surge: Surge;
+			bounds: { min: Cell; max: Cell };
+		} | null = null;
+		for (const area of areas) {
+			const distance = zoneDistance(state.grid, own as Zone, area.zone);
+			if (distance > chaseReach) continue;
+			if (
+				nearest !== null &&
+				(distance > nearest.distance ||
+					(distance === nearest.distance && area.surge <= nearest.surge))
+			) {
+				continue;
+			}
+			nearest = { distance, surge: area.surge, bounds: area.bounds };
+		}
+		if (nearest !== null) table.set(own as Zone, nearest.bounds);
+	}
+	return table;
+}
+
 function wander(
 	driver: IdleDriver,
-	grid: Grid,
-	random: Random,
+	wanderTarget: Cell,
 	moves: DriverMove[],
 ): IdleDriver {
-	const wanderTarget = driver.wanderTarget ?? randomCell(grid, random);
 	if (distance(driver.cell, wanderTarget) === 0) {
 		return { ...driver, wanderTarget: null };
 	}

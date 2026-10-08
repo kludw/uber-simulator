@@ -14,6 +14,7 @@ import {
 } from "../shared/messages.ts";
 import { createRandom, type Random } from "../shared/random.ts";
 import { Region, RegionLayout } from "../shared/regions.ts";
+import { Surge, Zone } from "../shared/surge.ts";
 import {
 	type DriverShardInput,
 	type DriverShardState,
@@ -2064,5 +2065,80 @@ describe("driver shard determinism", () => {
 
 	test("same seed and inputs give identical outputs with shifts", () => {
 		expect(run(42, shifts)).toEqual(run(42, shifts));
+	});
+});
+
+// ADR 0055. 300 x 100 cells: surge zones 0-5 on the top row, 6-11 below.
+describe("decideDriverShard chasing surge", () => {
+	const surgeGrid: Grid = { width: 300, height: 100 };
+	const region0 = Region.parse(0);
+
+	function at(x: number, y: number): Cell {
+		const result = cellIn(surgeGrid, x, y);
+		if (!result.ok) throw new Error(`test cell (${x}, ${y}) outside grid`);
+		return result.value;
+	}
+
+	function priced(
+		zones: [number, number][],
+		region: Region = region0,
+	): DriverShardInput {
+		return {
+			type: "zones.priced",
+			tick: tick(0),
+			region,
+			zones: zones.map(([zone, surge]) => ({
+				zone: Zone.parse(zone),
+				surge: Surge.parse(surge),
+			})),
+		};
+	}
+
+	// Drivers d-1, d-2, ... idle at cells, given prices, then ticked once on
+	// tick 5 with random.
+	function tickedWithPrices(
+		cells: [number, number][],
+		prices: DriverShardInput[],
+		random: Random,
+		regions?: RegionLayout,
+	) {
+		let { state } = startDriverShard(
+			{
+				grid: surgeGrid,
+				...shard(i1, cells.length),
+				tick: tick(0),
+				regions,
+			},
+			scriptedRandom(cells.flat()),
+		);
+		for (const input of prices) {
+			state = decideDriverShard(state, input, scriptedRandom([])).state;
+		}
+		return decideDriverShard(
+			state,
+			{ type: "clock.ticked", tick: tick(5) },
+			random,
+		).outputs;
+	}
+
+	test("an idle driver picking a target heads for a cell of the nearest surge area in reach", () => {
+		// d-1 in zone 6 (column 0, row 1): zones 2 and 9 are 3 zones away,
+		// zone 8 (cells 100-149, 50-99) 2: target (120, 60).
+		const outputs = tickedWithPrices(
+			[[10, 60]],
+			[
+				priced([
+					[2, 2],
+					[8, 1.3],
+					[9, 1.2],
+				]),
+			],
+			shiftRandom([], { "chase:5": [120, 60] }),
+		);
+		expect(outputs).toEqual([
+			driversMoved(tick(5), region0, fleetSize, [
+				{ driverIndex: i1, cell: at(11, 60) },
+			]),
+		]);
 	});
 });
