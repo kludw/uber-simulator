@@ -113,7 +113,8 @@ export type PersisterError =
 
 export type Persister = {
 	// Stops after the batch in hand and the one being fetched meanwhile are
-	// inserted and acked (or given up).
+	// inserted and acked (or given up). If the fetch fails, what it received
+	// is nacked instead.
 	stop(): void;
 	// Resolves once stopped, or on a failure that ends the loop.
 	stopped: Promise<Result<void, PersisterError>>;
@@ -246,16 +247,26 @@ async function ensureConsumer(
 }
 
 // Never rejects, so a fetch running in the background can't go unhandled.
+// A fetch can fail after receiving messages; those are nacked for prompt
+// redelivery, so they don't wait out the ack wait, also when the failure ends
+// the loop on stop (ADR 0044). Heartbeats missed (a starved server) is fully
+// covered: every message received was consumed here first. A terminal
+// status in the batch (e.g. 409) can end it with messages not yet consumed;
+// those wait out the ack wait. On a closed connection the client drops the
+// naks; the ack wait covers those too.
 async function fetchBatch(
 	consumer: Consumer,
 ): Promise<Result<JsMsg[], unknown>> {
+	const received: JsMsg[] = [];
 	try {
 		const messages = await consumer.fetch({
 			max_messages: batchSize,
 			expires: batchWaitMs,
 		});
-		return { ok: true, value: await Array.fromAsync(messages) };
+		for await (const message of messages) received.push(message);
+		return { ok: true, value: received };
 	} catch (cause) {
+		for (const message of received) message.nak();
 		return { ok: false, error: cause };
 	}
 }
