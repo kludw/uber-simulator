@@ -504,13 +504,13 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 		persister.stop();
 		held.release();
 		await persister.stopped;
-		const jsm = await jetstreamManager(nc);
-		const consumer = await jsm.consumers.info(source.stream, source.consumer);
+		// Closed, so only acks sent before resolving count. The server applies
+		// acks apart from API requests, so consumer info can lag acks already
+		// sent: drained() waits for them instead of reading once.
+		await nc.drain();
+		await drained(await natsConnection(), source);
 
-		expect({
-			batchSizes: held.batchSizes,
-			unacked: consumer.num_ack_pending,
-		}).toEqual({ batchSizes: [10_000, 2000], unacked: 0 });
+		expect(held.batchSizes).toEqual([10_000, 2000]);
 	}, 30_000);
 
 	test("inserts a backlog in batches of up to 10,000 events", async () => {
