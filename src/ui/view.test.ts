@@ -402,7 +402,7 @@ describe("fleet size", () => {
 });
 
 // A new run (live, or a replay watched twice) with the same fleet size: the
-// clock going back is the only sign of it.
+// clock going back or skipping a tick is the only sign of it.
 describe("new run", () => {
 	const oldRun: SimEvent[] = [
 		...trip,
@@ -449,6 +449,16 @@ describe("new run", () => {
 		const newRun: SimEvent[] = [
 			{ type: "clock.ticked", tick: tick(5) },
 			moved(i2, 5, cell(7, 7)),
+		];
+		expect(viewOf([...oldRun, ...newRun])).toEqual(viewOf(newRun));
+	});
+
+	// The clock publishes every tick, so a skipped one means missed events: a
+	// replay --from-tick later than where the page's previous replay ended.
+	test("a clock tick skipping a tick starts the view over", () => {
+		const newRun: SimEvent[] = [
+			{ type: "clock.ticked", tick: tick(12) },
+			moved(i2, 12, cell(7, 7)),
 		];
 		expect(viewOf([...oldRun, ...newRun])).toEqual(viewOf(newRun));
 	});
