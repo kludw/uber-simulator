@@ -1,5 +1,7 @@
 import type { Cell, Grid } from "../shared/grid.ts";
 import type { Tick } from "../shared/messages.ts";
+import type { RegionLayout } from "../shared/regions.ts";
+import { type Surge, zonePartBounds } from "../shared/surge.ts";
 import {
 	type DriverView,
 	emptyView,
@@ -26,6 +28,9 @@ const backgroundColor = "#0d1117";
 const cityColor = "#161b22";
 export const waitingRiderColor = "#ff7b72";
 export const activeTripColor = "rgba(88, 166, 255, 0.35)";
+// Surging zones (ADR 0054): a hue no driver state or rider uses, so a tint
+// over dots or heatmap tiles stays readable as surge.
+export const surgeColor = "#d2a8ff";
 const driverRadius = 3;
 const waitingRiderSize = 5;
 
@@ -102,6 +107,34 @@ export function heatmapOf(view: View, grid: Grid): Heatmap {
 		rgba.set([...mix(lit, red, redShare), 255], tile * 4);
 	}
 	return { columns, rows, rgba };
+}
+
+// A surging zone's part in the region that priced it (ADR 0054): the
+// whole zone unless a region border cuts it. Inclusive corners. Prices from
+// regions or zones outside the page's layout (its REGIONS differs from the
+// run's) are not drawn: they have no place on this map.
+type SurgeArea = { min: Cell; max: Cell; surge: Surge };
+
+export function surgeAreasOf(
+	view: View,
+	layout: RegionLayout,
+	grid: Grid,
+): SurgeArea[] {
+	const areas: SurgeArea[] = [];
+	for (const [region, zones] of view.zonesPriced) {
+		if (region >= layout.columns * layout.rows) continue;
+		for (const { zone, surge } of zones) {
+			const bounds = zonePartBounds(layout, grid, region, zone);
+			if (bounds === null) continue;
+			areas.push({ ...bounds, surge });
+		}
+	}
+	return areas;
+}
+
+// As the canvas and the panel write a surge, e.g. "1.4×".
+export function surgeLabel(surge: number): string {
+	return `${surge.toFixed(1)}×`;
 }
 
 type Rgb = [number, number, number];
@@ -188,11 +221,13 @@ export function tickFraction(timing: TickTiming, now: number): number {
 }
 
 // Draws the view on every animation frame: dots, or above the threshold the
-// heatmap, recomputed once per tick rather than per frame (ADR 0053). Call
-// show() after each event applied to the view (it is updated in place).
+// heatmap, recomputed once per tick rather than per frame (ADR 0053), then
+// surging zones over either (ADR 0054). Call show() after each event applied
+// to the view (it is updated in place). layout: the run's regions.
 export function startRenderer(
 	canvas: HTMLCanvasElement,
 	grid: Grid,
+	layout: RegionLayout,
 ): { show(view: View): void } {
 	const context = canvas.getContext("2d");
 	if (context === null) throw new Error("canvas 2D context unavailable");
@@ -230,6 +265,7 @@ export function startRenderer(
 			}
 			drawHeatmap(context, heatmap.image, grid, size);
 		}
+		drawSurge(context, surgeAreasOf(view, layout, grid), grid, size);
 		requestAnimationFrame(frame);
 	};
 	requestAnimationFrame(frame);
@@ -306,6 +342,44 @@ function drawDots(
 		context.arc(position.x, position.y, driverRadius, 0, 2 * Math.PI);
 		context.fill();
 	});
+}
+
+// Tinted more the higher the surge, outlined, labeled at the center.
+function drawSurge(
+	context: CanvasRenderingContext2D,
+	areas: SurgeArea[],
+	grid: Grid,
+	size: Size,
+): void {
+	context.font = "bold 12px system-ui, sans-serif";
+	context.textAlign = "center";
+	context.textBaseline = "middle";
+	context.lineJoin = "round";
+	context.lineWidth = 1;
+	for (const { min, max, surge } of areas) {
+		const topLeft = cellToPixel({ x: min.x - 0.5, y: min.y - 0.5 }, grid, size);
+		const bottomRight = cellToPixel(
+			{ x: max.x + 0.5, y: max.y + 0.5 },
+			grid,
+			size,
+		);
+		const width = bottomRight.x - topLeft.x;
+		const height = bottomRight.y - topLeft.y;
+		context.globalAlpha = 0.15 + 0.35 * (surge - 1);
+		context.fillStyle = surgeColor;
+		context.fillRect(topLeft.x, topLeft.y, width, height);
+		context.globalAlpha = 1;
+		context.strokeStyle = surgeColor;
+		context.strokeRect(topLeft.x, topLeft.y, width, height);
+		const label = surgeLabel(surge);
+		const center = { x: topLeft.x + width / 2, y: topLeft.y + height / 2 };
+		context.lineWidth = 3;
+		context.strokeStyle = backgroundColor;
+		context.strokeText(label, center.x, center.y);
+		context.fillStyle = "#ffffff";
+		context.fillText(label, center.x, center.y);
+		context.lineWidth = 1;
+	}
 }
 
 function heatmapImage(view: View, grid: Grid): OffscreenCanvas {

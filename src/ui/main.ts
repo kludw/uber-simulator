@@ -5,12 +5,15 @@ import { type Msg, wsconnect } from "@nats-io/nats-core";
 import * as z from "zod";
 import { specGrid } from "../shared/grid.ts";
 import { isSimEvent, parseMessage, type SimEvent } from "../shared/messages.ts";
+import { RegionLayout } from "../shared/regions.ts";
 import { type PanelRow, panelRows } from "./panel.ts";
 import { startRenderer } from "./render.ts";
 import { subscriptionFor } from "./subscription.ts";
 import { applyEvent, emptyView } from "./view.ts";
 
-const PageConfig = z.object({ natsWsUrl: z.url() });
+// regions: the run's layout (REGIONS of `bun run ui`), to draw surging zone
+// parts (ADR 0054).
+const PageConfig = z.object({ natsWsUrl: z.url(), regions: RegionLayout });
 
 type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
@@ -22,7 +25,6 @@ function element<T extends HTMLElement>(id: string, type: { new (): T }): T {
 
 const statusElement = element("status", HTMLElement);
 const panelElement = element("panel", HTMLTableElement);
-const renderer = startRenderer(element("city", HTMLCanvasElement), specGrid);
 
 // Connected shows what is watched ("live" or "replay <runId>").
 function showStatus(status: ConnectionStatus, text: string = status): void {
@@ -81,6 +83,11 @@ async function watch(): Promise<void> {
 	}
 	const { subject, label } = watched.value;
 	const config = PageConfig.parse(await (await fetch("/config.json")).json());
+	const renderer = startRenderer(
+		element("city", HTMLCanvasElement),
+		specGrid,
+		config.regions,
+	);
 	// Keeps retrying, before the first connection too, so the page recovers
 	// from NATS starting late or restarting.
 	const connection = await wsconnect({

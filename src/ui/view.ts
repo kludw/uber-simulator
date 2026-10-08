@@ -10,7 +10,10 @@ import {
 	type SimEvent,
 	type Tick,
 	type TripId,
+	type ZonesPriced,
 } from "../shared/messages.ts";
+import type { Region } from "../shared/regions.ts";
+import { baseSurge, type Fare, fareOf } from "../shared/surge.ts";
 
 type DriverState = "idle" | "en_route" | "at_pickup" | "on_trip" | "at_dropoff";
 
@@ -44,11 +47,22 @@ type Drivers = {
 	states: Uint8Array;
 };
 
-// One per trip from request until pickup or cancel.
-export type WaitingRider = { pickup: Cell; dropoff: Cell; requestedAt: Tick };
+// One per trip from request until pickup or cancel. fare: the trip's, or its
+// base fare with surge off (as the summary counts it, ADR 0054).
+export type WaitingRider = {
+	pickup: Cell;
+	dropoff: Cell;
+	requestedAt: Tick;
+	fare: Fare;
+};
 
 // One per trip from match until completion or cancel.
-export type ActiveTrip = { driverId: DriverId; pickup: Cell; dropoff: Cell };
+export type ActiveTrip = {
+	driverId: DriverId;
+	pickup: Cell;
+	dropoff: Cell;
+	fare: Fare;
+};
 
 // Owned by the page and updated in place by applyEvent (as brains own their
 // state, ADR 0033): readers take a snapshot to compare before and after.
@@ -66,6 +80,12 @@ export type View = {
 	// first. Trips requested before the UI joined are left out.
 	meanTicksToPickup: number | null;
 	pickups: number;
+	// Surge (ADR 0054): each region's latest zones.priced, its zones above
+	// 1.0; empty until the first, and with surge off.
+	zonesPriced: Map<Region, ZonesPriced["zones"]>;
+	ridersDeclined: number;
+	// Integer cents: fares of the trips seen from request to completion.
+	revenue: number;
 };
 
 export function emptyView(): View {
@@ -85,6 +105,9 @@ export function emptyView(): View {
 		tripsCancelled: 0,
 		meanTicksToPickup: null,
 		pickups: 0,
+		zonesPriced: new Map(),
+		ridersDeclined: 0,
+		revenue: 0,
 	};
 }
 
@@ -142,6 +165,7 @@ export function applyEvent(view: View, event: SimEvent): void {
 				pickup: event.pickup,
 				dropoff: event.dropoff,
 				requestedAt: event.tick,
+				fare: event.fare ?? fareOf(event.pickup, event.dropoff, baseSurge),
 			});
 			return;
 		case "trip.matched": {
@@ -152,6 +176,7 @@ export function applyEvent(view: View, event: SimEvent): void {
 				driverId: event.driverId,
 				pickup: rider.pickup,
 				dropoff: rider.dropoff,
+				fare: rider.fare,
 			});
 			return;
 		}
@@ -173,6 +198,7 @@ export function applyEvent(view: View, event: SimEvent): void {
 			applyArrival(view, event, "at_dropoff");
 			return;
 		case "trip.completed":
+			view.revenue += view.activeTrips.get(event.tripId)?.fare ?? 0;
 			view.activeTrips.delete(event.tripId);
 			view.tripsCompleted++;
 			setDriverState(view, event.driverId, "idle");
@@ -199,9 +225,11 @@ export function applyEvent(view: View, event: SimEvent): void {
 		case "trip.offer_declined":
 		case "trip.offer_expired":
 			return;
-		// Surge (ADR 0054) is not shown yet (#297).
 		case "zones.priced":
+			view.zonesPriced.set(event.region, event.zones);
+			return;
 		case "rider.declined_surge":
+			view.ridersDeclined++;
 			return;
 		default: {
 			const unhandled: never = event;

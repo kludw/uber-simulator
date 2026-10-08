@@ -7,6 +7,7 @@ const args = {
 	requestsPerMinute: 100,
 	matching: { type: "batched", windowTicks: 5 },
 	regions: { columns: 2, rows: 1 },
+	surge: true,
 	drainBoundMs: 300_000,
 	natsMonitoringUrl: "http://localhost:8222",
 } as const;
@@ -104,6 +105,7 @@ describe("loadtestReport", () => {
 				"requests per minute: 100",
 				"matching: batched (window 5 ticks)",
 				"regions: 2x1",
+				"surge: on",
 				"ticks: 600 (600 observed), speed 1",
 				"host: 4 CPUs (AMD EPYC 7763 64-Core Processor), load average 3.50 2.25 1.00 (1, 5, 15 min, at end)",
 				"settle ms: mean 12.3, p95 40.0, max 95.5",

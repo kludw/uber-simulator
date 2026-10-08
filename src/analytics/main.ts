@@ -6,9 +6,9 @@ import { parseArgs } from "node:util";
 import * as z from "zod";
 import { connectClickHouse } from "../persistence/clickhouse.ts";
 import { RunId } from "../shared/messages.ts";
+import { dollars } from "../shared/surge.ts";
 import { parseClickHouseConfig } from "../sim/config.ts";
 import { log, orExit } from "../sim/process.ts";
-import { dollars } from "../sim/summary.ts";
 import {
 	listRuns,
 	type RunReport,

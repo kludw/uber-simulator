@@ -3,7 +3,8 @@ name: loadtest
 # Manual only: `gh workflow run loadtest.yaml --ref master` runs `bun run
 # loadtest` (ADR 0037) for 1k drivers, greedy, one region, 600 ticks; set the
 # cases with -f, e.g. `-f drivers="5000 10000" -f matching="greedy batched"
-# -f regions="1x1 2x1"`, and the runner label with -f runner (e.g. a larger
+# -f regions="1x1 2x1"`, surge pricing with -f surge=on (every case, ADR
+# 0054), and the runner label with -f runner (e.g. a larger
 # runner's label). One job (own runner, NATS, ClickHouse) per drivers x
 # matching x regions case. Each case's report, runner note, service logs, and
 # NATS log are uploaded as one artifact (`gh run download <run id>`).
@@ -22,6 +23,10 @@ on:
         description: Region layouts, space-separated (<columns>x<rows>, ADR 0050)
         type: string
         default: "1x1"
+      surge:
+        description: Surge pricing for every case (off, on; ADR 0054)
+        type: string
+        default: "off"
       ticks:
         description: Ticks per run (ADR 0037 judges T >= 600; jobs stop at 60 min)
         type: number
@@ -91,6 +96,7 @@ jobs:
       DRIVERS: ${{ matrix.run.drivers }}
       MATCHING: ${{ matrix.run.matching }}
       REGIONS: ${{ matrix.run.regions }}
+      SURGE: ${{ inputs.surge }}
       TICKS: ${{ inputs.ticks }}
       DRAIN_MINUTES: ${{ inputs.drain_minutes }}
     steps:
@@ -121,7 +127,7 @@ jobs:
           # load test, which then stops its services; SIGKILL 1 min later if
           # it hasn't exited.
           timeout -k 1m "${cap}m" bun src/loadtest/main.ts --drivers "$DRIVERS" --matching "$MATCHING" \
-            --regions "$REGIONS" --ticks "$TICKS" --drain-minutes "$DRAIN_MINUTES" \
+            --regions "$REGIONS" --surge "$SURGE" --ticks "$TICKS" --drain-minutes "$DRAIN_MINUTES" \
             > out/report.txt 2> out/services.log
           code=$?
           set -e
@@ -148,5 +154,5 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: loadtest-${{ matrix.run.drivers }}-${{ matrix.run.matching }}-${{ matrix.run.regions }}
+          name: loadtest-${{ matrix.run.drivers }}-${{ matrix.run.matching }}-${{ matrix.run.regions }}-surge-${{ inputs.surge }}
           path: out/

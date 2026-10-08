@@ -51,6 +51,10 @@ export const Surge = z
 	.brand<"Surge">();
 export type Surge = z.infer<typeof Surge>;
 
+// No surge: a zone not priced, a rider with no quote, a trip without a price
+// (surge off) at base fare.
+export const baseSurge = Surge.parse(1);
+
 // A zone's surge from its unmatched trips (requested, no driver yet) against
 // its idle drivers: twice as many unmatched trips as idle drivers is the cap.
 export function surgeOf(unmatched: number, idle: number): Surge {
@@ -64,6 +68,14 @@ export type Fare = z.infer<typeof Fare>;
 
 export function fareOf(pickup: Cell, dropoff: Cell, surge: Surge): Fare {
 	return Math.round((250 + 2 * distance(pickup, dropoff)) * surge) as Fare;
+}
+
+// Cents as dollars, e.g. $4,321.50: how revenue is printed and shown.
+export function dollars(cents: number): string {
+	return `$${(cents / 100).toLocaleString("en-US", {
+		minimumFractionDigits: 2,
+		maximumFractionDigits: 2,
+	})}`;
 }
 
 function zoneColumns(grid: Grid): number {

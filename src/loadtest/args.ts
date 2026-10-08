@@ -6,6 +6,7 @@ import type { Matching } from "../dispatch/brain.ts";
 import { specGrid } from "../shared/grid.ts";
 import { RegionLayout } from "../shared/regions.ts";
 import type { Result } from "../shared/result.ts";
+import { SurgeName } from "../sim/config.ts";
 import type { SimConfig } from "../sim/services.ts";
 
 // Message is for the terminal: parseArgs and Zod both describe the problem.
@@ -30,6 +31,7 @@ const Args = z
 			.pipe(z.number().positive()),
 		"nats-monitoring-url": z.url({ protocol: /^https?$/ }),
 		regions: RegionLayout,
+		surge: SurgeName,
 	})
 	.refine((args) => args.drivers % args.shards === 0, {
 		error: "--drivers must split evenly over --shards",
@@ -43,7 +45,7 @@ const Args = z
 
 export type LoadtestArgs = Pick<
 	SimConfig,
-	"driverShards" | "requestsPerMinute"
+	"driverShards" | "requestsPerMinute" | "surge"
 > & {
 	// One dispatch process per region (ADR 0050).
 	regions: RegionLayout;
@@ -77,6 +79,8 @@ export function parseLoadtestArgs(
 				},
 				// One dispatch instance (ADR 0050).
 				regions: { type: "string", default: "1x1" },
+				// ADR 0054.
+				surge: { type: "string", default: "off" },
 			},
 			strict: true,
 		}).values;
@@ -112,6 +116,7 @@ export function parseLoadtestArgs(
 					? { type: "batched", windowTicks: args["batch-window"] }
 					: { type: "greedy" },
 			regions: args.regions,
+			surge: args.surge === "on",
 			drainBoundMs: args["drain-minutes"] * 60_000,
 			natsMonitoringUrl: args["nats-monitoring-url"],
 		},

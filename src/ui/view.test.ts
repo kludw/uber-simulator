@@ -11,7 +11,7 @@ import {
 	TripId,
 } from "../shared/messages.ts";
 import { Region } from "../shared/regions.ts";
-import { Surge, Zone } from "../shared/surge.ts";
+import { Fare, Surge, Zone } from "../shared/surge.ts";
 import {
 	applyEvent,
 	type DriverView,
@@ -200,7 +200,15 @@ describe("waiting riders", () => {
 	test("a requested trip has a waiting rider at its pickup", () => {
 		const view = viewOf(trip.slice(0, 2));
 		expect([...view.waitingRiders]).toEqual([
-			[t1, { pickup: cell(3, 0), dropoff: cell(3, 5), requestedAt: tick(1) }],
+			[
+				t1,
+				{
+					pickup: cell(3, 0),
+					dropoff: cell(3, 5),
+					requestedAt: tick(1),
+					fare: Fare.parse(260),
+				},
+			],
 		]);
 	});
 
@@ -224,7 +232,15 @@ describe("active trips", () => {
 	test("a matched trip is active from pickup to dropoff", () => {
 		const view = viewOf(trip.slice(0, 3));
 		expect([...view.activeTrips]).toEqual([
-			[t1, { driverId: d1, pickup: cell(3, 0), dropoff: cell(3, 5) }],
+			[
+				t1,
+				{
+					driverId: d1,
+					pickup: cell(3, 0),
+					dropoff: cell(3, 5),
+					fare: Fare.parse(260),
+				},
+			],
 		]);
 	});
 
@@ -393,6 +409,20 @@ describe("new run", () => {
 		{ type: "clock.ticked", tick: tick(10) },
 		online(i2, 3, cell(5, 5)),
 		requested(TripId.parse("t-2"), 9, pickup, dropoff),
+		// Surge state (ADR 0054); the trip above earned revenue.
+		{
+			type: "zones.priced",
+			tick: tick(10),
+			region: Region.parse(0),
+			zones: [{ zone: Zone.parse(0), surge: Surge.parse(1.5) }],
+		},
+		{
+			type: "rider.declined_surge",
+			tick: tick(10),
+			riderId: RiderId.parse("r-3"),
+			pickup,
+			surge: Surge.parse(1.5),
+		},
 	];
 
 	// The clock publishes from tick 1; shards announce their start-up fleet
@@ -567,24 +597,64 @@ function cancelled(
 	return { type: "trip.cancelled", tick: tick(at), tripId, driverId };
 }
 
-// ADR 0054: the view ignores surge until the UI shows it (#297).
+// ADR 0054.
 describe("surge", () => {
-	test("zones priced and riders declining change nothing", () => {
-		const surgeEvents: SimEvent[] = [
-			{
-				type: "zones.priced",
-				tick: tick(11),
-				region: Region.parse(0),
-				zones: [{ zone: Zone.parse(0), surge: Surge.parse(1.5) }],
-			},
-			{
-				type: "rider.declined_surge",
-				tick: tick(11),
-				riderId: RiderId.parse("r-2"),
-				pickup,
-				surge: Surge.parse(1.5),
-			},
-		];
-		expect(viewOf([...trip, ...surgeEvents])).toEqual(viewOf(trip));
+	function priced(
+		at: number,
+		region: number,
+		zones: [number, number][],
+	): SimEvent {
+		return {
+			type: "zones.priced",
+			tick: tick(at),
+			region: Region.parse(region),
+			zones: zones.map(([zone, surge]) => ({
+				zone: Zone.parse(zone),
+				surge: Surge.parse(surge),
+			})),
+		};
+	}
+
+	test("each region's zones are priced by its latest zones.priced", () => {
+		const view = viewOf([
+			priced(30, 0, [[3, 1.5]]),
+			priced(30, 1, [[7, 2]]),
+			priced(60, 0, [[4, 1.2]]),
+		]);
+		expect(view.zonesPriced).toEqual(
+			new Map([
+				[Region.parse(1), [{ zone: Zone.parse(7), surge: Surge.parse(2) }]],
+				[Region.parse(0), [{ zone: Zone.parse(4), surge: Surge.parse(1.2) }]],
+			]),
+		);
+	});
+
+	test("riders declining a surge are counted", () => {
+		const declined = (rider: string): SimEvent => ({
+			type: "rider.declined_surge",
+			tick: tick(31),
+			riderId: RiderId.parse(rider),
+			pickup,
+			surge: Surge.parse(1.5),
+		});
+		expect(viewOf([declined("r-2"), declined("r-3")]).ridersDeclined).toBe(2);
+	});
+
+	test("revenue sums the fares of completed trips", () => {
+		const pricedTrip = trip.map((event) =>
+			event.type === "trip.requested"
+				? { ...event, surge: Surge.parse(1.5), fare: Fare.parse(390) }
+				: event,
+		);
+		expect(viewOf(pricedTrip).revenue).toBe(390);
+	});
+
+	// $2.50 + 5 cells × 2 cents, as the summary counts it (ADR 0054).
+	test("a completed trip without a fare earns its base fare", () => {
+		expect(viewOf(trip).revenue).toBe(260);
+	});
+
+	test("a trip completed but never seen requested earns nothing", () => {
+		expect(viewOf(trip.slice(2)).revenue).toBe(0);
 	});
 });

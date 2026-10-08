@@ -11,7 +11,10 @@ const server = Bun.serve({
 	port: config.port,
 	routes: {
 		"/": page,
-		"/config.json": Response.json({ natsWsUrl: config.natsWsUrl }),
+		"/config.json": Response.json({
+			natsWsUrl: config.natsWsUrl,
+			regions: `${config.regions.columns}x${config.regions.rows}`,
+		}),
 	},
 });
 console.log(

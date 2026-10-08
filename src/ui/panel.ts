@@ -1,8 +1,11 @@
+import { dollars } from "../shared/surge.ts";
 import {
 	activeTripColor,
 	drawModeOf,
 	driverColors,
 	heatmapColors,
+	surgeColor,
+	surgeLabel,
 	waitingRiderColor,
 } from "./render.ts";
 import type { View } from "./view.ts";
@@ -113,5 +116,33 @@ export function panelRows(view: View): PanelRow[] {
 					: view.meanTicksToPickup.toFixed(1),
 			swatch: null,
 		},
+		...surgeRows(view),
+	];
+}
+
+// Only once a zones.priced arrived: surge is on (ADR 0054). Zones cut by a
+// region border count once per part, as the canvas tints them.
+function surgeRows(view: View): PanelRow[] {
+	if (view.zonesPriced.size === 0) return [];
+	const surges = [...view.zonesPriced.values()]
+		.flat()
+		.map((priced) => priced.surge);
+	return [
+		{
+			label: "Surging zones",
+			value: String(surges.length),
+			swatch: tile(surgeColor),
+		},
+		{
+			label: "Max surge",
+			value: surgeLabel(Math.max(1, ...surges)),
+			swatch: null,
+		},
+		{
+			label: "Riders declined",
+			value: String(view.ridersDeclined),
+			swatch: null,
+		},
+		{ label: "Revenue", value: dollars(view.revenue), swatch: null },
 	];
 }

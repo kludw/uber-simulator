@@ -12,6 +12,7 @@ describe("parseLoadtestArgs", () => {
 				requestsPerMinute: 100,
 				matching: { type: "greedy" },
 				regions: { columns: 1, rows: 1 },
+				surge: false,
 				drainBoundMs: 300_000,
 				natsMonitoringUrl: "http://localhost:8222",
 			},
@@ -46,6 +47,21 @@ describe("parseLoadtestArgs", () => {
 		expect(parseLoadtestArgs(["--regions", "2x1"])).toMatchObject({
 			ok: true,
 			value: { regions: { columns: 2, rows: 1 } },
+		});
+	});
+
+	// ADR 0054: the cost of pricing at scale.
+	test("--surge on turns surge pricing on", () => {
+		expect(parseLoadtestArgs(["--surge", "on"])).toMatchObject({
+			ok: true,
+			value: { surge: true },
+		});
+	});
+
+	test("--surge other than on or off is invalid", () => {
+		expect(parseLoadtestArgs(["--surge", "yes"])).toMatchObject({
+			ok: false,
+			error: { type: "invalid_args" },
 		});
 	});
 

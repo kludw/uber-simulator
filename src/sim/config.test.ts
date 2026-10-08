@@ -324,8 +324,19 @@ describe("parseUiConfig", () => {
 	test("unset port defaults to 3000", () => {
 		expect(parseUiConfig({ NATS_WS_URL: "ws://localhost:8080" })).toEqual({
 			ok: true,
-			value: { natsWsUrl: "ws://localhost:8080", port: 3000 },
+			value: {
+				natsWsUrl: "ws://localhost:8080",
+				port: 3000,
+				regions: { columns: 1, rows: 1 },
+			},
 		});
+	});
+
+	// To draw surging zone parts (ADR 0054), as the run's processes get it.
+	test("REGIONS sets the region layout", () => {
+		expect(
+			parseUiConfig({ NATS_WS_URL: "ws://localhost:8080", REGIONS: "3x2" }),
+		).toMatchObject({ ok: true, value: { regions: { columns: 3, rows: 2 } } });
 	});
 
 	test("set port overrides the default", () => {
@@ -333,7 +344,11 @@ describe("parseUiConfig", () => {
 			parseUiConfig({ NATS_WS_URL: "wss://nats.example", UI_PORT: "8000" }),
 		).toEqual({
 			ok: true,
-			value: { natsWsUrl: "wss://nats.example", port: 8000 },
+			value: {
+				natsWsUrl: "wss://nats.example",
+				port: 8000,
+				regions: { columns: 1, rows: 1 },
+			},
 		});
 	});
 
