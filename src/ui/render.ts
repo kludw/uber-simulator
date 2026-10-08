@@ -354,6 +354,7 @@ function drawSurge(
 	context.font = "bold 12px system-ui, sans-serif";
 	context.textAlign = "center";
 	context.textBaseline = "middle";
+	context.lineJoin = "round";
 	context.lineWidth = 1;
 	for (const { min, max, surge } of areas) {
 		const topLeft = cellToPixel({ x: min.x - 0.5, y: min.y - 0.5 }, grid, size);

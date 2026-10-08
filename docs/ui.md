@@ -92,6 +92,20 @@ ADR 0053 slice 2: above 10,000 drivers the canvas draws the 5 × 5-cell tile hea
 - **Which tick it shows**: the image is remade on the first frame after a new `clock.ticked`, before most of that tick's `drivers.moved` arrive, so it is mostly tick t-1's end state, with some of tick t's moves; a driver is at most one cell off, invisible at tile size.
 - **What it shows**: with `city` demand at 100k, downtown and the airport stand out as red tiles of waiting riders; idle drivers gather toward the grid's middle (likely because wander targets are uniform, so paths cross the center more often; not measured), so the edges are darker.
 
+## Surge ([#297](https://github.com/kludw/uber-simulator/issues/297))
+
+[ADR 0054](adr/0054-price-trips-with-zone-surge.md)'s UI: with surge on, over dots or heatmap, each surging zone's part in the region that priced it (`zonePartBounds`, the layout from the UI server's `REGIONS`) is tinted purple, more the higher its surge, outlined and labeled (`1.4×`); drawn every frame from the view's latest `zones.priced` per region (at most 100 zones per region, so no per-tick caching). Once any `zones.priced` arrives, the panel adds surging zones (parts), max surge, riders declined and revenue: the fares of the trips the page saw from request to completion (`fareOf` at 1.0 for a trip without one, as the summary counts it), so a page joining mid-run shows less than `bun run sim` or `bun run report`. All of it resets with the view on a new run. Surge off: no `zones.priced`, no tint, no surge rows.
+
+Checked 2026-10-08 on branch `297-surge-ui`, `bun run dev` with the demo's settings (`city` demand, shifts on, greedy, `1x1`, seed 1) and `SURGE=on`, page in headless Chromium at 1280 × 800 after 2-3 min:
+
+- 100k (heatmap, page joined at tick 120): at tick 160, five zones at 2.0× (the four around the airport, one at the bottom-left corner), 456 riders declined; downtown, red with waiting riders, does not surge, since its many idle drivers outnumber its unmatched trips.
+
+  ![100k drivers, surge on: heatmap with surging zones tinted and labeled](images/ui-surge-100k.jpg)
+
+- 10k (dots): at tick 173, the airport zone at 2.0×, 25 riders declined.
+
+  ![10k drivers, surge on: dots with the airport zone tinted and labeled](images/ui-surge-10k.jpg)
+
 ## Decision
 
 [ADR 0053](adr/0053-scale-the-ui-in-the-browser.md): keep the direct NATS subscription; the view keeps drivers by driver index in typed arrays and updates in place, so applying a message costs its own size; above 10,000 drivers (chosen: dots measured at 10k and 100k only) the canvas draws a tile heatmap once per tick instead of a dot per driver.

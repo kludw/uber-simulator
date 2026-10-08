@@ -84,7 +84,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 `src/shared/surge.ts`. Off by default (`--surge on|off` for `bun run sim` and `bun run bench`, `SURGE` for `bun run dev`, `SimConfig.surge`); with surge off no message carries a price. `bun run sim -- --compare-surge`: the configured run with surge off and on, side by side.
 
 - **Surge**: multiplier on a fare, 1.0 to 2.0 (the cap) in 0.1 steps (`Surge`).
-- **Surge zone**: 50 × 50-cell square of the grid (500 m; 10 × 10 on the spec grid), numbered row-major from 0 (`zoneOf`). A zone cut by a region border is priced per part, each part by its region's dispatch (`zonePartBounds`); layouts whose columns and rows divide 10 cut none.
+- **Surge zone**: 50 × 50-cell square of the grid (500 m; 10 × 10 on the spec grid), numbered row-major from 0 (`zoneOf`). A zone cut by a region border is priced per part, each part by its region's dispatch (`zonePartBounds`); layouts whose columns and rows divide 10 cut none. **Surge area**: a surging zone's part in the region that priced it, as the UI tints and labels it (`1.4×`) in both draw modes (`surgeAreasOf`, `src/ui/render.ts`; the layout from `bun run ui`'s `REGIONS`).
 - **Pricing**: dispatch setting each of its zones' surge every 30 ticks (the **pricing interval**) from its **unmatched trips** (`requested`, queued or offered, no driver yet, by pickup) against its idle drivers: `surgeOf(unmatched, idle)` = unmatched / max(idle, 1), rounded to 0.1, clamped to [1.0, 2.0]. Not "waiting", which is a rider state and the UI's waiting riders.
 - **Quote**: the surge a spawned rider sees for its pickup's (region, zone), 1.0 if none seen.
 - **Max surge**: a rider's willingness to pay, uniform in [1.0, 3.0).
