@@ -415,6 +415,16 @@ const invalidInputs: [string, unknown][] = [
 	["negative zone", { ...onePriced, zones: [{ zone: -1, surge: 1.5 }] }],
 	["fractional zone", { ...onePriced, zones: [{ zone: 0.5, surge: 1.5 }] }],
 	[
+		"decline at a surge of 1.0",
+		{
+			type: "rider.declined_surge",
+			tick: 1,
+			riderId: "r-1",
+			pickup: { x: 0, y: 0 },
+			surge: 1,
+		},
+	],
+	[
 		"decline at a surge above the cap",
 		{
 			type: "rider.declined_surge",
