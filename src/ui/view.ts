@@ -99,6 +99,11 @@ function driversOfFleet(fleetSize: number): Drivers {
 	};
 }
 
+// The fleetSize of the latest drivers.* message; 0 before the first.
+export function fleetSizeOf(view: View): number {
+	return view.drivers.states.length;
+}
+
 // Visits the drivers shown, in index order.
 export function forEachDriver(
 	view: View,

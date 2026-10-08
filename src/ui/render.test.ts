@@ -1,14 +1,17 @@
 import { describe, expect, test } from "bun:test";
+import { DriverIndex } from "../shared/fleet.ts";
 import type { Cell } from "../shared/grid.ts";
-import type { Tick } from "../shared/messages.ts";
+import { driversWentOnline, type Tick } from "../shared/messages.ts";
+import { Region } from "../shared/regions.ts";
 import {
 	cellToPixel,
+	drawModeOf,
 	driverPosition,
 	noTickTiming,
 	observeTick,
 	tickFraction,
 } from "./render.ts";
-import type { DriverView } from "./view.ts";
+import { applyEvent, type DriverView, emptyView, type View } from "./view.ts";
 
 const grid = { width: 500, height: 500 };
 
@@ -105,5 +108,31 @@ describe("tickFraction", () => {
 		const second = observeTick(first, 2 as Tick, 2000);
 		const timing = observeTick(second, 2 as Tick, 2100);
 		expect(tickFraction(timing, 2250)).toBe(0.25);
+	});
+});
+
+// One driver online, at (0, 0), in a fleet of fleetSize.
+function viewOfFleet(fleetSize: number): View {
+	const view = emptyView();
+	applyEvent(
+		view,
+		driversWentOnline(1 as Tick, Region.parse(0), fleetSize, [
+			{ driverIndex: DriverIndex.parse(0), cell: cell(0, 0) },
+		]),
+	);
+	return view;
+}
+
+describe("drawModeOf", () => {
+	test("draws dots before any fleet size is seen", () => {
+		expect(drawModeOf(emptyView())).toBe("dots");
+	});
+
+	test("draws dots for a fleet of 10,000 drivers", () => {
+		expect(drawModeOf(viewOfFleet(10_000))).toBe("dots");
+	});
+
+	test("draws the heatmap for a fleet of 10,001 drivers", () => {
+		expect(drawModeOf(viewOfFleet(10_001))).toBe("heatmap");
 	});
 });

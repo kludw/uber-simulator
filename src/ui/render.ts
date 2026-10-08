@@ -3,6 +3,7 @@ import type { Tick } from "../shared/messages.ts";
 import {
 	type DriverView,
 	emptyView,
+	fleetSizeOf,
 	forEachDriver,
 	type View,
 } from "./view.ts";
@@ -27,6 +28,17 @@ export const waitingRiderColor = "#ff7b72";
 export const activeTripColor = "rgba(88, 166, 255, 0.35)";
 const driverRadius = 3;
 const waitingRiderSize = 5;
+
+// Above this many drivers, dots are too many to draw each frame and to read
+// (ADR 0053): chosen, not found; dots were measured at 10k and 100k only.
+const dotsUpTo = 10_000;
+
+export type DrawMode = "dots" | "heatmap";
+
+// By the fleet size of the latest drivers.* message (ADR 0053).
+export function drawModeOf(view: View): DrawMode {
+	return fleetSizeOf(view) > dotsUpTo ? "heatmap" : "dots";
+}
 
 // Scales the grid uniformly to fit the canvas and centers it (letterboxed),
 // so cells stay square whatever the canvas shape.
