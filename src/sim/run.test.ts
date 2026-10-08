@@ -60,7 +60,7 @@ const regionsConfig = {
 };
 
 // ADR 0054: four surge zones, four drivers, far more requests than they
-// serve, so zones surge and riders decline.
+// serve, so zones surge, riders decline and idle drivers chase (ADR 0055).
 const surgeConfig = {
 	seed: 1,
 	ticks: 1200,

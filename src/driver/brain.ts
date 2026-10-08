@@ -42,7 +42,7 @@ import {
 import {
 	baseSurge,
 	type Surge,
-	type Zone,
+	Zone,
 	zoneCount,
 	zoneDistance,
 	zoneOf,
@@ -848,25 +848,24 @@ function chaseTableOf(state: DriverShardState): ChaseTable {
 		);
 	const table: ChaseTable = new Map();
 	if (areas.length === 0) return table;
-	for (let own = 0; own < zoneCount(state.grid); own++) {
-		let nearest: {
-			distance: number;
-			surge: Surge;
-			bounds: { min: Cell; max: Cell };
-		} | null = null;
+	for (let n = 0; n < zoneCount(state.grid); n++) {
+		const own = Zone.parse(n);
+		let nearest: (typeof areas)[number] | null = null;
+		let nearestAway = 0;
 		for (const area of areas) {
-			const distance = zoneDistance(state.grid, own as Zone, area.zone);
-			if (distance > chaseReach) continue;
+			const away = zoneDistance(state.grid, own, area.zone);
+			if (away > chaseReach) continue;
 			if (
 				nearest !== null &&
-				(distance > nearest.distance ||
-					(distance === nearest.distance && area.surge <= nearest.surge))
+				(away > nearestAway ||
+					(away === nearestAway && area.surge <= nearest.surge))
 			) {
 				continue;
 			}
-			nearest = { distance, surge: area.surge, bounds: area.bounds };
+			nearest = area;
+			nearestAway = away;
 		}
-		if (nearest !== null) table.set(own as Zone, nearest.bounds);
+		if (nearest !== null) table.set(own, nearest.bounds);
 	}
 	return table;
 }
