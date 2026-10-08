@@ -409,6 +409,20 @@ describe("new run", () => {
 		{ type: "clock.ticked", tick: tick(10) },
 		online(i2, 3, cell(5, 5)),
 		requested(TripId.parse("t-2"), 9, pickup, dropoff),
+		// Surge state (ADR 0054); the trip above earned revenue.
+		{
+			type: "zones.priced",
+			tick: tick(10),
+			region: Region.parse(0),
+			zones: [{ zone: Zone.parse(0), surge: Surge.parse(1.5) }],
+		},
+		{
+			type: "rider.declined_surge",
+			tick: tick(10),
+			riderId: RiderId.parse("r-3"),
+			pickup,
+			surge: Surge.parse(1.5),
+		},
 	];
 
 	// The clock publishes from tick 1; shards announce their start-up fleet

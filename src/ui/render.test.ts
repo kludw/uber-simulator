@@ -7,7 +7,8 @@ import {
 	type Tick,
 	TripId,
 } from "../shared/messages.ts";
-import { Region } from "../shared/regions.ts";
+import { Region, RegionLayout } from "../shared/regions.ts";
+import { Surge, Zone } from "../shared/surge.ts";
 import {
 	cellToPixel,
 	drawModeOf,
@@ -15,6 +16,7 @@ import {
 	heatmapOf,
 	noTickTiming,
 	observeTick,
+	surgeAreasOf,
 	tickFraction,
 } from "./render.ts";
 import { applyEvent, type DriverView, emptyView, type View } from "./view.ts";
@@ -217,5 +219,49 @@ describe("heatmapOf", () => {
 		expect(heatmapOf(view, twoTiles).rgba).toEqual(
 			new Uint8ClampedArray([100, 59, 61, 255, 255, 123, 114, 255]),
 		);
+	});
+});
+
+// ADR 0054: 50 × 50-cell zones, 10 × 10 on the spec grid.
+describe("surgeAreasOf", () => {
+	function viewPriced(
+		prices: [region: number, zone: number, surge: number][],
+	): View {
+		const view = emptyView();
+		for (const [region, zone, surge] of prices) {
+			applyEvent(view, {
+				type: "zones.priced",
+				tick: 30 as Tick,
+				region: Region.parse(region),
+				zones: [{ zone: Zone.parse(zone), surge: Surge.parse(surge) }],
+			});
+		}
+		return view;
+	}
+
+	test("a surging zone is its whole square in one region", () => {
+		const view = viewPriced([[0, 11, 1.4]]);
+		expect(surgeAreasOf(view, RegionLayout.parse("1x1"), grid)).toEqual([
+			{ min: cell(50, 50), max: cell(99, 99), surge: Surge.parse(1.4) },
+		]);
+	});
+
+	// 3x1 on 500 cells: region 0 is x 0-166, region 1 x 167-333; zone 3 is
+	// x 150-199, y 0-49.
+	test("a zone cut by a region border is drawn per part, each at its region's surge", () => {
+		const view = viewPriced([
+			[0, 3, 1.2],
+			[1, 3, 2],
+		]);
+		expect(surgeAreasOf(view, RegionLayout.parse("3x1"), grid)).toEqual([
+			{ min: cell(150, 0), max: cell(166, 49), surge: Surge.parse(1.2) },
+			{ min: cell(167, 0), max: cell(199, 49), surge: Surge.parse(2) },
+		]);
+	});
+
+	// The page's REGIONS differs from the run's: nothing to draw it in.
+	test("a zone priced by a region outside the layout is not drawn", () => {
+		const view = viewPriced([[1, 0, 1.5]]);
+		expect(surgeAreasOf(view, RegionLayout.parse("1x1"), grid)).toEqual([]);
 	});
 });

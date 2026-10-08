@@ -8,12 +8,13 @@ import {
 	TripId,
 } from "../shared/messages.ts";
 import { Region } from "../shared/regions.ts";
-import { Fare } from "../shared/surge.ts";
+import { Fare, Surge, Zone } from "../shared/surge.ts";
 import { panelRows } from "./panel.ts";
 import {
 	activeTripColor,
 	driverColors,
 	heatmapColors,
+	surgeColor,
 	waitingRiderColor,
 } from "./render.ts";
 import { applyEvent, emptyView, type View } from "./view.ts";
@@ -147,6 +148,54 @@ describe("panelRows", () => {
 				["Trips cancelled", null],
 				["Mean ticks to pickup", null],
 			]);
+		});
+	});
+
+	// ADR 0054. With surge off no zones.priced arrives: no surge rows (above).
+	describe("once zones are priced", () => {
+		const priced = (zone: number, surge: number) => ({
+			zone: Zone.parse(zone),
+			surge: Surge.parse(surge),
+		});
+
+		test("adds surging zones, max surge, riders declined, and revenue in dollars", () => {
+			const view: View = {
+				...emptyView(),
+				zonesPriced: new Map([
+					[Region.parse(0), [priced(3, 1.4), priced(5, 2)]],
+					[Region.parse(1), [priced(5, 1.3)]],
+				]),
+				ridersDeclined: 12,
+				revenue: 432_150,
+			};
+			expect(labelsAndValues(panelRows(view)).slice(-4)).toEqual([
+				["Surging zones", "3"],
+				["Max surge", "2.0×"],
+				["Riders declined", "12"],
+				["Revenue", "$4,321.50"],
+			]);
+		});
+
+		test("shows no surge as 1.0×", () => {
+			const view: View = {
+				...emptyView(),
+				zonesPriced: new Map([[Region.parse(0), []]]),
+			};
+			expect(labelsAndValues(panelRows(view)).slice(-4, -2)).toEqual([
+				["Surging zones", "0"],
+				["Max surge", "1.0×"],
+			]);
+		});
+
+		test("marks surging zones as the canvas tints them", () => {
+			const view: View = {
+				...emptyView(),
+				zonesPriced: new Map([[Region.parse(0), []]]),
+			};
+			const surging = panelRows(view).find(
+				(row) => row.label === "Surging zones",
+			);
+			expect(surging?.swatch).toEqual({ shape: "tile", color: surgeColor });
 		});
 	});
 });

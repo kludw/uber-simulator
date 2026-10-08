@@ -157,11 +157,17 @@ export function parseServiceConfig(
 	};
 }
 
-export type UiConfig = { natsWsUrl: string; port: number };
+// regions: the run's layout, to draw surging zone parts (ADR 0054).
+export type UiConfig = {
+	natsWsUrl: string;
+	port: number;
+	regions: RegionLayout;
+};
 
 const UiEnv = z.object({
 	NATS_WS_URL: z.url({ protocol: /^wss?$/ }),
 	UI_PORT: integer.pipe(z.int().min(1).max(65535)).default(3000),
+	REGIONS: Regions,
 });
 
 export function parseUiConfig(
@@ -171,7 +177,11 @@ export function parseUiConfig(
 	if (!parsed.success) return invalidConfig(parsed.error);
 	return {
 		ok: true,
-		value: { natsWsUrl: parsed.data.NATS_WS_URL, port: parsed.data.UI_PORT },
+		value: {
+			natsWsUrl: parsed.data.NATS_WS_URL,
+			port: parsed.data.UI_PORT,
+			regions: parsed.data.REGIONS,
+		},
 	};
 }
 
