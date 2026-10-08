@@ -8,6 +8,7 @@ import {
 	TripId,
 } from "../shared/messages.ts";
 import { Region } from "../shared/regions.ts";
+import { Fare } from "../shared/surge.ts";
 import { panelRows } from "./panel.ts";
 import {
 	activeTripColor,
@@ -42,6 +43,7 @@ describe("panelRows", () => {
 	test("shows the view's tick, counters, and mean ticks to pickup to one decimal", () => {
 		const pickup = Cell.parse({ x: 1, y: 2 });
 		const dropoff = Cell.parse({ x: 3, y: 4 });
+		const fare = Fare.parse(258);
 		const view: View = {
 			...emptyView(),
 			tick: Tick.parse(42),
@@ -53,16 +55,19 @@ describe("panelRows", () => {
 				at_dropoff: 1,
 			},
 			waitingRiders: new Map([
-				[TripId.parse("t-1"), { pickup, dropoff, requestedAt: Tick.parse(40) }],
+				[
+					TripId.parse("t-1"),
+					{ pickup, dropoff, requestedAt: Tick.parse(40), fare },
+				],
 			]),
 			activeTrips: new Map([
 				[
 					TripId.parse("t-2"),
-					{ driverId: DriverId.parse("d-1"), pickup, dropoff },
+					{ driverId: DriverId.parse("d-1"), pickup, dropoff, fare },
 				],
 				[
 					TripId.parse("t-3"),
-					{ driverId: DriverId.parse("d-2"), pickup, dropoff },
+					{ driverId: DriverId.parse("d-2"), pickup, dropoff, fare },
 				],
 			]),
 			tripsCompleted: 7,
