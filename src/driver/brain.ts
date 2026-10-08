@@ -1,6 +1,8 @@
 import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import {
 	type Cell,
+	Coordinate,
+	cellAt,
 	distance,
 	type Grid,
 	randomCell,
@@ -27,12 +29,16 @@ import type {
 	TripOfferExpired,
 	TripPickedUp,
 	TripStatus,
+	ZonesPriced,
 } from "../shared/messages.ts";
 import { driversMoved, driversWentOnline } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
-import type { ZonesPriced } from "../shared/messages.ts";
-import { type Surge, type Zone, zoneOf, zonePartBounds } from "../shared/surge.ts";
-import { Coordinate, cellAt } from "../shared/grid.ts";
+import {
+	type Surge,
+	type Zone,
+	zoneOf,
+	zonePartBounds,
+} from "../shared/surge.ts";
 
 // SPIKE (#317): chase config from env, read once.
 const spikeChase = process.env.SPIKE_CHASE === "on";
@@ -41,8 +47,11 @@ const spikeShare = process.env.SPIKE_SHARE ?? "all"; // all | surge | <number>
 const spikeRetarget = process.env.SPIKE_RETARGET ?? "arrival"; // arrival | priced
 export const spikeStats = { chases: 0, retargets: 0, coinsLost: 0 };
 if (process.env.SPIKE_PRINT) {
-	process.on("exit", () => console.error(`SPIKE ${JSON.stringify(spikeStats)}`));
+	process.on("exit", () =>
+		console.error(`SPIKE ${JSON.stringify(spikeStats)}`),
+	);
 }
+
 import {
 	oneRegion,
 	type Region,
@@ -155,7 +164,11 @@ export type DriverShardState = {
 	schedule: Schedule | null;
 	picky: Picky | null;
 	prices: Map<Region, Map<Zone, Surge>>;
+	pricesChanged: boolean;
+	chaseTable: Map<Zone, ChasePart>;
 };
+
+type ChasePart = { region: Region; zone: Zone; surge: Surge; steps: number };
 
 export type DriverShardInput =
 	| ClockTicked
@@ -234,6 +247,8 @@ export function startDriverShard(
 		schedule,
 		picky,
 		prices: new Map(),
+		pricesChanged: false,
+		chaseTable: new Map(),
 	};
 	const online: ByRegion = new Map();
 	for (const driver of drivers.values()) {
@@ -581,6 +596,12 @@ function onTick(
 	const moves: ByRegion = new Map();
 	const outputs: DriverShardOutput[] = [];
 	const { drivers, schedule } = state;
+	const retargetNow =
+		spikeChase && spikeRetarget === "tick" && state.pricesChanged;
+	if (state.pricesChanged) {
+		state.chaseTable = buildChaseTable(state);
+		state.pricesChanged = false;
+	}
 	// Only existing keys are set while iterating: order stays by ID.
 	for (const driver of drivers.values()) {
 		const changed =
@@ -610,9 +631,21 @@ function onTick(
 		switch (driver.state) {
 			case "idle": {
 				const region = regionOf(state.regions, state.grid, driver.cell);
+				let current = driver;
+				if (
+					retargetNow &&
+					(driver.wanderTarget === null ||
+						surgeAt(state, driver.wanderTarget) === 1)
+				) {
+					const target = chaseTarget(driver, state, random);
+					if (target !== null) {
+						spikeStats.retargets++;
+						current = { ...driver, wanderTarget: target };
+					}
+				}
 				drivers.set(
 					driver.id,
-					wander(driver, state, random, inRegion(moves, region)),
+					wander(current, state, random, inRegion(moves, region)),
 				);
 				break;
 			}
@@ -775,7 +808,9 @@ function onZonesPriced(
 		priced.region,
 		new Map(priced.zones.map(({ zone, surge }) => [zone, surge])),
 	);
+	state.pricesChanged = true;
 	if (!spikeChase || spikeRetarget !== "priced") return { state, outputs: [] };
+	state.chaseTable = buildChaseTable(state);
 	for (const driver of state.drivers.values()) {
 		if (driver.state !== "idle") continue;
 		if (driver.wanderTarget !== null && surgeAt(state, driver.wanderTarget) > 1)
@@ -795,24 +830,23 @@ function surgeAt(state: DriverShardState, cell: Cell): number {
 
 const zoneCellsSpike = 50;
 
-// Nearest surging zone part within reach (zone steps from the driver's
-// zone), ties: higher surge, then region, then zone. A cell in it, or null.
-function chaseTarget(
-	driver: IdleDriver,
-	state: DriverShardState,
-	random: Random,
-): Cell | null {
-	if (!spikeChase || state.prices.size === 0) return null;
+// Per zone: the nearest surging zone part within reach (zone steps), ties:
+// higher surge, then region, then zone. Zones with none are absent.
+function buildChaseTable(state: DriverShardState): Map<Zone, ChasePart> {
+	const table = new Map<Zone, ChasePart>();
+	if (!spikeChase) return table;
 	const columns = Math.ceil(state.grid.width / zoneCellsSpike);
-	const own = zoneOf(state.grid, driver.cell);
-	const ownColumn = own % columns;
-	const ownRow = Math.floor(own / columns);
-	let best: { region: Region; zone: Zone; surge: Surge; steps: number } | null =
-		null;
-	for (const [region, zones] of [...state.prices].toSorted(
-		([a], [b]) => a - b,
-	)) {
-		for (const [zone, surge] of zones) {
+	const rows = Math.ceil(state.grid.height / zoneCellsSpike);
+	const surging = [...state.prices]
+		.toSorted(([a], [b]) => a - b)
+		.flatMap(([region, zones]) =>
+			[...zones].map(([zone, surge]) => ({ region, zone, surge })),
+		);
+	for (let own = 0; own < columns * rows; own++) {
+		const ownColumn = own % columns;
+		const ownRow = Math.floor(own / columns);
+		let best: ChasePart | null = null;
+		for (const { region, zone, surge } of surging) {
 			const steps =
 				Math.abs((zone % columns) - ownColumn) +
 				Math.abs(Math.floor(zone / columns) - ownRow);
@@ -825,8 +859,20 @@ function chaseTarget(
 				best = { region, zone, surge, steps };
 			}
 		}
+		if (best !== null) table.set(own as Zone, best);
 	}
-	if (best === null) return null;
+	return table;
+}
+
+// A cell in the driver's zone's chase part, or null: none within reach.
+function chaseTarget(
+	driver: IdleDriver,
+	state: DriverShardState,
+	random: Random,
+): Cell | null {
+	if (state.chaseTable.size === 0) return null;
+	const best = state.chaseTable.get(zoneOf(state.grid, driver.cell));
+	if (best === undefined) return null;
 	const share =
 		spikeShare === "all"
 			? 1
