@@ -521,22 +521,22 @@ describe("checkInvariants surge declines", () => {
 	});
 
 	test("a declined rider requesting a trip is flagged", () => {
-		expect(checkInvariants([declined(r1, 1), requested(t1, 2)], grid)).toEqual(
-			[{ type: "declined_rider_requested", tick: tick(2), riderId: r1 }],
-		);
+		expect(checkInvariants([declined(r1, 1), requested(t1, 2)], grid)).toEqual([
+			{ type: "declined_rider_requested", tick: tick(2), riderId: r1 },
+		]);
 	});
 
 	// Over NATS the two may arrive in either order.
 	test("a rider declining after requesting a trip is flagged", () => {
-		expect(checkInvariants([requested(t1, 1), declined(r1, 2)], grid)).toEqual(
-			[{ type: "declined_rider_requested", tick: tick(2), riderId: r1 }],
-		);
+		expect(checkInvariants([requested(t1, 1), declined(r1, 2)], grid)).toEqual([
+			{ type: "declined_rider_requested", tick: tick(2), riderId: r1 },
+		]);
 	});
 
 	test("a rider declining twice is flagged", () => {
-		expect(checkInvariants([declined(r2, 1), declined(r2, 3)], grid)).toEqual(
-			[{ type: "declined_rider_requested", tick: tick(3), riderId: r2 }],
-		);
+		expect(checkInvariants([declined(r2, 1), declined(r2, 3)], grid)).toEqual([
+			{ type: "declined_rider_requested", tick: tick(3), riderId: r2 },
+		]);
 	});
 });
 

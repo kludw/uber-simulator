@@ -170,7 +170,10 @@ function observe(
 			break;
 		case "rider.declined_surge": {
 			const { tick, riderId } = message;
-			if (log.decliningRiders.has(riderId) || log.requestingRiders.has(riderId)) {
+			if (
+				log.decliningRiders.has(riderId) ||
+				log.requestingRiders.has(riderId)
+			) {
 				violations.push({ type: "declined_rider_requested", tick, riderId });
 			}
 			log.decliningRiders.add(riderId);

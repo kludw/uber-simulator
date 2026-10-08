@@ -1,6 +1,7 @@
 // Headless CLI: one seeded run, in process or over NATS, summary on stdout;
 // or --compare: greedy and batched matching in process on the same seed,
-// side by side (ADR 0030).
+// side by side (ADR 0030); or --compare-surge: the configured matching with
+// surge off and on, likewise (ADR 0054).
 // Exit codes: 0 ok, 1 invariant violated, 2 invalid args or NATS_URL,
 // 3 NATS unreachable.
 import * as z from "zod";
@@ -11,6 +12,7 @@ import { type RunConfig, runInProcess, runOverNats } from "./run.ts";
 import {
 	compareSummaries,
 	createSummary,
+	dollars,
 	type Summary,
 	summarize,
 } from "./summary.ts";
@@ -24,6 +26,7 @@ if (!args.ok) {
 const {
 	bus,
 	compare,
+	compareSurge,
 	windowTicks,
 	demandName,
 	shiftsName,
@@ -39,8 +42,13 @@ const loadLines = [
 	`shifts: ${shiftsName}`,
 	`preferences: ${preferencesName}`,
 	`regions: ${regions.columns}x${regions.rows}`,
+	// Surge-off output stays as before surge existed (ADR 0054).
+	...(config.surge && !compareSurge ? ["surge: on"] : []),
 ];
 const batched: Matching = { type: "batched", windowTicks };
+const matching: Matching =
+	args.value.matching === "batched" ? batched : { type: "greedy" };
+const matchingLine = `matching: ${matching.type === "batched" ? `batched (window ${windowTicks} ticks)` : "greedy"}`;
 
 if (compare) {
 	const greedySummary = summarizeInProcess({
@@ -52,42 +60,59 @@ if (compare) {
 	console.log(`ticks: ${config.ticks}`);
 	console.log(`batch window: ${windowTicks} ticks`);
 	for (const line of loadLines) console.log(line);
-	printComparison(greedySummary, batchedSummary);
+	printComparison(["greedy", "batched"], greedySummary, batchedSummary, {
+		surge: config.surge ?? false,
+	});
 	printAndFailOnViolations("greedy", greedySummary);
 	printAndFailOnViolations("batched", batchedSummary);
+} else if (compareSurge) {
+	const offSummary = summarizeInProcess({ ...config, matching, surge: false });
+	const onSummary = summarizeInProcess({ ...config, matching, surge: true });
+	console.log(`seed: ${config.seed}`);
+	console.log(`ticks: ${config.ticks}`);
+	console.log(matchingLine);
+	for (const line of loadLines) console.log(line);
+	printComparison(["surge off", "surge on"], offSummary, onSummary, {
+		surge: true,
+	});
+	printAndFailOnViolations("surge off", offSummary);
+	printAndFailOnViolations("surge on", onSummary);
 } else {
-	const matching: Matching =
-		args.value.matching === "batched" ? batched : { type: "greedy" };
 	const summary = await run({ ...config, matching });
 
 	console.log(`seed: ${summary.seed}`);
 	console.log(`ticks: ${summary.ticks}`);
-	console.log(
-		`matching: ${matching.type === "batched" ? `batched (window ${windowTicks} ticks)` : "greedy"}`,
-	);
+	console.log(matchingLine);
 	for (const line of loadLines) console.log(line);
 	console.log(`drivers: ${summary.drivers}`);
 	console.log(`trips requested: ${summary.trips.requested}`);
+	if (config.surge) console.log(`riders declined: ${summary.declined}`);
 	console.log(`trips completed: ${summary.trips.completed}`);
 	console.log(`trips cancelled: ${summary.trips.cancelled}`);
 	console.log(
 		`mean ticks from request to pickup: ${summary.meanTicksToPickup?.toFixed(1) ?? "n/a"}`,
 	);
+	if (config.surge) console.log(`revenue: ${dollars(summary.revenue)}`);
 	console.log(`rejected inputs: ${summary.rejectedInputs}`);
 	console.log(`invariant violations: ${summary.violations.length}`);
 	printAndFailOnViolations(null, summary);
 }
 
-function printComparison(greedy: Summary, batched: Summary): void {
+function printComparison(
+	[firstName, secondName]: [string, string],
+	first: Summary,
+	second: Summary,
+	options: { surge: boolean },
+): void {
 	const rows = [
-		{ metric: "", greedy: "greedy", batched: "batched" },
-		...compareSummaries(greedy, batched),
+		{ metric: "", first: firstName, second: secondName },
+		...compareSummaries(first, second, options),
 	];
-	const width = (column: "metric" | "greedy" | "batched") =>
+	const width = (column: "metric" | "first" | "second") =>
 		Math.max(...rows.map((row) => row[column].length));
 	for (const row of rows) {
 		console.log(
-			`${row.metric.padEnd(width("metric"))}  ${row.greedy.padStart(width("greedy"))}  ${row.batched.padStart(width("batched"))}`,
+			`${row.metric.padEnd(width("metric"))}  ${row.first.padStart(width("first"))}  ${row.second.padStart(width("second"))}`,
 		);
 	}
 }

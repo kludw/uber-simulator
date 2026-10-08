@@ -1,4 +1,5 @@
 import type { Message, Tick, TripId } from "../shared/messages.ts";
+import { type Fare, fareOf, Surge } from "../shared/surge.ts";
 import { createInvariantChecker, type Violation } from "./invariants.ts";
 import type { RunConfig, RunResult } from "./run.ts";
 
@@ -9,6 +10,11 @@ export type Summary = {
 	trips: { requested: number; completed: number; cancelled: number };
 	// null when no trip was picked up.
 	meanTicksToPickup: number | null;
+	// Riders who declined surge (ADR 0054); 0 with surge off.
+	declined: number;
+	// Cents: the fares of completed trips, base fare for a trip without one
+	// (surge off), so surge off and on compare on the same trips.
+	revenue: number;
 	rejectedInputs: number;
 	violations: Violation[];
 };
@@ -32,18 +38,21 @@ export type RunSummary = {
 // with messages.
 export function createSummary(config: RunConfig): RunSummary {
 	const tripSummary = createTripSummary();
+	const surgeSummary = createSurgeSummary();
 	const checker = createInvariantChecker(config.grid);
 	const { count, driversPerShard } = config.driverShards;
 	return {
 		observe: (message) => {
 			checker.observe(message);
 			tripSummary.observe(message);
+			surgeSummary.observe(message);
 		},
 		result: (rejectedInputs) => ({
 			seed: config.seed,
 			ticks: config.ticks,
 			drivers: count * driversPerShard,
 			...tripSummary.result(),
+			...surgeSummary.result(),
 			rejectedInputs,
 			violations: checker.violations(),
 		}),
@@ -91,26 +100,80 @@ export function createTripSummary(): {
 	};
 }
 
-// One headline number of two runs on the same seed (ADR 0030), formatted.
-export type ComparisonRow = { metric: string; greedy: string; batched: string };
+const baseSurge = Surge.parse(1);
 
+// The summary's riders declined and revenue (ADR 0054). Memory grows with
+// trips, not with messages.
+function createSurgeSummary(): {
+	observe(message: Message): void;
+	result(): Pick<Summary, "declined" | "revenue">;
+} {
+	const fares = new Map<TripId, Fare>();
+	let declined = 0;
+	let revenue = 0;
+	return {
+		observe: (message) => {
+			switch (message.type) {
+				case "rider.declined_surge":
+					declined++;
+					break;
+				case "trip.requested":
+					fares.set(
+						message.tripId,
+						message.fare ?? fareOf(message.pickup, message.dropoff, baseSurge),
+					);
+					break;
+				case "trip.completed":
+					revenue += fares.get(message.tripId) ?? 0;
+					fares.delete(message.tripId);
+					break;
+				case "trip.cancelled":
+					fares.delete(message.tripId);
+					break;
+			}
+		},
+		result: () => ({ declined, revenue }),
+	};
+}
+
+// Cents as dollars, e.g. $4,321.50.
+export function dollars(cents: number): string {
+	return `$${(cents / 100).toLocaleString("en-US", {
+		minimumFractionDigits: 2,
+		maximumFractionDigits: 2,
+	})}`;
+}
+
+// One headline number of two runs on the same seed, formatted: greedy and
+// batched (ADR 0030), or surge off and on (ADR 0054).
+export type ComparisonRow = { metric: string; first: string; second: string };
+
+// surge: add riders declined and revenue.
 export function compareSummaries(
-	greedy: Summary,
-	batched: Summary,
+	first: Summary,
+	second: Summary,
+	{ surge }: { surge: boolean },
 ): ComparisonRow[] {
-	const metrics: [string, (summary: Summary) => string][] = [
+	type Metric = [string, (summary: Summary) => string];
+	const metrics: Metric[] = [
 		["trips requested", (summary) => String(summary.trips.requested)],
+		...(surge
+			? [["riders declined", (summary) => String(summary.declined)] as Metric]
+			: []),
 		["trips completed", (summary) => String(summary.trips.completed)],
 		["trips cancelled", (summary) => String(summary.trips.cancelled)],
 		[
 			"mean ticks from request to pickup",
 			(summary) => summary.meanTicksToPickup?.toFixed(1) ?? "n/a",
 		],
+		...(surge
+			? [["revenue", (summary) => dollars(summary.revenue)] as Metric]
+			: []),
 		["invariant violations", (summary) => String(summary.violations.length)],
 	];
 	return metrics.map(([metric, format]) => ({
 		metric,
-		greedy: format(greedy),
-		batched: format(batched),
+		first: format(first),
+		second: format(second),
 	}));
 }
