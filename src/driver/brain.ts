@@ -166,6 +166,8 @@ export type DriverShardState = {
 	prices: Map<Region, Map<Zone, Surge>>;
 	pricesChanged: boolean;
 	chaseTable: Map<Zone, ChasePart>;
+	chaseTick: number;
+	chaseStream: Random | null;
 };
 
 type ChasePart = { region: Region; zone: Zone; surge: Surge; steps: number };
@@ -249,6 +251,8 @@ export function startDriverShard(
 		prices: new Map(),
 		pricesChanged: false,
 		chaseTable: new Map(),
+		chaseTick: 0,
+		chaseStream: null,
 	};
 	const online: ByRegion = new Map();
 	for (const driver of drivers.values()) {
@@ -598,6 +602,8 @@ function onTick(
 	const { drivers, schedule } = state;
 	const retargetNow =
 		spikeChase && spikeRetarget === "tick" && state.pricesChanged;
+	state.chaseTick = input.tick;
+	state.chaseStream = null;
 	if (state.pricesChanged) {
 		state.chaseTable = buildChaseTable(state);
 		state.pricesChanged = false;
@@ -879,6 +885,11 @@ function chaseTarget(
 			: spikeShare === "surge"
 				? best.surge - 1
 				: Number(spikeShare);
+	// Chase draws on their own per-tick stream so wander draws stay unshifted.
+	if (process.env.SPIKE_STREAM !== "shard") {
+		state.chaseStream ??= random.child(`chase:${state.chaseTick}`);
+		random = state.chaseStream;
+	}
 	if (share < 1 && random.float() >= share) {
 		spikeStats.coinsLost++;
 		return null;
