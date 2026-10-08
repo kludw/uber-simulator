@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { Cell, cellIn, distance, type Grid, specGrid } from "../shared/grid.ts";
+import {
+	Cell,
+	Coordinate,
+	cellAt,
+	cellIn,
+	distance,
+	type Grid,
+	specGrid,
+} from "../shared/grid.ts";
 import {
 	DriverId,
 	type RequestTrip,
@@ -9,6 +17,7 @@ import {
 } from "../shared/messages.ts";
 import { createRandom, type Random } from "../shared/random.ts";
 import { Region, RegionLayout } from "../shared/regions.ts";
+import { Surge, Zone } from "../shared/surge.ts";
 import {
 	decideRiders,
 	type RidersInput,
@@ -619,6 +628,213 @@ describe("decideRiders regions", () => {
 	test("a rider out of patience cancels in its trip's region", () => {
 		expect(quietTick(spawnInRegion1().state, 151).outputs).toEqual([
 			{ type: "cancel_trip", tripId: t1, region: Region.parse(1) },
+		]);
+	});
+});
+
+// ADR 0054. A 50 x 50 grid is one surge zone (0); 2x1 cuts it at x 25.
+describe("decideRiders with surge on", () => {
+	const zonedGrid: Grid = { width: 50, height: 50 };
+	const zone0 = Zone.parse(0);
+
+	// Spawns r-1 at tick n, pickup (x, 3), dropoff (2, 8); max surge
+	// 1 + 2 x willingness.
+	function spawn(
+		state: RidersState,
+		n: number,
+		x: number,
+		willingness: number,
+	) {
+		return decideRiders(
+			state,
+			{ type: "clock.ticked", tick: tick(n) },
+			scriptedRandom({
+				[`demand:${n}`]: { floats: [0.9, 0.5], ints: [x, 3, 2, 8] },
+				[`patience:${n}`]: { ints: [150] },
+				[`willingness:${n}`]: { floats: [willingness] },
+			}),
+		);
+	}
+
+	test("a rider who has seen no prices requests at 1.0", () => {
+		const state = startRiders({
+			grid: zonedGrid,
+			requestsPerMinute: 10,
+			surge: true,
+		});
+		expect(spawn(state, 1, 30, 0).outputs).toMatchObject([
+			{ type: "request_trip", surge: 1 },
+		]);
+	});
+
+	// Region 0 prices zone 0 at the given surge (one region unless 2x1).
+	function priced(surge: number, regions?: RegionLayout): RidersState {
+		const state = startRiders({
+			grid: zonedGrid,
+			requestsPerMinute: 10,
+			surge: true,
+			...(regions === undefined ? {} : { regions }),
+		});
+		return decideRiders(
+			state,
+			{
+				type: "zones.priced",
+				tick: tick(30),
+				region: Region.parse(0),
+				zones: [{ zone: zone0, surge: Surge.parse(surge) }],
+			},
+			scriptedRandom({}),
+		).state;
+	}
+
+	test("a rider willing to pay its zone's surge requests at that surge", () => {
+		expect(spawn(priced(1.5), 31, 30, 0.5).outputs).toMatchObject([
+			{ type: "request_trip", surge: 1.5 },
+		]);
+	});
+
+	// Max surge 1 + 2 x 0.1 = 1.2, below the quote 1.5.
+	test("a rider whose quote exceeds its max surge declines", () => {
+		expect(spawn(priced(1.5), 31, 30, 0.1).outputs).toEqual([
+			{
+				type: "rider.declined_surge",
+				tick: tick(31),
+				riderId: RiderId.parse("r-1"),
+				pickup: cellAt(Coordinate.parse(30), Coordinate.parse(3)),
+				surge: Surge.parse(1.5),
+			},
+		]);
+	});
+
+	test("a declined rider leaves: it never waits for a trip", () => {
+		expect(spawn(priced(1.5), 31, 30, 0.1).state.riders.size).toBe(0);
+	});
+
+	// Max surge 1 + 2 x 0.25 = 1.5: a quote equal to it is paid.
+	test("a rider whose quote equals its max surge requests", () => {
+		expect(spawn(priced(1.5), 31, 30, 0.25).outputs).toMatchObject([
+			{ type: "request_trip", surge: 1.5 },
+		]);
+	});
+
+	test("a region's later prices replace its earlier ones", () => {
+		const repriced = decideRiders(
+			priced(1.5),
+			{
+				type: "zones.priced",
+				tick: tick(60),
+				region: Region.parse(0),
+				zones: [],
+			},
+			scriptedRandom({}),
+		).state;
+		expect(spawn(repriced, 61, 30, 0).outputs).toMatchObject([
+			{ type: "request_trip", surge: 1 },
+		]);
+	});
+
+	// Region 0 prices zone 0's part x 0-24; pickup (30, 3) is region 1's part.
+	test("a rider is quoted its pickup's region's price for the zone", () => {
+		const state = priced(2, RegionLayout.parse("2x1"));
+		expect(spawn(state, 31, 30, 0).outputs).toMatchObject([
+			{ type: "request_trip", region: 1, surge: 1 },
+		]);
+	});
+
+	function runPriced(ticks: number, seed: number, surge: boolean) {
+		const random = createRandom(seed);
+		let state = decideRiders(
+			startRiders({ grid: zonedGrid, requestsPerMinute: 60, surge }),
+			{
+				type: "zones.priced",
+				tick: tick(0),
+				region: Region.parse(0),
+				zones: [{ zone: zone0, surge: Surge.parse(2) }],
+			},
+			random,
+		).state;
+		const outputs: Decision["outputs"] = [];
+		for (let n = 1; n <= ticks; n++) {
+			const decision = decideRiders(
+				state,
+				{ type: "clock.ticked", tick: tick(n) },
+				random,
+			);
+			state = decision.state;
+			outputs.push(...decision.outputs);
+		}
+		return outputs;
+	}
+
+	// About 600 riders quoted 2.0; max surge below 2.0 half the time, so
+	// about 300 decline (sd ~ 17).
+	test("about half the riders quoted 2.0 decline", () => {
+		const declines = runPriced(600, 42, true).filter(
+			(output) => output.type === "rider.declined_surge",
+		);
+		expect(Math.abs(declines.length - 300)).toBeLessThanOrEqual(60);
+	});
+
+	test("same seed gives identical declines and requests", () => {
+		expect(runPriced(600, 7, true)).toEqual(runPriced(600, 7, true));
+	});
+
+	// Riders get no driver here, so each cancels when its patience runs out:
+	// the off run's requests and cancels, less the declined riders', are the
+	// on run's.
+	test("declines never shift other riders' requests or patience", () => {
+		const on = runPriced(600, 7, true);
+		const declined = new Set(
+			on.flatMap((output) =>
+				output.type === "rider.declined_surge"
+					? [output.riderId.replace("r-", "t-")]
+					: [],
+			),
+		);
+		const keptOn = on.flatMap((output): Decision["outputs"] => {
+			if (output.type === "rider.declined_surge") return [];
+			if (output.type !== "request_trip") return [output];
+			const { surge: _quote, ...request } = output;
+			return [request];
+		});
+		const keptOff = runPriced(600, 7, false).filter(
+			(output) => !("tripId" in output && declined.has(output.tripId)),
+		);
+		expect(keptOn).toEqual(keptOff);
+	});
+});
+
+describe("decideRiders with surge off", () => {
+	// scriptedRandom throws on the willingness stream: off draws nothing from it.
+	test("a rider in a priced zone requests without a quote or a draw", () => {
+		const state = decideRiders(
+			startRiders({ grid, requestsPerMinute: 10 }),
+			{
+				type: "zones.priced",
+				tick: tick(0),
+				region: Region.parse(0),
+				zones: [{ zone: Zone.parse(0), surge: Surge.parse(2) }],
+			},
+			scriptedRandom({}),
+		).state;
+		const { outputs } = decideRiders(
+			state,
+			{ type: "clock.ticked", tick: tick(1) },
+			scriptedRandom({
+				"demand:1": { floats: [0.9, 0.5], ints: [2, 3, 7, 8] },
+				"patience:1": { ints: [150] },
+			}),
+		);
+		expect(outputs).toEqual([
+			{
+				type: "request_trip",
+				tick: tick(1),
+				tripId: TripId.parse("t-1"),
+				riderId: RiderId.parse("r-1"),
+				pickup: cell(2, 3),
+				dropoff: cell(7, 8),
+				region: Region.parse(0),
+			},
 		]);
 	});
 });

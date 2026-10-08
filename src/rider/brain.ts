@@ -6,12 +6,14 @@ import type {
 	InputRejected,
 	RequestTrip,
 	RequestTripRejected,
+	RiderDeclinedSurge,
 	RiderId,
 	Tick,
 	TripCancelled,
 	TripCompleted,
 	TripId,
 	TripPickedUp,
+	ZonesPriced,
 } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
 import {
@@ -20,6 +22,7 @@ import {
 	type RegionLayout,
 	regionOf,
 } from "../shared/regions.ts";
+import { Surge, type Zone, zoneOf } from "../shared/surge.ts";
 import { assertValidDemand, type Demand, pickupsForTick } from "./demand.ts";
 
 // region: the trip's, where its cancel goes (ADR 0050).
@@ -46,6 +49,10 @@ export type RidersState = {
 	demand: Demand;
 	spawned: number;
 	riders: Map<TripId, Rider>;
+	// Whether riders quote and decide on surge (ADR 0054).
+	surge: boolean;
+	// The last zones.priced per region, by zone: zones not listed are 1.0.
+	prices: Map<Region, Map<Zone, Surge>>;
 };
 
 export type RidersInput =
@@ -54,9 +61,10 @@ export type RidersInput =
 	| TripCompleted
 	| TripCancelled
 	| CancelTripRejected
-	| RequestTripRejected;
+	| RequestTripRejected
+	| ZonesPriced;
 
-type RidersOutput = RequestTrip | CancelTrip | Rejected;
+type RidersOutput = RequestTrip | CancelTrip | RiderDeclinedSurge | Rejected;
 
 type Rejected = InputRejected<
 	| TripPickedUp
@@ -69,12 +77,15 @@ type Rejected = InputRejected<
 
 type Decision = { state: RidersState; outputs: RidersOutput[] };
 
-// Missing demand = uniform; missing regions = one region.
+const noSurge = Surge.parse(1);
+
+// Missing demand = uniform; missing regions = one region; missing surge = off.
 export function startRiders(config: {
 	grid: Grid;
 	requestsPerMinute: number;
 	demand?: Demand;
 	regions?: RegionLayout;
+	surge?: boolean;
 }): RidersState {
 	const demand = config.demand ?? { type: "uniform" };
 	assertValidDemand(demand, config.grid);
@@ -85,6 +96,8 @@ export function startRiders(config: {
 		demand,
 		spawned: 0,
 		riders: new Map(),
+		surge: config.surge ?? false,
+		prices: new Map(),
 	};
 }
 
@@ -106,6 +119,8 @@ export function decideRiders(
 			return onCancelRejected(state, input);
 		case "request_trip_rejected":
 			return onRequestRejected(state, input);
+		case "zones.priced":
+			return onPriced(state, input);
 		default: {
 			const unhandled: never = input;
 			throw new Error(`unhandled riders input: ${unhandled}`);
@@ -194,6 +209,14 @@ function onRequestRejected(
 	return removeRider(state, addressed.tripId);
 }
 
+function onPriced(state: RidersState, priced: ZonesPriced): Decision {
+	state.prices.set(
+		priced.region,
+		new Map(priced.zones.map(({ zone, surge }) => [zone, surge])),
+	);
+	return { state, outputs: [] };
+}
+
 function removeRider(state: RidersState, tripId: TripId): Decision {
 	state.riders.delete(tripId);
 	return { state, outputs: [] };
@@ -207,6 +230,10 @@ function onTick(
 	// Children keyed by tick: the same label would replay the same draws every tick.
 	const demand = random.child(`demand:${input.tick}`);
 	const patience = random.child(`patience:${input.tick}`);
+	// Surge off draws nothing from it (ADR 0054).
+	const willingness = state.surge
+		? random.child(`willingness:${input.tick}`)
+		: null;
 	const spawnCount = poisson(state.requestsPerMinute / 60, demand);
 	const nextPickup = pickupsForTick(state.demand, state.grid, input.tick, {
 		root: random,
@@ -247,6 +274,25 @@ function onTick(
 			requestedAt: input.tick,
 			patience: patience.int(120, 300),
 		};
+		let quote: Surge | undefined;
+		if (willingness !== null) {
+			quote =
+				state.prices.get(rider.region)?.get(zoneOf(state.grid, pickup)) ??
+				noSurge;
+			// Max surge: uniform in [1.0, 3.0), one draw per spawned rider so a
+			// decline never shifts later draws.
+			const maxSurge = 1 + 2 * willingness.float();
+			if (quote > maxSurge) {
+				outputs.push({
+					type: "rider.declined_surge",
+					tick: input.tick,
+					riderId: rider.id,
+					pickup,
+					surge: quote,
+				});
+				continue;
+			}
+		}
 		state.riders.set(rider.tripId, rider);
 		outputs.push({
 			type: "request_trip",
@@ -256,6 +302,7 @@ function onTick(
 			pickup,
 			dropoff,
 			region: rider.region,
+			...(quote === undefined ? {} : { surge: quote }),
 		});
 	}
 	return { state, outputs };
