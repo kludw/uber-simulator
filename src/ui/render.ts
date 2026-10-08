@@ -54,7 +54,11 @@ const ridersForFullRed = 3;
 
 // One pixel per heatmap tile, row-major, 4 bytes (RGBA) each: an ImageData's
 // data, drawn scaled up to the city.
-export type Heatmap = { columns: number; rows: number; rgba: Uint8ClampedArray };
+type Heatmap = {
+	columns: number;
+	rows: number;
+	rgba: Uint8ClampedArray<ArrayBuffer>;
+};
 
 export function heatmapOf(view: View, grid: Grid): Heatmap {
 	const columns = Math.ceil(grid.width / cellsPerTile);
@@ -69,12 +73,13 @@ export function heatmapOf(view: View, grid: Grid): Heatmap {
 	let shown = 0;
 	forEachDriver(view, (_index, driver) => {
 		const tile = tileOf(driver.cell);
-		drivers[tile]++;
-		if (driver.state !== "idle") busy[tile]++;
+		drivers[tile] = (drivers[tile] ?? 0) + 1;
+		if (driver.state !== "idle") busy[tile] = (busy[tile] ?? 0) + 1;
 		shown++;
 	});
 	for (const rider of view.waitingRiders.values()) {
-		waiting[tileOf(rider.pickup)]++;
+		const tile = tileOf(rider.pickup);
+		waiting[tile] = (waiting[tile] ?? 0) + 1;
 	}
 	// A tile at twice the mean is at full brightness.
 	const fullAt = (2 * shown) / tiles;
@@ -182,8 +187,9 @@ export function tickFraction(timing: TickTiming, now: number): number {
 	return Math.min(1, (now - timing.arrivedAt) / timing.duration);
 }
 
-// Draws the view on every animation frame. Call show() after each event
-// applied to it (the view is updated in place).
+// Draws the view on every animation frame: dots, or above the threshold the
+// heatmap, recomputed once per tick rather than per frame (ADR 0053). Call
+// show() after each event applied to the view (it is updated in place).
 export function startRenderer(
 	canvas: HTMLCanvasElement,
 	grid: Grid,
@@ -192,9 +198,22 @@ export function startRenderer(
 	if (context === null) throw new Error("canvas 2D context unavailable");
 	let view = emptyView();
 	let timing = noTickTiming;
+	// The heatmap image, one pixel per tile, and the tick it shows; null
+	// while dots are drawn.
+	let heatmap: { image: OffscreenCanvas; tick: Tick | null } | null = null;
 
 	const frame = (now: number) => {
-		draw(context, view, grid, tickFraction(timing, now));
+		const size = fitToDisplay(context);
+		drawCity(context, grid, size);
+		if (drawModeOf(view) === "dots") {
+			heatmap = null;
+			drawDots(context, view, grid, size, tickFraction(timing, now));
+		} else {
+			if (heatmap === null || heatmap.tick !== view.tick) {
+				heatmap = { image: heatmapImage(view, grid), tick: view.tick };
+			}
+			drawHeatmap(context, heatmap.image, grid, size);
+		}
 		requestAnimationFrame(frame);
 	};
 	requestAnimationFrame(frame);
@@ -209,29 +228,36 @@ export function startRenderer(
 	};
 }
 
-function draw(
+function drawCity(
+	context: CanvasRenderingContext2D,
+	grid: Grid,
+	size: Size,
+): void {
+	context.fillStyle = backgroundColor;
+	context.fillRect(0, 0, size.width, size.height);
+	const topLeft = cellToPixel({ x: -0.5, y: -0.5 }, grid, size);
+	const bottomRight = cellToPixel(
+		{ x: grid.width - 0.5, y: grid.height - 0.5 },
+		grid,
+		size,
+	);
+	context.fillStyle = cityColor;
+	context.fillRect(
+		topLeft.x,
+		topLeft.y,
+		bottomRight.x - topLeft.x,
+		bottomRight.y - topLeft.y,
+	);
+}
+
+function drawDots(
 	context: CanvasRenderingContext2D,
 	view: View,
 	grid: Grid,
+	size: Size,
 	fraction: number,
 ): void {
-	const size = fitToDisplay(context);
 	const toPixel = (cell: Point) => cellToPixel(cell, grid, size);
-
-	context.fillStyle = backgroundColor;
-	context.fillRect(0, 0, size.width, size.height);
-	const cityTopLeft = toPixel({ x: -0.5, y: -0.5 });
-	const cityBottomRight = toPixel({
-		x: grid.width - 0.5,
-		y: grid.height - 0.5,
-	});
-	context.fillStyle = cityColor;
-	context.fillRect(
-		cityTopLeft.x,
-		cityTopLeft.y,
-		cityBottomRight.x - cityTopLeft.x,
-		cityBottomRight.y - cityTopLeft.y,
-	);
 
 	context.strokeStyle = activeTripColor;
 	context.lineWidth = 1;
@@ -264,6 +290,42 @@ function draw(
 		context.arc(position.x, position.y, driverRadius, 0, 2 * Math.PI);
 		context.fill();
 	});
+}
+
+function heatmapImage(view: View, grid: Grid): OffscreenCanvas {
+	const { columns, rows, rgba } = heatmapOf(view, grid);
+	const image = new OffscreenCanvas(columns, rows);
+	const imageContext = image.getContext("2d");
+	if (imageContext === null)
+		throw new Error("offscreen 2D context unavailable");
+	imageContext.putImageData(new ImageData(rgba, columns, rows), 0, 0);
+	return image;
+}
+
+// One image pixel per tile, scaled up unsmoothed so tiles keep sharp edges.
+function drawHeatmap(
+	context: CanvasRenderingContext2D,
+	image: OffscreenCanvas,
+	grid: Grid,
+	size: Size,
+): void {
+	const topLeft = cellToPixel({ x: -0.5, y: -0.5 }, grid, size);
+	const bottomRight = cellToPixel(
+		{
+			x: image.width * cellsPerTile - 0.5,
+			y: image.height * cellsPerTile - 0.5,
+		},
+		grid,
+		size,
+	);
+	context.imageSmoothingEnabled = false;
+	context.drawImage(
+		image,
+		topLeft.x,
+		topLeft.y,
+		bottomRight.x - topLeft.x,
+		bottomRight.y - topLeft.y,
+	);
 }
 
 // Sizes the backing store to the canvas's CSS size times devicePixelRatio, so
