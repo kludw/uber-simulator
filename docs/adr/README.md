@@ -57,3 +57,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0051 | [Search untouched drivers in batched matching](0051-search-untouched-drivers-in-batched-matching.md) | Accepted |
 | 0052 | [Driver indexes in moves](0052-driver-indexes-in-moves.md) | Accepted |
 | 0053 | [Scale the UI in the browser](0053-scale-the-ui-in-the-browser.md) | Accepted |
+| 0054 | [Price trips with zone surge](0054-price-trips-with-zone-surge.md) | Accepted |
