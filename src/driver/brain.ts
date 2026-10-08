@@ -40,6 +40,7 @@ import {
 	regionOf,
 } from "../shared/regions.ts";
 import {
+	baseSurge,
 	type Surge,
 	type Zone,
 	zoneCount,
@@ -650,10 +651,7 @@ function onTick(
 		switch (driver.state) {
 			case "idle": {
 				const region = regionOf(state.regions, state.grid, driver.cell);
-				const target =
-					driver.wanderTarget === null
-						? (chaseTarget(driver) ?? randomCell(state.grid, random))
-						: driver.wanderTarget;
+				const target = wanderTarget(driver, state, repick, chaseTarget, random);
 				drivers.set(driver.id, wander(driver, target, inRegion(moves, region)));
 				break;
 			}
@@ -806,6 +804,29 @@ type IdleDriver = Extract<Driver, { state: "idle" }>;
 type OfflineDriver = Extract<Driver, { state: "offline" }>;
 type EnRouteDriver = Extract<Driver, { state: "en_route" }>;
 type OnTripDriver = Extract<Driver, { state: "on_trip" }>;
+
+// A driver picking a target chases if it can; on the tick after new prices
+// (repick) so does one heading outside any surge area, else it keeps its
+// target (ADR 0055).
+function wanderTarget(
+	driver: IdleDriver,
+	state: DriverShardState,
+	repick: boolean,
+	chaseTarget: (driver: IdleDriver) => Cell | null,
+	random: Random,
+): Cell {
+	const current = driver.wanderTarget;
+	if (current === null) {
+		return chaseTarget(driver) ?? randomCell(state.grid, random);
+	}
+	if (!repick || surgeAt(state, current) > baseSurge) return current;
+	return chaseTarget(driver) ?? current;
+}
+
+function surgeAt(state: DriverShardState, cell: Cell): Surge {
+	const region = regionOf(state.regions, state.grid, cell);
+	return state.prices.get(region)?.get(zoneOf(state.grid, cell)) ?? baseSurge;
+}
 
 // Nearest surge area by zone distance within chase reach, ties to the
 // higher surge, then the lower region, then the lower zone.
