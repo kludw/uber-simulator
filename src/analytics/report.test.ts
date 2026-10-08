@@ -153,6 +153,72 @@ describe.skipIf(!config)("run report", () => {
 		}).toEqual({ meanTripTicks: 40, completedPerMinute: 1 });
 	});
 
+	// ADR 0054: a surge run (any zones.priced) reports riders declined and
+	// revenue, the fares of completed trips.
+	test("runReport of a surge run counts riders declined and sums completed trips' fares", async () => {
+		const run = "surge";
+		await succeeded(
+			clickhouse.insertEvents([
+				row(run, "zones.priced", 0, 1),
+				row(run, "rider.declined_surge", 1, 2),
+				row(run, "trip.requested", 1, 3, "t-2", { fare: 378 }),
+				row(run, "trip.requested", 2, 4, "t-3", { fare: 1000 }),
+				row(run, "trip.requested", 2, 5, "t-4", { fare: 2000 }),
+				row(run, "rider.declined_surge", 3, 6),
+				row(run, "trip.cancelled", 4, 7, "t-3"),
+				row(run, "trip.picked_up", 5, 8, "t-2"),
+				row(run, "trip.completed", 9, 9, "t-2"),
+			]),
+		);
+
+		const report = await succeeded(runReport(clickhouse, RunId.parse(run)));
+
+		expect(report.surge).toEqual({ declined: 2, revenue: 378 });
+	});
+
+	test("runReport of a run without prices has no surge numbers", async () => {
+		const run = "no-surge";
+		await succeeded(
+			clickhouse.insertEvents([row(run, "trip.requested", 1, 1, "t-1")]),
+		);
+
+		const report = await succeeded(runReport(clickhouse, RunId.parse(run)));
+
+		expect(report.surge).toBeNull();
+	});
+
+	// Oracle: summarize over the same surge run's event log.
+	test("runReport of a surge run agrees with the in-memory summary", async () => {
+		const runConfig = {
+			seed: 1,
+			ticks: 1200,
+			grid: { width: 100, height: 100 },
+			driverShards: { count: 1, driversPerShard: 4 },
+			requestsPerMinute: 20,
+			surge: true,
+		};
+		const result = runInProcess({ ...runConfig, keepEventLog: true });
+		const runId = RunId.parse("surge-cross-check");
+		const ingestedAt = new Date("2026-10-03T12:00:00Z");
+		await succeeded(
+			clickhouse.insertEvents(
+				result.eventLog
+					.filter(isSimEvent)
+					.map((event, index) =>
+						toRow(event, { runId, streamSeq: index + 1, ingestedAt }),
+					),
+			),
+		);
+		const summary = summarize(runConfig, result);
+
+		const report = await succeeded(runReport(clickhouse, runId));
+
+		expect(report.surge).toEqual({
+			declined: summary.declined,
+			revenue: summary.revenue,
+		});
+	});
+
 	test("runReport of a run with no events is an unknown run", async () => {
 		const runId = RunId.parse("no-such-run");
 
@@ -169,6 +235,7 @@ function row(
 	tick: number,
 	streamSeq: number,
 	tripId = "",
+	payload: Record<string, unknown> = {},
 ): EventRow {
 	return {
 		runId: RunId.parse(runId),
@@ -178,7 +245,7 @@ function row(
 		tripId,
 		driverId: "",
 		riderId: "",
-		payload: "{}",
+		payload: JSON.stringify(payload),
 		ingestedAt: new Date("2026-10-03T12:00:00Z"),
 	};
 }

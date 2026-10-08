@@ -25,6 +25,9 @@ const ReportRow = z.object({
 	ticksToPickup: count,
 	finishedTrips: count,
 	tripTicks: count,
+	pricings: count,
+	declined: count,
+	revenue: count,
 });
 
 export type RunReport = {
@@ -36,6 +39,9 @@ export type RunReport = {
 	// Over the run's tick span (first to last event); null when it spans no
 	// tick.
 	completedPerMinute: number | null;
+	// Surge runs only (any zones.priced, ADR 0054): riders declined, and
+	// revenue in cents, the fares of completed trips; null with surge off.
+	surge: { declined: number; revenue: number } | null;
 };
 
 export type RunReportError =
@@ -62,7 +68,8 @@ export async function runReport(
 	clickhouse: Pick<ClickHouse, "query">,
 	runId: RunId,
 ): Promise<Result<RunReport, RunReportError>> {
-	// Inner query: one row per trip (plus one for events without a trip).
+	// Inner query: one row per trip (plus one for events without a trip:
+	// prices, declines). Revenue sums the events' fares (surge runs only).
 	// Durations count trips with both ends, like summarize.
 	const rows = await clickhouse.query(
 		`SELECT
@@ -77,7 +84,10 @@ export async function runReport(
 				AS ticksToPickup,
 			toUInt32(countIf(pickups > 0 AND completions > 0)) AS finishedTrips,
 			toFloat64(sumIf(completedAt - pickedUpAt, pickups > 0 AND completions > 0))
-				AS tripTicks
+				AS tripTicks,
+			toUInt32(sum(pricings)) AS pricings,
+			toUInt32(sum(declines)) AS declined,
+			toFloat64(sumIf(fare, requests > 0 AND completions > 0)) AS revenue
 		FROM (
 			SELECT
 				count() AS events,
@@ -89,7 +99,11 @@ export async function runReport(
 				countIf(type = 'trip.cancelled') AS cancellations,
 				toInt64(minIf(tick, type = 'trip.requested')) AS requestedAt,
 				toInt64(minIf(tick, type = 'trip.picked_up')) AS pickedUpAt,
-				toInt64(minIf(tick, type = 'trip.completed')) AS completedAt
+				toInt64(minIf(tick, type = 'trip.completed')) AS completedAt,
+				countIf(type = 'zones.priced') AS pricings,
+				countIf(type = 'rider.declined_surge') AS declines,
+				sumIf(JSONExtractUInt(payload, 'fare'), type = 'trip.requested')
+					AS fare
 			FROM events FINAL
 			WHERE run_id = {runId:String}
 			GROUP BY trip_id
@@ -115,6 +129,10 @@ export async function runReport(
 			meanTicksToPickup: ratio(row.ticksToPickup, row.pickedUpTrips),
 			meanTripTicks: ratio(row.tripTicks, row.finishedTrips),
 			completedPerMinute: ratio(row.completed, minutes),
+			surge:
+				row.pricings === 0
+					? null
+					: { declined: row.declined, revenue: row.revenue },
 		},
 	};
 }
