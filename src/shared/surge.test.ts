@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { type Cell, cellIn, type Grid } from "./grid.ts";
 import { Region, RegionLayout } from "./regions.ts";
 import {
+	baseSurge,
+	dollars,
 	Fare,
 	fareOf,
 	Surge,
@@ -118,5 +120,22 @@ describe("fareOf", () => {
 		expect(fareOf(cell(0, 0), cell(1, 0), Surge.parse(1.3))).toBe(
 			Fare.parse(328),
 		);
+	});
+});
+
+describe("dollars", () => {
+	test("writes cents as dollars with thousands separators and two decimals", () => {
+		expect(dollars(432_150)).toBe("$4,321.50");
+	});
+
+	test("writes whole dollars with two decimals", () => {
+		expect(dollars(300)).toBe("$3.00");
+	});
+});
+
+describe("baseSurge", () => {
+	// $2.50 + 1 cell × 2 cents, unmultiplied.
+	test("prices a fare at base price", () => {
+		expect(fareOf(cell(0, 0), cell(1, 0), baseSurge)).toBe(Fare.parse(252));
 	});
 });

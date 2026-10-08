@@ -7,12 +7,12 @@
 import * as z from "zod";
 import type { Matching } from "../dispatch/brain.ts";
 import { oneRegion } from "../shared/regions.ts";
+import { dollars } from "../shared/surge.ts";
 import { parseSimArgs } from "./args.ts";
 import { type RunConfig, runInProcess, runOverNats } from "./run.ts";
 import {
 	compareSummaries,
 	createSummary,
-	dollars,
 	type Summary,
 	summarize,
 } from "./summary.ts";

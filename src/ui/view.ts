@@ -13,7 +13,7 @@ import {
 	type ZonesPriced,
 } from "../shared/messages.ts";
 import type { Region } from "../shared/regions.ts";
-import { type Fare, fareOf, Surge } from "../shared/surge.ts";
+import { baseSurge, type Fare, fareOf } from "../shared/surge.ts";
 
 type DriverState = "idle" | "en_route" | "at_pickup" | "on_trip" | "at_dropoff";
 
@@ -27,8 +27,6 @@ const driverStates: readonly DriverState[] = [
 	"at_dropoff",
 ];
 const notShown = 0;
-
-const noSurge = Surge.parse(1);
 
 export type DriverView = {
 	state: DriverState;
@@ -167,7 +165,7 @@ export function applyEvent(view: View, event: SimEvent): void {
 				pickup: event.pickup,
 				dropoff: event.dropoff,
 				requestedAt: event.tick,
-				fare: event.fare ?? fareOf(event.pickup, event.dropoff, noSurge),
+				fare: event.fare ?? fareOf(event.pickup, event.dropoff, baseSurge),
 			});
 			return;
 		case "trip.matched": {

@@ -22,7 +22,7 @@ import {
 	type RegionLayout,
 	regionOf,
 } from "../shared/regions.ts";
-import { Surge, type Zone, zoneOf } from "../shared/surge.ts";
+import { baseSurge, type Surge, type Zone, zoneOf } from "../shared/surge.ts";
 import { assertValidDemand, type Demand, pickupsForTick } from "./demand.ts";
 
 // region: the trip's, where its cancel goes (ADR 0050).
@@ -76,8 +76,6 @@ type Rejected = InputRejected<
 >;
 
 type Decision = { state: RidersState; outputs: RidersOutput[] };
-
-const noSurge = Surge.parse(1);
 
 // Missing demand = uniform; missing regions = one region; missing surge = off.
 export function startRiders(config: {
@@ -278,7 +276,7 @@ function onTick(
 		if (willingness !== null) {
 			quote =
 				state.prices.get(rider.region)?.get(zoneOf(state.grid, pickup)) ??
-				noSurge;
+				baseSurge;
 			// Max surge: uniform in [1.0, 3.0), one draw per spawned rider so a
 			// decline never shifts later draws.
 			const maxSurge = 1 + 2 * willingness.float();

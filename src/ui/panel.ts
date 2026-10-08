@@ -1,3 +1,4 @@
+import { dollars } from "../shared/surge.ts";
 import {
 	activeTripColor,
 	drawModeOf,
@@ -144,12 +145,4 @@ function surgeRows(view: View): PanelRow[] {
 		},
 		{ label: "Revenue", value: dollars(view.revenue), swatch: null },
 	];
-}
-
-// Cents as dollars, e.g. $4,321.50, as the summary prints revenue.
-function dollars(cents: number): string {
-	return `$${(cents / 100).toLocaleString("en-US", {
-		minimumFractionDigits: 2,
-		maximumFractionDigits: 2,
-	})}`;
 }

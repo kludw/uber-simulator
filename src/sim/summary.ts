@@ -1,5 +1,5 @@
 import type { Message, Tick, TripId } from "../shared/messages.ts";
-import { type Fare, fareOf, Surge } from "../shared/surge.ts";
+import { baseSurge, dollars, type Fare, fareOf } from "../shared/surge.ts";
 import { createInvariantChecker, type Violation } from "./invariants.ts";
 import type { RunConfig, RunResult } from "./run.ts";
 
@@ -100,8 +100,6 @@ export function createTripSummary(): {
 	};
 }
 
-const baseSurge = Surge.parse(1);
-
 // The summary's riders declined and revenue (ADR 0054). Memory grows with
 // trips, not with messages.
 function createSurgeSummary(): {
@@ -134,14 +132,6 @@ function createSurgeSummary(): {
 		},
 		result: () => ({ declined, revenue }),
 	};
-}
-
-// Cents as dollars, e.g. $4,321.50.
-export function dollars(cents: number): string {
-	return `$${(cents / 100).toLocaleString("en-US", {
-		minimumFractionDigits: 2,
-		maximumFractionDigits: 2,
-	})}`;
 }
 
 // One headline number of two runs on the same seed, formatted: greedy and

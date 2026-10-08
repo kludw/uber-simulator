@@ -40,9 +40,10 @@ import {
 	regionBounds,
 } from "../shared/regions.ts";
 import {
+	baseSurge,
 	type Fare,
 	fareOf,
-	Surge,
+	type Surge,
 	surgeOf,
 	type Zone,
 	zoneOf,
@@ -154,9 +155,6 @@ const offerTimeoutTicks = 3;
 
 // ADR 0054.
 const pricingIntervalTicks = 30;
-// A request without a quote (ADR 0054: a zone not priced is 1.0).
-const noSurge = Surge.parse(1);
-
 // fleetSize: driver shards' count × driversPerShard (ADR 0052).
 // regions, region: the layout and the region this instance owns (ADR 0050);
 // missing = one region.
@@ -408,7 +406,7 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 
 // The rider's quote is the trip's price, fixed from here (ADR 0054).
 function price(request: RequestTrip): { surge: Surge; fare: Fare } {
-	const surge = request.surge ?? noSurge;
+	const surge = request.surge ?? baseSurge;
 	return { surge, fare: fareOf(request.pickup, request.dropoff, surge) };
 }
 
