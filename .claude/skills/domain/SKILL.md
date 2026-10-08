@@ -52,7 +52,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 
 ## Actors
 
-- **Rider**: requests one trip, then is removed (after `completed` or `cancelled`, or when dispatch says the trip can't proceed). States:
+- **Rider**: requests one trip, then is removed (after `completed` or `cancelled`, or when dispatch says the trip can't proceed); with surge on, a rider whose quote exceeds its max surge declines when spawned and is gone, never `waiting` (0054). States:
   - `waiting` (trip requested) -> `riding` (picked up).
   - `waiting` | `cancelling` -> removed on `request_trip_rejected`.
   - `waiting` -> `cancelling` (patience ran out, sent `cancel_trip`, awaiting dispatch's outcome) -> removed on `trip.cancelled` or `cancel_trip_rejected` (`unknown_trip`), or `riding` if pickup won the race.

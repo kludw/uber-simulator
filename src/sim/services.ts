@@ -93,6 +93,7 @@ const ridersInputs = [
 	"trip.cancelled",
 	"request_trip_rejected",
 	"cancel_trip_rejected",
+	"zones.priced",
 ] as const satisfies readonly RidersInput["type"][];
 
 // Compile-time completeness: true only when the list names every type of the

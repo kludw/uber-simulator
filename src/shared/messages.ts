@@ -328,12 +328,15 @@ export const ZonesPriced = z.object({
 export type ZonesPriced = z.infer<typeof ZonesPriced>;
 
 // A spawned rider whose quote exceeded its max surge: it leaves, no trip.
+// Max surge is at least 1.0, so a declined quote is above 1.0.
 export const RiderDeclinedSurge = z.object({
 	type: z.literal("rider.declined_surge"),
 	tick: Tick,
 	riderId: RiderId,
 	pickup: Cell,
-	surge: Surge,
+	surge: Surge.refine((surge) => surge > 1, {
+		error: "a declined quote surges above 1.0",
+	}),
 });
 export type RiderDeclinedSurge = z.infer<typeof RiderDeclinedSurge>;
 
