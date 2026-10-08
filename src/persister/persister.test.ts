@@ -513,6 +513,71 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 		expect(held.batchSizes).toEqual([10_000, 2000]);
 	}, 30_000);
 
+	// A connection on which fetches get no heartbeats and no end-of-batch
+	// status, so a fetch that hasn't filled its batch fails with "heartbeats
+	// missed" after about 1 s, keeping whatever it received: the failure a
+	// starved NATS server causes.
+	function withoutFetchStatuses(nc: NatsConnection): NatsConnection {
+		return new Proxy(nc, {
+			get(target, property) {
+				const value = Reflect.get(target, property, target);
+				if (property !== "subscribe") {
+					return typeof value === "function" ? value.bind(target) : value;
+				}
+				const subscribe: NatsConnection["subscribe"] = (subject, options) => {
+					const callback = options?.callback;
+					if (!callback) return target.subscribe(subject, options);
+					return target.subscribe(subject, {
+						...options,
+						callback(error, message) {
+							const code = message?.headers?.code;
+							if (code === 100 || code === 408) return;
+							callback(error, message);
+						},
+					});
+				};
+				return subscribe;
+			},
+		});
+	}
+
+	test("a background fetch failing while stopping leaves nothing waiting out the ack wait", async () => {
+		const source = testSource();
+		const nc = await natsConnection();
+		await backlog(nc, source, 12_000, "run-j");
+		const held = heldInserts();
+		const failed = Promise.withResolvers<void>();
+		const persister = await succeeded(
+			startPersister({
+				nats: withoutFetchStatuses(nc),
+				clickhouse: held.clickhouse,
+				source,
+				log: (entry) => {
+					if (entry.type === "fetch_failed") failed.resolve();
+				},
+			}),
+		);
+
+		// 10,000 in hand (insert held), the other 2000 in the background
+		// fetch, which then fails.
+		await ackPendingReaches(nc, source, 12_000);
+		persister.stop();
+		held.release();
+		await failed.promise;
+		await persister.stopped;
+		await nc.drain();
+		const restarted = await natsConnection();
+		const restart = await succeeded(
+			startPersister({ nats: restarted, clickhouse, source, log: () => {} }),
+		);
+		// Within 10 s, far below the 60 s ack wait.
+		await drained(restarted, source);
+		restart.stop();
+		await restart.stopped;
+
+		expect(await storedSeqs("run-j")).toHaveLength(2000);
+	}, 30_000);
+
 	test("inserts a backlog in batches of up to 10,000 events", async () => {
 		const source = testSource();
 		const nc = await natsConnection();
