@@ -198,9 +198,16 @@ export function startRenderer(
 	if (context === null) throw new Error("canvas 2D context unavailable");
 	let view = emptyView();
 	let timing = noTickTiming;
-	// The heatmap image, one pixel per tile, and the tick it shows; null
-	// while dots are drawn.
-	let heatmap: { image: OffscreenCanvas; tick: Tick | null } | null = null;
+	// The heatmap image, one pixel per tile, and the tick and fleet size it
+	// shows; null while dots are drawn. Remade on the first frame after a new
+	// clock.ticked, before most of that tick's moves arrive: mostly tick t-1's
+	// end state, at most a cell off per driver, invisible at tile size. A new
+	// fleet size (the view reset, tick kept) remakes it too.
+	let heatmap: {
+		image: OffscreenCanvas;
+		tick: Tick | null;
+		fleetSize: number;
+	} | null = null;
 
 	const frame = (now: number) => {
 		const size = fitToDisplay(context);
@@ -209,8 +216,17 @@ export function startRenderer(
 			heatmap = null;
 			drawDots(context, view, grid, size, tickFraction(timing, now));
 		} else {
-			if (heatmap === null || heatmap.tick !== view.tick) {
-				heatmap = { image: heatmapImage(view, grid), tick: view.tick };
+			const fleetSize = fleetSizeOf(view);
+			if (
+				heatmap === null ||
+				heatmap.tick !== view.tick ||
+				heatmap.fleetSize !== fleetSize
+			) {
+				heatmap = {
+					image: heatmapImage(view, grid),
+					tick: view.tick,
+					fleetSize,
+				};
 			}
 			drawHeatmap(context, heatmap.image, grid, size);
 		}

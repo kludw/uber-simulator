@@ -184,6 +184,22 @@ describe("heatmapOf", () => {
 		);
 	});
 
+	// Mean 1 driver per tile: 3 drivers is past full brightness (2), capped.
+	test("mixes idle grey and busy green by a tile's busy share, at most full brightness", () => {
+		const view = viewOfFleet(3, [cell(0, 0), cell(1, 1), cell(2, 2)]);
+		applyEvent(view, {
+			type: "trip.matched",
+			tick: 2 as Tick,
+			tripId: TripId.parse("t-0"),
+			driverId: driverIdAt(3, DriverIndex.parse(0)),
+		});
+		expect(heatmapOf(view, { width: 15, height: 5 }).rgba).toEqual(
+			new Uint8ClampedArray([
+				114, 160, 132, 255, 22, 27, 34, 255, 22, 27, 34, 255,
+			]),
+		);
+	});
+
 	// Red in full from 3 waiting riders up.
 	test("turns a tile red by the riders waiting for pickup in it", () => {
 		const view = emptyView();
