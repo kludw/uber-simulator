@@ -2,6 +2,7 @@ import { type Cell, cellIn, distance, type Grid } from "../shared/grid.ts";
 import type {
 	DriverId,
 	Message,
+	RiderId,
 	Tick,
 	TripCancelled,
 	TripCompleted,
@@ -80,7 +81,10 @@ export type Violation =
 			tick: Tick;
 			driverId: DriverId;
 			tripId: TripId;
-	  };
+	  }
+	// ADR 0054: a rider that declined surge never requests a trip, and
+	// declines at most once. tick: the second of the two events.
+	| { type: "declined_rider_requested"; tick: Tick; riderId: RiderId };
 
 // What the log has shown so far, rebuilt only from events.
 type LogState = {
@@ -92,6 +96,9 @@ type LogState = {
 	driverPositions: Map<DriverId, { cell: Cell; tick: Tick }>;
 	// From driver.went_offline until drivers.went_online; no trip event changes it.
 	offlineDrivers: Set<DriverId>;
+	// Riders in a trip.requested / a rider.declined_surge.
+	requestingRiders: Set<RiderId>;
+	decliningRiders: Set<RiderId>;
 };
 
 export function checkInvariants(
@@ -119,6 +126,8 @@ export function createInvariantChecker(grid: Grid): InvariantChecker {
 		activeTrips: new Map(),
 		driverPositions: new Map(),
 		offlineDrivers: new Set(),
+		requestingRiders: new Set(),
+		decliningRiders: new Set(),
 	};
 	return {
 		observe: (message) => observe(log, grid, violations, message),
@@ -159,7 +168,23 @@ function observe(
 				observeMove(log, grid, violations, message.tick, driverId, cell);
 			});
 			break;
-		case "trip.requested":
+		case "rider.declined_surge": {
+			const { tick, riderId } = message;
+			if (log.decliningRiders.has(riderId) || log.requestingRiders.has(riderId)) {
+				violations.push({ type: "declined_rider_requested", tick, riderId });
+			}
+			log.decliningRiders.add(riderId);
+			break;
+		}
+		case "trip.requested": {
+			const { tick, riderId } = message;
+			if (log.decliningRiders.has(riderId)) {
+				violations.push({ type: "declined_rider_requested", tick, riderId });
+			}
+			log.requestingRiders.add(riderId);
+			violations.push(...checkTripEvent(log, message));
+			break;
+		}
 		case "trip.offered":
 		case "trip.offer_declined":
 		case "trip.offer_expired":

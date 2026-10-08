@@ -11,6 +11,7 @@ import {
 	TripId,
 } from "../shared/messages.ts";
 import { Region } from "../shared/regions.ts";
+import { Surge } from "../shared/surge.ts";
 import { checkInvariants, createInvariantChecker } from "./invariants.ts";
 
 const grid: Grid = { width: 10, height: 10 };
@@ -496,6 +497,46 @@ describe("checkInvariants driver shifts", () => {
 				cell: cell(1, 0),
 			},
 		]);
+	});
+});
+
+// ADR 0054: a rider declining surge leaves without a trip.
+describe("checkInvariants surge declines", () => {
+	const r2 = RiderId.parse("r-2");
+
+	function declined(riderId: RiderId, at: number): Message {
+		return {
+			type: "rider.declined_surge",
+			tick: tick(at),
+			riderId,
+			pickup: cell(1, 0),
+			surge: Surge.parse(1.5),
+		};
+	}
+
+	test("a rider declining once while others request trips is clean", () => {
+		expect(checkInvariants([declined(r2, 1), requested(t1, 1)], grid)).toEqual(
+			[],
+		);
+	});
+
+	test("a declined rider requesting a trip is flagged", () => {
+		expect(checkInvariants([declined(r1, 1), requested(t1, 2)], grid)).toEqual(
+			[{ type: "declined_rider_requested", tick: tick(2), riderId: r1 }],
+		);
+	});
+
+	// Over NATS the two may arrive in either order.
+	test("a rider declining after requesting a trip is flagged", () => {
+		expect(checkInvariants([requested(t1, 1), declined(r1, 2)], grid)).toEqual(
+			[{ type: "declined_rider_requested", tick: tick(2), riderId: r1 }],
+		);
+	});
+
+	test("a rider declining twice is flagged", () => {
+		expect(checkInvariants([declined(r2, 1), declined(r2, 3)], grid)).toEqual(
+			[{ type: "declined_rider_requested", tick: tick(3), riderId: r2 }],
+		);
 	});
 });
 
