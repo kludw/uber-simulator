@@ -9,7 +9,7 @@ v1 was specified for 100 drivers and about 10 trip requests per minute ([spec](s
 Two measurements recur below:
 
 - **In process** (`bun run bench`): all brains in one Bun process on an in-memory bus. It measures the brains' work per tick, with no NATS or ClickHouse.
-- **Live** (`bun run loadtest`, [ADR 0037](adr/0037-end-to-end-load-test.md)): the whole distributed stack at real time (one tick per second) for 600 ticks, demand at the spec ratio (10 requests/min per 100 drivers). A run passes when settle p95 (last event of a tick minus that tick's `clock.ticked`) is at most 610 ms, at most 1% of ticks overrun, the persister's backlog stays bounded, it drains, and NATS reports no slow consumers. A size counts as the limit only when every run of it passes, at least two runs on two runners ([How to measure](performance.md#how-to-measure)).
+- **Live** (`bun run loadtest`, [ADR 0037](adr/0037-end-to-end-load-test.md)): the whole distributed stack at real time (one tick per second) for 600 ticks, demand at the spec ratio (10 requests/min per 100 drivers). A run passes when settle p95 (last event of a tick minus that tick's `clock.ticked`) is at most 610 ms, at most 1% of ticks overrun (an event of a tick arriving after the next tick's `clock.ticked`), the persister's backlog stays bounded, it drains, and NATS reports no slow consumers. A size counts as the limit only when every run of it passes, at least two runs on two runners ([How to measure](performance.md#how-to-measure)).
 
 All runs are on GitHub's `ubuntu-latest` runner. That detail turned out to matter more than expected (section 7).
 
@@ -66,7 +66,7 @@ The same milestone found the load test's own criterion was wrong. ADR 0037 judge
 
 Recording CPU per service showed the clock, which publishes one message per tick, using 81-100 CPU seconds per run: every service subscribed to `sim.>` and decoded all traffic, and that alone was 76-81% of dispatch's and each shard's CPU ([CPU time per service](performance-history.md#cpu-time-per-service)). Dispatch used 98.9% of what it received, the shards 0.3%, the riders 0.2% ([Service timing](performance-history.md#service-timing)).
 
-[ADR 0042](adr/0042-subscribe-to-taken-types.md) subscribes each service only to the types its brain takes. The clock's CPU fell from 76-114 s to 1.1-1.3 s per run, and settle p95 at 27.5k on the EPYC 7763 from 595.0-645.3 ms to 313.1-321.8 ms ([Subscriptions per service](performance-history.md#subscriptions-per-service)). Milestone 16: greedy and batched 32.5k, with the persister failing first again ([After milestone 16](performance-history.md#after-milestone-16)).
+[ADR 0042](adr/0042-subscribe-to-taken-types.md) subscribes each service only to the types its brain takes. The clock's CPU fell from 76-114 s to 1.1-1.3 s per run, and settle p95 at 27.5k from 595.0-645.3 ms (two EPYC 7763 runs) to 313.1-321.8 ms (an EPYC 9V74 and a 7763 run) ([Subscriptions per service](performance-history.md#subscriptions-per-service)). Milestone 16: greedy and batched 32.5k, with the persister failing first again ([After milestone 16](performance-history.md#after-milestone-16)).
 
 ## 4. A ClickHouse merge, and a smaller gain than projected
 
@@ -81,7 +81,7 @@ Measuring by message type answered why everything scaled with the fleet: `driver
 This was the largest single step. Milestone 18 reached greedy 200k (4 of 4 runs), up from 35k; events per tick at 200k were 1,988, against 35,336 at 35k, and the NATS server dropped from 0.55-0.57 cores to 0.07-0.11 ([After milestone 18](performance-history.md#after-milestone-18)). Batched reached 45k. Two side effects needed follow-ups:
 
 - **The backlog unit changed.** A 5,000-move message counted as one event, so the 3-tick bound shrank to about 3% of the fleet in messages, while the persister holds 1-2.5 ticks in flight by design. Batched 40k failed the bound while keeping up ([What one unit of backlog now is](performance-history.md#what-one-unit-of-backlog-now-is)). [ADR 0046](adr/0046-persister-pending-criterion.md) counts only messages not yet delivered.
-- **Batched dispatch reached 13 GiB.** At 100k-150k its peak RSS was 12,997-13,302 MiB: every batch tick built the whole queued × idle cost matrix, and at 200k ClickHouse, short of memory, rejected the persister's inserts and the stack failed. Filling one row at a time kept outcomes identical and cut dispatch's peak RSS about 60×, to 201.9-218.5 MiB ([Batched dispatch memory](performance-history.md#batched-dispatch-memory)).
+- **Batched dispatch reached 13 GiB.** At 100k-150k its peak RSS was 12,997-13,302 MiB: every batch tick built the whole queued × idle cost matrix, and at 200k the stack failed when ClickHouse rejected the persister's inserts for exceeding its memory limit; that limit was presumably what dispatch had left of the runner's memory (inferred, not verified). Filling one row at a time kept outcomes identical and cut dispatch's peak RSS about 60×, to 201.9-218.5 MiB ([Batched dispatch memory](performance-history.md#batched-dispatch-memory)).
 
 ## 6. Profiling dispatch, three cuts
 
@@ -106,14 +106,14 @@ xychart-beta
   bar [164.7, 117.4, 248.4, 70.7, 116.6, 73.8, 73.2, 71.3]
 ```
 
-Stacked bars, bottom to top: grey `clock.ticked` step, orange `drivers.moved` handle, blue `drivers.moved` decode (bar height = their sum; other message types, a few ms, left out). Each pair is the same fleet size on the same CPU model, one run each, dispatch's `messages_timed` over 600 ticks (wall time, so it includes waiting for a CPU):
+Stacked bars, bottom to top: grey `clock.ticked` step, orange `drivers.moved` handle, blue `drivers.moved` decode (bar height = their sum). Other message types are left out: 14.4-40.9 ms per tick, up to 19% of dispatch's total (450k after ADR 0052); the table gives the totals. Each pair is the same fleet size on the same CPU model, one run each, dispatch's `messages_timed` over 600 ticks (wall time, so it includes waiting for a CPU):
 
-| Pair | Before run | After run | Decode / handle / step, before → after (ms) | Source |
-| --- | --- | --- | --- | --- |
-| 200k, [ADR 0047](adr/0047-driver-moves-as-parallel-arrays.md) | [37496763902](https://github.com/kludw/uber-simulator/actions/runs/37496763902) | [37536239553](https://github.com/kludw/uber-simulator/actions/runs/37536239553) | 195.1 / 40.5 / 164.7 → 87.2 / 35.0 / 117.4 | [Compact driver moves](performance-history.md#compact-driver-moves) |
-| 300k, [ADR 0048](adr/0048-keep-idle-drivers-across-ticks.md) | [37539921316](https://github.com/kludw/uber-simulator/actions/runs/37539921316) | [37541548096](https://github.com/kludw/uber-simulator/actions/runs/37541548096) | 144.0 / 80.0 / 248.4 → 157.1 / 129.7 / 70.7 | [Idle drivers across ticks](performance-history.md#idle-drivers-across-ticks) |
-| 400k, [#244](https://github.com/kludw/uber-simulator/pull/244) | [37545410989](https://github.com/kludw/uber-simulator/actions/runs/37545410989) | [37584363114](https://github.com/kludw/uber-simulator/actions/runs/37584363114) | 197.6 / 154.1 / 116.6 → 145.7 / 133.7 / 73.8 | [Move handling cut](performance-history.md#move-handling-cut) |
-| 450k, [ADR 0052](adr/0052-driver-indexes-in-moves.md) | [37596576870](https://github.com/kludw/uber-simulator/actions/runs/37596576870) | [37691796420](https://github.com/kludw/uber-simulator/actions/runs/37691796420) | 155.1 / 139.9 / 73.2 → 63.8 / 40.5 / 71.3 | [After milestone 20](performance-history.md#after-milestone-20), [Dispatch drivers by index](performance-history.md#dispatch-drivers-by-index) |
+| Pair | Before run | After run | Decode / handle / step, before → after (ms) | All types, before → after (ms) | Source |
+| --- | --- | --- | --- | --- | --- |
+| 200k, [ADR 0047](adr/0047-driver-moves-as-parallel-arrays.md) | [37496763902](https://github.com/kludw/uber-simulator/actions/runs/37496763902) | [37536239553](https://github.com/kludw/uber-simulator/actions/runs/37536239553) | 195.1 / 40.5 / 164.7 → 87.2 / 35.0 / 117.4 | 416.1 → 254.0 | [Compact driver moves](performance-history.md#compact-driver-moves) |
+| 300k, [ADR 0048](adr/0048-keep-idle-drivers-across-ticks.md) | [37539921316](https://github.com/kludw/uber-simulator/actions/runs/37539921316) | [37541548096](https://github.com/kludw/uber-simulator/actions/runs/37541548096) | 144.0 / 80.0 / 248.4 → 157.1 / 129.7 / 70.7 | 497.1 → 382.9 | [Idle drivers across ticks](performance-history.md#idle-drivers-across-ticks) |
+| 400k, [#244](https://github.com/kludw/uber-simulator/pull/244) | [37545410989](https://github.com/kludw/uber-simulator/actions/runs/37545410989) | [37584363114](https://github.com/kludw/uber-simulator/actions/runs/37584363114) | 197.6 / 154.1 / 116.6 → 145.7 / 133.7 / 73.8 | 504.6 → 386.6 | [Move handling cut](performance-history.md#move-handling-cut) |
+| 450k, [ADR 0052](adr/0052-driver-indexes-in-moves.md) | [37596576870](https://github.com/kludw/uber-simulator/actions/runs/37596576870) | [37691796420](https://github.com/kludw/uber-simulator/actions/runs/37691796420) | 155.1 / 139.9 / 73.2 → 63.8 / 40.5 / 71.3 | 403.9 → 216.5 | [After milestone 20](performance-history.md#after-milestone-20), [Dispatch drivers by index](performance-history.md#dispatch-drivers-by-index) |
 
 The 450k "before" run had demand 0.8% below the spec ratio ([Request draw cap](performance-history.md#request-draw-cap)).
 
@@ -134,9 +134,9 @@ Batched did gain, because its matching cost falls faster than linearly with regi
 
 Batched matching is exact: as many pairs as possible at the least total pickup distance ([ADR 0030](adr/0030-batched-matching.md)). At 50k a batch had 412 queued trips against 32k idle drivers on average, and 64-74% of dispatch's time live went to the solver scanning every idle driver on every augmenting-path step ([Cheaper batched matching](performance-history.md#cheaper-batched-matching)).
 
-The paths are short (2-4 steps per trip), and a driver no path has reached still has dual potential 0, so the cheapest such driver from a trip is simply its nearest untouched allowed idle driver: one query to the existing grid index instead of a scan ([ADR 0051](adr/0051-search-untouched-drivers-in-batched-matching.md)). It stays exact: the same pair count and total distance as the dense solver on 3,000 random instances and on every batch of the in-process comparison runs. On the same CPU model a batch got 41× faster at 50k and 25× at 100k. The PR review ([#260](https://github.com/kludw/uber-simulator/pull/260)) ran mutation checks and its own comparison against the dense solver, and flagged that the new solver assumes every cell is on the grid, now documented.
+The solver adds one trip at a time along an augmenting path: the cheapest chain of reassignments that frees a driver for it, priced with a per-driver adjustment (its dual potential) that starts at 0 and changes only once a path reaches that driver. The paths are short (2-4 steps per trip), and a driver no path has reached still has dual potential 0, so the cheapest such driver from a trip is simply its nearest untouched allowed idle driver: one query to the existing grid index instead of a scan ([ADR 0051](adr/0051-search-untouched-drivers-in-batched-matching.md)). It stays exact: the same pair count and total distance as the dense solver on 3,000 random instances and on every batch of the in-process comparison runs. On the same CPU model a batch got 41× faster at 50k and 25× at 100k. The PR review ([#260](https://github.com/kludw/uber-simulator/pull/260)) ran mutation checks and its own comparison against the dense solver, and flagged that the new solver assumes every cell is on the grid, now documented.
 
-Milestone 22: batched `1x1` 150k, `2x1` 225k, `2x2` 250k, three times the previous limits ([After milestone 22](performance-history.md#after-milestone-22)).
+Milestone 22: batched `1x1` 150k, `2x1` 225k, `2x2` 250k, two and a half to three times the previous limits ([After milestone 22](performance-history.md#after-milestone-22)).
 
 ## 9. Indexes instead of IDs
 
