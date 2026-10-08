@@ -320,7 +320,7 @@ With the local NATS server and `bun run dev` running (separate terminals), serve
 bun run ui
 ```
 
-Open http://localhost:3000. The canvas shows the city: drivers as dots colored by state, waiting riders as hollow squares, active trips as pickup -> dropoff lines. The side panel shows the tick, counters, the legend, and the connection status: connecting, then what is watched (`live`, or `replay <run id>` with `?replay=`, see [Replay a run](#replay-a-run)), or disconnected. The page joins mid-run and reconnects on its own if NATS restarts.
+Open http://localhost:3000. The canvas shows the city: up to 10,000 drivers, drivers as dots colored by state, waiting riders as hollow squares, active trips as pickup -> dropoff lines; above 10,000, a heatmap of 5 × 5-cell tiles updated once per tick: brighter where more drivers are, grey to green by the share of them busy, red where riders wait ([ADR 0053](docs/adr/0053-scale-the-ui-in-the-browser.md)). The side panel shows the tick, which of the two is drawn, counters, the legend, and the connection status: connecting, then what is watched (`live`, or `replay <run id>` with `?replay=`, see [Replay a run](#replay-a-run)), or disconnected. The page joins mid-run and reconnects on its own if NATS restarts.
 
 ![Live city at SPEED=10: drivers, waiting riders, trip lines, side panel](docs/images/ui-live.jpg)
 

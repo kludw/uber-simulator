@@ -34,7 +34,7 @@ test("a driver ID in driverIdAt's format names its index", () => {
 	expect(indexes).toEqual([7, 399_999, 0].map(index));
 });
 
-test.each(["d-", "d-x1", "driver-1", "D-1", "d-1a", "1"])(
+test.each(["d-", "d-x1", "driver-1", "D-1", "d-1a", "1", "d-9007199254740993"])(
 	"driver ID %p names no index",
 	(id) => {
 		expect(driverIndexOf(DriverId.parse(id))).toBeNull();

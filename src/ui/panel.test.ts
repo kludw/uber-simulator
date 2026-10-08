@@ -1,9 +1,21 @@
 import { describe, expect, test } from "bun:test";
+import { DriverIndex } from "../shared/fleet.ts";
 import { Cell } from "../shared/grid.ts";
-import { DriverId, Tick, TripId } from "../shared/messages.ts";
+import {
+	DriverId,
+	driversWentOnline,
+	Tick,
+	TripId,
+} from "../shared/messages.ts";
+import { Region } from "../shared/regions.ts";
 import { panelRows } from "./panel.ts";
-import { activeTripColor, driverColors, waitingRiderColor } from "./render.ts";
-import { emptyView, type View } from "./view.ts";
+import {
+	activeTripColor,
+	driverColors,
+	heatmapColors,
+	waitingRiderColor,
+} from "./render.ts";
+import { applyEvent, emptyView, type View } from "./view.ts";
 
 function labelsAndValues(rows: ReturnType<typeof panelRows>): string[][] {
 	return rows.map((row) => [row.label, row.value]);
@@ -13,6 +25,7 @@ describe("panelRows", () => {
 	test("shows zero counters and no tick or mean before any event", () => {
 		expect(labelsAndValues(panelRows(emptyView()))).toEqual([
 			["Tick", "-"],
+			["Drawn", "dots"],
 			["Idle", "0"],
 			["En route", "0"],
 			["At pickup", "0"],
@@ -59,6 +72,7 @@ describe("panelRows", () => {
 		};
 		expect(labelsAndValues(panelRows(view))).toEqual([
 			["Tick", "42"],
+			["Drawn", "dots"],
 			["Idle", "5"],
 			["En route", "4"],
 			["At pickup", "3"],
@@ -80,6 +94,7 @@ describe("panelRows", () => {
 		]);
 		expect(swatches).toEqual([
 			["Tick", null],
+			["Drawn", null],
 			["Idle", { shape: "dot", color: driverColors.idle }],
 			["En route", { shape: "dot", color: driverColors.en_route }],
 			["At pickup", { shape: "dot", color: driverColors.at_pickup }],
@@ -91,5 +106,42 @@ describe("panelRows", () => {
 			["Trips cancelled", null],
 			["Mean ticks to pickup", null],
 		]);
+	});
+
+	describe("above 10,000 drivers", () => {
+		const view = emptyView();
+		applyEvent(
+			view,
+			driversWentOnline(Tick.parse(1), Region.parse(0), 10_001, [
+				{ driverIndex: DriverIndex.parse(0), cell: Cell.parse({ x: 0, y: 0 }) },
+			]),
+		);
+
+		test("says the heatmap is drawn", () => {
+			const drawn = panelRows(view).find((row) => row.label === "Drawn");
+			expect(drawn?.value).toBe("heatmap, 5 × 5-cell tiles");
+		});
+
+		// Tiles colored idle to busy; no trip lines.
+		test("marks drivers and waiting riders as the heatmap's tile colors", () => {
+			const swatches = panelRows(view).map((row) => [row.label, row.swatch]);
+			expect(swatches).toEqual([
+				["Tick", null],
+				["Drawn", null],
+				["Idle", { shape: "tile", color: heatmapColors.idle }],
+				["En route", { shape: "tile", color: heatmapColors.busy }],
+				["At pickup", { shape: "tile", color: heatmapColors.busy }],
+				["On trip", { shape: "tile", color: heatmapColors.busy }],
+				["At dropoff", { shape: "tile", color: heatmapColors.busy }],
+				[
+					"Waiting riders",
+					{ shape: "tile", color: heatmapColors.waitingRiders },
+				],
+				["Active trips", null],
+				["Trips completed", null],
+				["Trips cancelled", null],
+				["Mean ticks to pickup", null],
+			]);
+		});
 	});
 });

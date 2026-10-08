@@ -1,6 +1,6 @@
 # UI at scale
 
-How the browser UI ([ADR 0020](adr/0020-browser-ui-canvas-nats-websocket.md)) and its feed behave at 10k, 100k and 400k drivers, how that was measured, and what the UI does about it ([ADR 0053](adr/0053-scale-the-ui-in-the-browser.md)). Last measured 2026-10-08 on master `1ab377c`, the unmerged experiment branch `272-exp-ui-scale`, and the view by index (#273).
+How the browser UI ([ADR 0020](adr/0020-browser-ui-canvas-nats-websocket.md)) and its feed behave at 10k, 100k and 400k drivers, how that was measured, and what the UI does about it ([ADR 0053](adr/0053-scale-the-ui-in-the-browser.md)). Last measured 2026-10-08 on master `1ab377c`, the unmerged experiment branch `272-exp-ui-scale`, the view by index (#273), and the heatmap (#285).
 
 ## Method
 
@@ -59,10 +59,38 @@ ADR 0053 slice 1: the view keeps drivers in typed arrays by driver index and upd
 | Fleet | Canvas | Frames / s | Frame p95 (ms) | Draw p50 (ms) | Decode + apply (ms / s) | Applied of the feed | JS heap |
 | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
 | 10k | dots | 60 | 16.7 | 1.3-1.4 | 0.9 | all (78-85 msg/s, 129-132 KB/s) | 5.0-9.9 MB at 35 s, 6.4-8.4 MB at 80 s: flat |
-| 400k | idle | 60 | 16.8 | 0 | 31.6-31.8 | all (3,480 msg/s, 5,976-6,005 KB/s) | 8.4-19.6 MB at 35 s, 10.6-20.8 MB at 60 s |
+| 400k | idle | 60 | 16.8 | 0 | 31.6-31.8 | all (3,480 msg/s, 5,976-6,005 KB/s) | 8.4-19.6 MB at 35 s, 10.6-20.8 MB at 60 s (not the flat-heap target: that is slice 2's, [Heatmap](#heatmap-285)) |
 
 - **Target met**: decode + apply at 400k is 31.6-31.8 ms per wall second (target about 35, spike C 34.2); at 10k it fell from 26.6 to 0.9 ms/s, since a `drivers.moved` message no longer copies the drivers map.
 - Two runs per row (warm-up 15 s and 40-60 s, 20 s windows); the heap ranges are `performance.memory` and the protocol's `JSHeapUsedSize`, read at the end of each window.
+
+## Heatmap ([#285](https://github.com/kludw/uber-simulator/issues/285))
+
+ADR 0053 slice 2: above 10,000 drivers the canvas draws the 5 × 5-cell tile heatmap, recomputed once per tick, instead of dots, trip lines and motion; the side panel says which is drawn. Measured 2026-10-08 on branch `285-ui-heatmap` with the method above, the page instrumented locally as for #273 (decode + apply time per message, draw time per frame, bytes applied); one run per row, 20 s window after 15 s of warm-up. Host load average 2.6-11 (other work on the machine).
+
+| Fleet | Demand | Canvas | Frames / s | Frame p95 / max (ms) | Draw p50 / p95 (ms) | Decode + apply (ms / s) | Applied of the feed (page / feed KB/s) | Main thread busy |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | ---: |
+| 10k | uniform | dots | 60 | 16.7 / 16.8 | 1.3 / 1.4 | 1.0 | all (85.5 msg/s, 130.8 KB/s) | 0.65 |
+| 100k | uniform | heatmap | 60 | 16.7 / 16.8 | 0.1 / 0.2 | 9.2 | all (1,408 / 1,399) | 0.14 |
+| 100k | `city, shifts` | heatmap | 60 | 16.7 / 16.8 | 0 / 0.2 | 7.8 | all (1,135 / 1,127) | 0.14 |
+| 400k | uniform | heatmap | 60 | 16.7 / 16.8 | 0 / 0.2 | 32.3-32.9 | all (5,960-6,008 / 5,925) | 0.18-0.19 |
+| 400k | uniform, page joined at tick 614 | heatmap | 60 | 16.7 / 16.8 | 0 / 0.2 | 35.7 | all (6,111 / 6,114) | 0.19 |
+| 400k | `city, shifts` | heatmap | 60 | 16.7 / 16.8 | 0 / 0.2 | 27.2-27.3 | all (4,795 / 4,761) | 0.16-0.18 |
+
+- **Target met** (ADR 0053 Decision 4): every message applied, 60 frames per second, frame p95 16.7 ms (target at most 33), at 10k, 100k and 400k. The page's bytes per second match the feed's within measuring noise (they are counted over different 20 s windows). The frame that recomputes the heatmap (once per tick) never exceeded 16.8 ms.
+- **Heap flat**: JS heap after a forced GC (`HeapProfiler.collectGarbage`, then `performance.memory` / the protocol's `JSHeapUsedSize`), one page open 16 minutes at 400k uniform, joined at tick 54: it grows with the view's active trips while the run fills up, then stays flat once they do.
+
+  | Page open | Tick | Active trips in the view | Heap after GC (MB) |
+  | ---: | ---: | ---: | ---: |
+  | 60 s | 114 | 39,140 | 15.4 / 8.2 |
+  | 300 s | 354 | 166,648 | 33.3 / 26.2 |
+  | 540 s | 595 | 219,233 | 43.6 / 35.4 |
+  | 720 s | 775 | 227,089 | 44.0 / 36.3 |
+  | 960 s | 1,015 | 226,563 | 43.6 / 36.4 |
+
+  The growth is the active-trip map, about 140 bytes per trip, not a leak: a 400k uniform run holds about 227k active trips from tick 700 on (trips average about 350 ticks across the grid), far more than the about 18k seen in the first 80 ticks (Today's UI). Dots would draw a line per active trip; the heatmap draws none.
+- **Which tick it shows**: the image is remade on the first frame after a new `clock.ticked`, before most of that tick's `drivers.moved` arrive, so it is mostly tick t-1's end state, with some of tick t's moves; a driver is at most one cell off, invisible at tile size.
+- **What it shows**: with `city` demand at 100k, downtown and the airport stand out as red tiles of waiting riders; idle drivers gather toward the grid's middle (likely because wander targets are uniform, so paths cross the center more often; not measured), so the edges are darker.
 
 ## Decision
 

@@ -1,8 +1,9 @@
-import type { Grid } from "../shared/grid.ts";
+import type { Cell, Grid } from "../shared/grid.ts";
 import type { Tick } from "../shared/messages.ts";
 import {
 	type DriverView,
 	emptyView,
+	fleetSizeOf,
 	forEachDriver,
 	type View,
 } from "./view.ts";
@@ -27,6 +28,98 @@ export const waitingRiderColor = "#ff7b72";
 export const activeTripColor = "rgba(88, 166, 255, 0.35)";
 const driverRadius = 3;
 const waitingRiderSize = 5;
+
+// Above this many drivers, dots are too many to draw each frame and to read
+// (ADR 0053): chosen, not found; dots were measured at 10k and 100k only.
+const dotsUpTo = 10_000;
+
+export type DrawMode = "dots" | "heatmap";
+
+// By the fleet size of the latest drivers.* message (ADR 0053).
+export function drawModeOf(view: View): DrawMode {
+	return fleetSizeOf(view) > dotsUpTo ? "heatmap" : "dots";
+}
+
+// A tile's drivers are colored from idle to busy (any state but idle) by
+// their busy share; waiting riders turn it red.
+export const heatmapColors = {
+	idle: driverColors.idle,
+	busy: driverColors.on_trip,
+	waitingRiders: waitingRiderColor,
+};
+
+// Heatmap tiles are square, this many cells a side (ADR 0053).
+const cellsPerTile = 5;
+const ridersForFullRed = 3;
+
+// One pixel per heatmap tile, row-major, 4 bytes (RGBA) each: an ImageData's
+// data, drawn scaled up to the city.
+type Heatmap = {
+	columns: number;
+	rows: number;
+	rgba: Uint8ClampedArray<ArrayBuffer>;
+};
+
+export function heatmapOf(view: View, grid: Grid): Heatmap {
+	const columns = Math.ceil(grid.width / cellsPerTile);
+	const rows = Math.ceil(grid.height / cellsPerTile);
+	const tiles = columns * rows;
+	const tileOf = (cell: Cell) =>
+		Math.floor(cell.y / cellsPerTile) * columns +
+		Math.floor(cell.x / cellsPerTile);
+	const drivers = new Uint32Array(tiles);
+	const busy = new Uint32Array(tiles);
+	const waiting = new Uint32Array(tiles);
+	let shown = 0;
+	forEachDriver(view, (_index, driver) => {
+		const tile = tileOf(driver.cell);
+		drivers[tile] = (drivers[tile] ?? 0) + 1;
+		if (driver.state !== "idle") busy[tile] = (busy[tile] ?? 0) + 1;
+		shown++;
+	});
+	for (const rider of view.waitingRiders.values()) {
+		const tile = tileOf(rider.pickup);
+		waiting[tile] = (waiting[tile] ?? 0) + 1;
+	}
+	// A tile at twice the mean is at full brightness.
+	const fullAt = (2 * shown) / tiles;
+	const city = rgbOf(cityColor);
+	const idle = rgbOf(heatmapColors.idle);
+	const busyColor = rgbOf(heatmapColors.busy);
+	const red = rgbOf(heatmapColors.waitingRiders);
+	const rgba = new Uint8ClampedArray(tiles * 4);
+	for (let tile = 0; tile < tiles; tile++) {
+		const inTile = drivers[tile] ?? 0;
+		const lit =
+			inTile === 0
+				? city
+				: mix(
+						city,
+						mix(idle, busyColor, (busy[tile] ?? 0) / inTile),
+						Math.min(1, inTile / fullAt),
+					);
+		const redShare = Math.min(1, (waiting[tile] ?? 0) / ridersForFullRed);
+		rgba.set([...mix(lit, red, redShare), 255], tile * 4);
+	}
+	return { columns, rows, rgba };
+}
+
+type Rgb = [number, number, number];
+
+// "#rrggbb" -> [r, g, b].
+function rgbOf(hex: string): Rgb {
+	const value = Number.parseInt(hex.slice(1), 16);
+	return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
+}
+
+// share 0: from; 1: to.
+function mix(from: Rgb, to: Rgb, share: number): Rgb {
+	return [
+		Math.round(from[0] + (to[0] - from[0]) * share),
+		Math.round(from[1] + (to[1] - from[1]) * share),
+		Math.round(from[2] + (to[2] - from[2]) * share),
+	];
+}
 
 // Scales the grid uniformly to fit the canvas and centers it (letterboxed),
 // so cells stay square whatever the canvas shape.
@@ -94,8 +187,9 @@ export function tickFraction(timing: TickTiming, now: number): number {
 	return Math.min(1, (now - timing.arrivedAt) / timing.duration);
 }
 
-// Draws the view on every animation frame. Call show() after each event
-// applied to it (the view is updated in place).
+// Draws the view on every animation frame: dots, or above the threshold the
+// heatmap, recomputed once per tick rather than per frame (ADR 0053). Call
+// show() after each event applied to the view (it is updated in place).
 export function startRenderer(
 	canvas: HTMLCanvasElement,
 	grid: Grid,
@@ -104,9 +198,38 @@ export function startRenderer(
 	if (context === null) throw new Error("canvas 2D context unavailable");
 	let view = emptyView();
 	let timing = noTickTiming;
+	// The heatmap image, one pixel per tile, and the tick and fleet size it
+	// shows; null while dots are drawn. Remade on the first frame after a new
+	// clock.ticked, before most of that tick's moves arrive: mostly tick t-1's
+	// end state, at most a cell off per driver, invisible at tile size. A new
+	// fleet size (the view reset, tick kept) remakes it too.
+	let heatmap: {
+		image: OffscreenCanvas;
+		tick: Tick | null;
+		fleetSize: number;
+	} | null = null;
 
 	const frame = (now: number) => {
-		draw(context, view, grid, tickFraction(timing, now));
+		const size = fitToDisplay(context);
+		drawCity(context, grid, size);
+		if (drawModeOf(view) === "dots") {
+			heatmap = null;
+			drawDots(context, view, grid, size, tickFraction(timing, now));
+		} else {
+			const fleetSize = fleetSizeOf(view);
+			if (
+				heatmap === null ||
+				heatmap.tick !== view.tick ||
+				heatmap.fleetSize !== fleetSize
+			) {
+				heatmap = {
+					image: heatmapImage(view, grid),
+					tick: view.tick,
+					fleetSize,
+				};
+			}
+			drawHeatmap(context, heatmap.image, grid, size);
+		}
 		requestAnimationFrame(frame);
 	};
 	requestAnimationFrame(frame);
@@ -121,29 +244,36 @@ export function startRenderer(
 	};
 }
 
-function draw(
+function drawCity(
+	context: CanvasRenderingContext2D,
+	grid: Grid,
+	size: Size,
+): void {
+	context.fillStyle = backgroundColor;
+	context.fillRect(0, 0, size.width, size.height);
+	const topLeft = cellToPixel({ x: -0.5, y: -0.5 }, grid, size);
+	const bottomRight = cellToPixel(
+		{ x: grid.width - 0.5, y: grid.height - 0.5 },
+		grid,
+		size,
+	);
+	context.fillStyle = cityColor;
+	context.fillRect(
+		topLeft.x,
+		topLeft.y,
+		bottomRight.x - topLeft.x,
+		bottomRight.y - topLeft.y,
+	);
+}
+
+function drawDots(
 	context: CanvasRenderingContext2D,
 	view: View,
 	grid: Grid,
+	size: Size,
 	fraction: number,
 ): void {
-	const size = fitToDisplay(context);
 	const toPixel = (cell: Point) => cellToPixel(cell, grid, size);
-
-	context.fillStyle = backgroundColor;
-	context.fillRect(0, 0, size.width, size.height);
-	const cityTopLeft = toPixel({ x: -0.5, y: -0.5 });
-	const cityBottomRight = toPixel({
-		x: grid.width - 0.5,
-		y: grid.height - 0.5,
-	});
-	context.fillStyle = cityColor;
-	context.fillRect(
-		cityTopLeft.x,
-		cityTopLeft.y,
-		cityBottomRight.x - cityTopLeft.x,
-		cityBottomRight.y - cityTopLeft.y,
-	);
 
 	context.strokeStyle = activeTripColor;
 	context.lineWidth = 1;
@@ -176,6 +306,42 @@ function draw(
 		context.arc(position.x, position.y, driverRadius, 0, 2 * Math.PI);
 		context.fill();
 	});
+}
+
+function heatmapImage(view: View, grid: Grid): OffscreenCanvas {
+	const { columns, rows, rgba } = heatmapOf(view, grid);
+	const image = new OffscreenCanvas(columns, rows);
+	const imageContext = image.getContext("2d");
+	if (imageContext === null)
+		throw new Error("offscreen 2D context unavailable");
+	imageContext.putImageData(new ImageData(rgba, columns, rows), 0, 0);
+	return image;
+}
+
+// One image pixel per tile, scaled up unsmoothed so tiles keep sharp edges.
+function drawHeatmap(
+	context: CanvasRenderingContext2D,
+	image: OffscreenCanvas,
+	grid: Grid,
+	size: Size,
+): void {
+	const topLeft = cellToPixel({ x: -0.5, y: -0.5 }, grid, size);
+	const bottomRight = cellToPixel(
+		{
+			x: image.width * cellsPerTile - 0.5,
+			y: image.height * cellsPerTile - 0.5,
+		},
+		grid,
+		size,
+	);
+	context.imageSmoothingEnabled = false;
+	context.drawImage(
+		image,
+		topLeft.x,
+		topLeft.y,
+		bottomRight.x - topLeft.x,
+		bottomRight.y - topLeft.y,
+	);
 }
 
 // Sizes the backing store to the canvas's CSS size times devicePixelRatio, so
