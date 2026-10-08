@@ -513,6 +513,48 @@ describe.skipIf(!natsUrl || !clickhouseConfig)("persister", () => {
 		expect(held.batchSizes).toEqual([10_000, 2000]);
 	}, 30_000);
 
+	test("stopping waits while the batch fetched in the background is inserted", async () => {
+		const source = testSource();
+		const nc = await natsConnection();
+		await backlog(nc, source, 12_000, "run-k");
+		// The first insert waits for the stop, the second for the check below.
+		const firstReleased = Promise.withResolvers<void>();
+		const secondStarted = Promise.withResolvers<void>();
+		const secondReleased = Promise.withResolvers<void>();
+		let inserts = 0;
+		const heldTwice: Pick<ClickHouse, "insertEvents" | "command"> = {
+			command: clickhouse.command,
+			async insertEvents() {
+				inserts += 1;
+				if (inserts === 1) await firstReleased.promise;
+				if (inserts === 2) {
+					secondStarted.resolve();
+					await secondReleased.promise;
+				}
+				return { ok: true, value: undefined };
+			},
+		};
+		const persister = await succeeded(
+			startPersister({
+				nats: nc,
+				clickhouse: heldTwice,
+				source,
+				log: () => {},
+			}),
+		);
+
+		await ackPendingReaches(nc, source, 12_000);
+		persister.stop();
+		firstReleased.resolve();
+		await secondStarted.promise;
+		await Bun.sleep(100);
+		const whileInserting = Bun.peek.status(persister.stopped);
+		secondReleased.resolve();
+		await persister.stopped;
+
+		expect(whileInserting).toBe("pending");
+	}, 30_000);
+
 	// A connection on which fetches get no heartbeats and no end-of-batch
 	// status, so a fetch that hasn't filled its batch fails with "heartbeats
 	// missed" after about 1 s, keeping whatever it received: the failure a
