@@ -36,7 +36,18 @@ type TripInfo = {
 };
 const trips = new Map<TripId, TripInfo>();
 const active = new Map<DriverId, TripId[]>();
-const aboard = new Map<DriverId, { count: number; since: Tick }>();
+const aboard = new Map<DriverId, { count: number; since: number }>();
+// Adds the driver's load since its last change, then applies delta.
+function changeLoad(driverId: DriverId, tick: number, delta: number): void {
+	const load = aboard.get(driverId) ?? { count: 0, since: tick };
+	if (load.count > 0) {
+		occupiedTicks += tick - load.since;
+		riderTicks += load.count * (tick - load.since);
+	}
+	load.count += delta;
+	load.since = tick;
+	aboard.set(driverId, load);
+}
 let requested = 0;
 let pooledRequested = 0;
 let completed = 0;
@@ -100,13 +111,7 @@ const result = runInProcess(runConfig, {
 				trip.pickedUpAt = message.tick;
 				pickups++;
 				waitTicks += message.tick - trip.requestedAt;
-				const load = aboard.get(message.driverId) ?? {
-					count: 0,
-					since: message.tick,
-				};
-				if (load.count === 0) load.since = message.tick;
-				load.count++;
-				aboard.set(message.driverId, load);
+				changeLoad(message.driverId, message.tick, 1);
 				break;
 			}
 			case "trip.completed": {
@@ -119,7 +124,6 @@ const result = runInProcess(runConfig, {
 					const direct = distance(trip.pickup, trip.dropoff);
 					rides++;
 					rideTicks += ride;
-					riderTicks += ride;
 					detourSum += ride / direct - 1;
 					if (trip.shared) {
 						sharedRides++;
@@ -128,11 +132,7 @@ const result = runInProcess(runConfig, {
 					}
 				}
 				if (trip.shared) sharedCompleted++;
-				const load = aboard.get(message.driverId);
-				if (load !== undefined) {
-					load.count--;
-					if (load.count === 0) occupiedTicks += message.tick - load.since;
-				}
+				changeLoad(message.driverId, message.tick, -1);
 				endTrip(message.driverId, message.tripId);
 				break;
 			}
@@ -154,6 +154,7 @@ function endTrip(driverId: DriverId, tripId: TripId): void {
 	trips.delete(tripId);
 }
 
+for (const driverId of aboard.keys()) changeLoad(driverId, config.ticks, 0);
 const round = (n: number, digits = 1) => Number(n.toFixed(digits));
 console.log(
 	JSON.stringify({
