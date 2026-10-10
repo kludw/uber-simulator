@@ -97,6 +97,20 @@ Living document. New concept in code = add term here in same change. Meaning shi
 - **Chase target**: a uniform cell of the surge area nearest the driver's zone within chase reach (ties: higher surge, lower region, lower zone), drawn from child stream `chase:<tick>`; replaces the random wander target while chasing.
 - **Declined rider requested** (`declined_rider_requested`): the violation of a rider in both a `rider.declined_surge` and a `trip.requested`, or in two declines.
 
+## Pooling (0056)
+
+Decided, not yet in code (lands with #328, #329). Off by default (`--pooling on|off` for `bun run sim` and `bun run bench`, `POOLING` for `bun run dev`, `SimConfig.pooling`); with pooling off no trip is pooled and no message carries `pooled`.
+
+- **Pooling**: riders sharing one driver.
+- **Pooled trip**: a trip whose rider opted in: `pooled: true` on its `request_trip`, `trip.requested` and `offer`s. **Pool share**: the probability a spawned rider opts in, 0.5, drawn from child stream `pool:<tick>` (riders only).
+- **Join**: dispatch offering a queued pooled trip to the driver of a pooled trip that holds that driver alone (offered, matched or picked up), its **partner**, in the same region, whose driver dispatch holds online. Greedy: before the nearest idle driver; batched: a pass before and after batched matching.
+- **Capacity**: two trips per driver, a pending offer included.
+- **Detour limit**: each rider's ride, in ticks, at most 1.5 × its direct distance: the partner's ticks since its `trip.picked_up` plus its remaining route from its driver's cell (dispatch's view), the joining rider's route from its pickup. Holds within 2 ticks per join (dispatch's view is a tick old).
+- **Join ETA**: Manhattan distance from the partner's driver (dispatch's view) via the partner's pickup, if still ahead, to the joining pickup; at most 120 ticks. Among partners: least join ETA, ties to the earlier requested.
+- **Stop**: a pickup or dropoff of one of a driver's trips. A busy driver keeps its remaining stops in order: one trip, pickup then dropoff; a pool, the partner's pickup (if still ahead), the joining pickup, then the dropoffs in the order with the shorter remaining route, ties to the partner's first. Driver states follow the current stop (`en_route` / `at_pickup` for a pickup, `on_trip` / `at_dropoff` for a dropoff); idle when none is left.
+- **Shared trip**: a completed trip that had another trip on its driver while it was active.
+- **Pooled fare**: a pooled trip's fare, `round((250 + 2 × distance) × surge × 0.75)`, fixed at request whether or not anyone joins.
+
 ## Events
 
 1. Named `<entity>.<past-tense-verb>`:
@@ -113,4 +127,4 @@ Living document. New concept in code = add term here in same change. Meaning shi
 
 ## Not in scope yet
 
-Ratings, real roads/routing, multi-rider pooling. Don't model until asked.
+Ratings, real roads/routing, more than two riders per driver. Don't model until asked.
