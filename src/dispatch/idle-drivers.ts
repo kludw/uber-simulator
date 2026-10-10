@@ -416,3 +416,9 @@ function nearestBeyond(pickup: Cell, size: number, ring: number): number {
 		(row + ring) * size - pickup.y,
 	);
 }
+
+// SPIKE (#327): a known driver's last reported cell.
+export function driverCellOf(idle: IdleDrivers, driverId: DriverId): Cell | undefined {
+	const driver = idle[internals].byId.get(driverId);
+	return driver === undefined ? undefined : cellAt(driver.x, driver.y);
+}

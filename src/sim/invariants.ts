@@ -1,3 +1,4 @@
+import { spikePool } from "../shared/pool.ts";
 import { type Cell, cellIn, distance, type Grid } from "../shared/grid.ts";
 import type {
 	DriverId,
@@ -91,7 +92,7 @@ type LogState = {
 	trips: Map<TripId, TripView>;
 	offeredDrivers: Map<TripId, Set<DriverId>>;
 	// Driver -> its matched or picked-up trip.
-	activeTrips: Map<DriverId, TripId>;
+	activeTrips: Map<DriverId, TripId[]>;
 	// Last reported position and the tick it was reported at.
 	driverPositions: Map<DriverId, { cell: Cell; tick: Tick }>;
 	// From driver.went_offline until drivers.went_online; no trip event changes it.
@@ -150,7 +151,7 @@ function observe(
 			});
 			break;
 		case "driver.went_offline": {
-			const tripId = log.activeTrips.get(message.driverId);
+			const tripId = log.activeTrips.get(message.driverId)?.[0];
 			if (tripId !== undefined) {
 				violations.push({
 					type: "driver_went_offline_with_active_trip",
@@ -322,8 +323,10 @@ function checkTripEvent(log: LogState, event: TripEvent): Violation[] {
 				driverId: next.driverId,
 			});
 		}
-		const activeTripId = log.activeTrips.get(next.driverId);
-		if (activeTripId !== undefined) {
+		const active = log.activeTrips.get(next.driverId) ?? [];
+		const activeTripId = active[0];
+		// SPIKE (#327): capacity 2 with pooling on.
+		if (activeTripId !== undefined && active.length >= (spikePool.on ? 2 : 1)) {
 			violations.push({
 				type: "driver_has_two_active_trips",
 				tick: event.tick,
@@ -332,15 +335,19 @@ function checkTripEvent(log: LogState, event: TripEvent): Violation[] {
 				tripId: event.tripId,
 			});
 		}
-		log.activeTrips.set(next.driverId, event.tripId);
+		log.activeTrips.set(next.driverId, [...active, event.tripId]);
 	}
 	const ended = next.state === "completed" || next.state === "cancelled";
 	if (
 		ended &&
 		(trip?.state === "matched" || trip?.state === "picked_up") &&
-		log.activeTrips.get(trip.driverId) === event.tripId
+		log.activeTrips.get(trip.driverId)?.includes(event.tripId)
 	) {
-		log.activeTrips.delete(trip.driverId);
+		const left = (log.activeTrips.get(trip.driverId) ?? []).filter(
+			(id) => id !== event.tripId,
+		);
+		if (left.length === 0) log.activeTrips.delete(trip.driverId);
+		else log.activeTrips.set(trip.driverId, left);
 	}
 	return violations;
 }

@@ -272,6 +272,7 @@ export const Offer = z.object({
 	driverId: DriverId,
 	pickup: Cell,
 	dropoff: Cell,
+	pooled: z.literal(true).optional(),
 });
 export type Offer = z.infer<typeof Offer>;
 
@@ -305,6 +306,7 @@ export const RequestTrip = z.object({
 	region: OwningRegion,
 	// The rider's quote, the price of the trip (ADR 0054); absent with surge off.
 	surge: Surge.optional(),
+	pooled: z.literal(true).optional(),
 });
 export type RequestTrip = z.infer<typeof RequestTrip>;
 
@@ -416,6 +418,7 @@ export const TripRequested = z
 		dropoff: Cell,
 		surge: Surge.optional(),
 		fare: Fare.optional(),
+		pooled: z.literal(true).optional(),
 	})
 	.refine(
 		(requested) =>

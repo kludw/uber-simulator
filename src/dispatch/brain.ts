@@ -48,7 +48,9 @@ import {
 	type Zone,
 	zoneOf,
 } from "../shared/surge.ts";
+import { canShare, canShareAboard, spikePool } from "../shared/pool.ts";
 import {
+	driverCellOf,
 	type IdleDriver,
 	type IdleDrivers,
 	idleCount,
@@ -103,6 +105,8 @@ export type DispatchState = {
 	trips: Map<TripId, Trip>;
 	endedTrips: Map<TripId, EndedTrip>;
 	drivers: IdleDrivers;
+	// SPIKE (#327): trips holding each busy driver, offer or active.
+	held: Map<DriverId, TripId[]>;
 };
 
 // ADR 0030: batched matches only on ticks that are multiples of windowTicks.
@@ -193,6 +197,7 @@ export function startDispatch(config: {
 			config.fleetSize,
 			regionBounds(config.regions ?? oneRegion, config.grid, region),
 		),
+		held: new Map(),
 	};
 }
 
@@ -239,29 +244,54 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 				driverId,
 				pickup: trip.pickup,
 				dropoff: trip.dropoff,
+				...(trip.pooled ? { pooled: true as const } : {}),
 			},
 			{ type: "trip.offered", tick: ticked.tick, tripId: trip.id, driverId },
 		);
 	};
 	const queued = queuedTrips(state);
+	const partners = spikePool.on ? openPartners(state) : [];
+	const join = (trip: QueuedTrip): boolean => {
+		if (!trip.pooled) return false;
+		const partner = bestPartner(state, partners, trip);
+		if (partner === null) return false;
+		partners.splice(partners.indexOf(partner), 1);
+		offer(trip, partner.driverId);
+		return true;
+	};
 	switch (state.matching.type) {
 		case "greedy":
 			// Each trip in turn takes the nearest idle driver, ties to the lowest
 			// ID; the offer makes that driver busy for the next trip.
 			for (const trip of queued) {
+				if (join(trip)) continue;
 				const driverId = nearestIdle(
 					state.drivers,
 					trip.pickup,
 					trip.excludedDrivers,
 				);
-				if (driverId !== undefined) offer(trip, driverId);
+				if (driverId !== undefined) {
+					offer(trip, driverId);
+					if (trip.pooled) partners.push(partnerOf(state, trip, driverId));
+				}
 			}
 			break;
 		case "batched":
 			if (queued.length === 0) break;
 			if (ticked.tick % state.matching.windowTicks !== 0) break;
-			for (const { trip, driverId } of batchedPairs(state, queued)) {
-				offer(trip, driverId);
+			{
+				const rest = queued.filter((trip) => !join(trip));
+				const offered = new Set<TripId>();
+				for (const { trip, driverId } of rest.length === 0
+					? []
+					: batchedPairs(state, rest)) {
+					offer(trip, driverId);
+					offered.add(trip.id);
+					if (trip.pooled) partners.push(partnerOf(state, trip, driverId));
+				}
+				for (const trip of rest) {
+					if (!offered.has(trip.id)) join(trip);
+				}
 			}
 			break;
 		default: {
@@ -311,6 +341,71 @@ function zonesPriced(state: DispatchState, tick: Tick): ZonesPriced {
 }
 
 type OfferPair = { trip: QueuedTrip; driverId: DriverId };
+
+// SPIKE (#327): a pooled trip holding its driver alone, open to a second.
+type Partner = { trip: Trip; driverId: DriverId };
+
+function partnerOf(state: DispatchState, trip: Trip, driverId: DriverId): Partner {
+	void state;
+	return { trip, driverId };
+}
+
+function openPartners(state: DispatchState): Partner[] {
+	const partners: Partner[] = [];
+	for (const trip of state.trips.values()) {
+		if (!trip.pooled) continue;
+		const driverId = busyDriver(trip);
+		if (driverId === undefined) continue;
+		if (trip.state === "picked_up" && spikePool.join !== "aboard") continue;
+		if (state.held.get(driverId)?.length !== 1) continue;
+		partners.push({ trip, driverId });
+	}
+	return partners;
+}
+
+// Least pickup gap, ties to the lower trip ID (request order).
+function bestPartner(
+	state: DispatchState,
+	partners: readonly Partner[],
+	trip: QueuedTrip,
+): Partner | null {
+	let best: Partner | null = null;
+	let bestEta = Number.POSITIVE_INFINITY;
+	let limit = spikePool.maxEta > 0 ? spikePool.maxEta : Number.POSITIVE_INFINITY;
+	if (spikePool.idleSlack >= 0) {
+		const nearest = nearestIdle(state.drivers, trip.pickup, trip.excludedDrivers);
+		const cell =
+			nearest === undefined ? undefined : driverCellOf(state.drivers, nearest);
+		if (cell !== undefined) {
+			limit = Math.min(limit, distance(cell, trip.pickup) + spikePool.idleSlack);
+		}
+	}
+	for (const partner of partners) {
+		if (trip.excludedDrivers.has(partner.driverId)) continue;
+		const at = driverCellOf(state.drivers, partner.driverId);
+		if (at === undefined) continue;
+		let eta: number;
+		if (partner.trip.state === "picked_up") {
+			if (
+				!canShareAboard(at, partner.trip, distance(partner.trip.pickup, at), trip)
+			) {
+				continue;
+			}
+			eta = distance(at, trip.pickup);
+		} else {
+			if (!canShare(partner.trip, trip)) continue;
+			eta =
+				distance(at, partner.trip.pickup) +
+				distance(partner.trip.pickup, trip.pickup);
+		}
+		if (eta > limit) continue;
+		if (eta < bestEta) {
+			best = partner;
+			bestEta = eta;
+		}
+	}
+	return best;
+}
 
 // Requested trips without an offer, in FIFO order.
 function queuedTrips(state: DispatchState): QueuedTrip[] {
@@ -399,6 +494,7 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 				pickup: request.pickup,
 				dropoff: request.dropoff,
 				...(state.surge ? price(request) : {}),
+				...(request.pooled ? { pooled: true as const } : {}),
 			},
 		],
 	};
@@ -407,7 +503,11 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 // The rider's quote is the trip's price, fixed from here (ADR 0054).
 function price(request: RequestTrip): { surge: Surge; fare: Fare } {
 	const surge = request.surge ?? baseSurge;
-	return { surge, fare: fareOf(request.pickup, request.dropoff, surge) };
+	const fare = fareOf(request.pickup, request.dropoff, surge);
+	return {
+		surge,
+		fare: (request.pooled ? Math.round(fare * spikePool.fareFactor) : fare) as Fare,
+	};
 }
 
 function onCancelTrip(state: DispatchState, command: CancelTrip): Decision {
@@ -650,8 +750,18 @@ function storeTrip(state: DispatchState, trip: Trip): void {
 	const wasBusy = busyDriver(state.trips.get(trip.id));
 	const nowBusy = busyDriver(trip);
 	if (wasBusy !== nowBusy) {
-		if (wasBusy !== undefined) markFree(state.drivers, wasBusy);
-		if (nowBusy !== undefined) markBusy(state.drivers, nowBusy);
+		if (wasBusy !== undefined) {
+			const left = (state.held.get(wasBusy) ?? []).filter((id) => id !== trip.id);
+			if (left.length === 0) {
+				state.held.delete(wasBusy);
+				markFree(state.drivers, wasBusy);
+			} else state.held.set(wasBusy, left);
+		}
+		if (nowBusy !== undefined) {
+			const holding = state.held.get(nowBusy) ?? [];
+			if (holding.length === 0) markBusy(state.drivers, nowBusy);
+			state.held.set(nowBusy, [...holding, trip.id]);
+		}
 	}
 	if (trip.state !== "completed" && trip.state !== "cancelled") {
 		state.trips.set(trip.id, trip);

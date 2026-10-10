@@ -23,6 +23,7 @@ import {
 	regionOf,
 } from "../shared/regions.ts";
 import { baseSurge, type Surge, type Zone, zoneOf } from "../shared/surge.ts";
+import { spikePool } from "../shared/pool.ts";
 import { assertValidDemand, type Demand, pickupsForTick } from "./demand.ts";
 
 // region: the trip's, where its cancel goes (ADR 0050).
@@ -232,6 +233,7 @@ function onTick(
 	const willingness = state.surge
 		? random.child(`willingness:${input.tick}`)
 		: null;
+	const optIn = spikePool.on ? random.child(`pool:${input.tick}`) : null;
 	const spawnCount = poisson(state.requestsPerMinute / 60, demand);
 	const nextPickup = pickupsForTick(state.demand, state.grid, input.tick, {
 		root: random,
@@ -272,6 +274,7 @@ function onTick(
 			requestedAt: input.tick,
 			patience: patience.int(120, 300),
 		};
+		const pooled = optIn !== null && optIn.float() < spikePool.share;
 		let quote: Surge | undefined;
 		if (willingness !== null) {
 			quote =
@@ -301,6 +304,7 @@ function onTick(
 			dropoff,
 			region: rider.region,
 			...(quote === undefined ? {} : { surge: quote }),
+			...(pooled ? { pooled: true as const } : {}),
 		});
 	}
 	return { state, outputs };

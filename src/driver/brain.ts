@@ -32,6 +32,7 @@ import type {
 	ZonesPriced,
 } from "../shared/messages.ts";
 import { driversMoved, driversWentOnline } from "../shared/messages.ts";
+import { aDropsFirst } from "../shared/pool.ts";
 import type { Random } from "../shared/random.ts";
 import {
 	oneRegion,
@@ -60,46 +61,22 @@ type Driver =
 			cell: Cell;
 			wanderTarget: Cell | null;
 	  }
+	// SPIKE (#327): busy = carrying out stops; stops[0] the current one.
+	// arrivedAt: waiting at stops[0] for dispatch, else null.
 	| {
-			state: "en_route";
+			state: "busy";
 			id: DriverId;
 			index: DriverIndex;
 			cell: Cell;
-			tripId: TripId;
 			region: Region;
-			pickup: Cell;
-			dropoff: Cell;
-	  }
-	// Position is the pickup: no separate cell.
-	| {
-			state: "at_pickup";
-			id: DriverId;
-			index: DriverIndex;
-			tripId: TripId;
-			region: Region;
-			pickup: Cell;
-			dropoff: Cell;
-			arrivedAt: Tick;
-	  }
-	| {
-			state: "on_trip";
-			id: DriverId;
-			index: DriverIndex;
-			cell: Cell;
-			tripId: TripId;
-			region: Region;
-			dropoff: Cell;
-	  }
-	// Position is the dropoff: no separate cell.
-	| {
-			state: "at_dropoff";
-			id: DriverId;
-			index: DriverIndex;
-			tripId: TripId;
-			region: Region;
-			dropoff: Cell;
-			arrivedAt: Tick;
+			stops: Stop[];
+			held: Held[];
+			arrivedAt: Tick | null;
 	  };
+
+type Stop = { kind: "pickup" | "dropoff"; tripId: TripId; cell: Cell };
+type Held = { tripId: TripId; pickup: Cell; dropoff: Cell; pooled: boolean };
+type BusyDriver = Extract<Driver, { state: "busy" }>;
 
 // Missing = always_online. In shift mode drivers alternate online and offline
 // periods with lengths uniform in the ranges (ADR 0032).
@@ -402,6 +379,20 @@ function onOffer(
 	const region = regionOf(state.regions, state.grid, offer.pickup);
 	// Out of region: the offering instance no longer owns the driver (it
 	// crossed), so accepting would leave two instances tracking it (ADR 0050).
+	if (offered.state === "busy" && joinable(offered, offer, region)) {
+		state.drivers.set(offered.id, joined(offered, offer));
+		return {
+			state,
+			outputs: [
+				{
+					type: "offer_accepted",
+					tripId: offer.tripId,
+					driverId: offer.driverId,
+					region,
+				},
+			],
+		};
+	}
 	if (
 		offered.state !== "idle" ||
 		regionOf(state.regions, state.grid, offered.cell) !== region ||
@@ -421,14 +412,24 @@ function onOffer(
 		};
 	}
 	state.drivers.set(offered.id, {
-		state: "en_route",
+		state: "busy",
 		id: offered.id,
 		index: offered.index,
 		cell: offered.cell,
-		tripId: offer.tripId,
 		region,
-		pickup: offer.pickup,
-		dropoff: offer.dropoff,
+		stops: [
+			{ kind: "pickup", tripId: offer.tripId, cell: offer.pickup },
+			{ kind: "dropoff", tripId: offer.tripId, cell: offer.dropoff },
+		],
+		held: [
+			{
+				tripId: offer.tripId,
+				pickup: offer.pickup,
+				dropoff: offer.dropoff,
+				pooled: offer.pooled === true,
+			},
+		],
+		arrivedAt: null,
 	});
 	return {
 		state,
@@ -460,24 +461,99 @@ function declines(
 	return stream.float() < picky.declineShare;
 }
 
+function joinable(driver: BusyDriver, offer: Offer, region: Region): boolean {
+	const [only] = driver.held;
+	return (
+		offer.pooled === true &&
+		driver.held.length === 1 &&
+		only !== undefined &&
+		only.pooled &&
+		driver.region === region
+	);
+}
+
+// Second rider: its pickup after the first's (or next, if the first rides),
+// then dropoffs in the shorter order from it; waiting at a dropoff, after it.
+function joined(driver: BusyDriver, offer: Offer): BusyDriver {
+	const [first] = driver.held;
+	if (first === undefined) throw new Error("join without a held trip");
+	const held: Held[] = [
+		...driver.held,
+		{
+			tripId: offer.tripId,
+			pickup: offer.pickup,
+			dropoff: offer.dropoff,
+			pooled: true,
+		},
+	];
+	const pickupB: Stop = {
+		kind: "pickup",
+		tripId: offer.tripId,
+		cell: offer.pickup,
+	};
+	const dropA: Stop = {
+		kind: "dropoff",
+		tripId: first.tripId,
+		cell: first.dropoff,
+	};
+	const dropB: Stop = {
+		kind: "dropoff",
+		tripId: offer.tripId,
+		cell: offer.dropoff,
+	};
+	const dropoffs = aDropsFirst(offer.pickup, first.dropoff, offer.dropoff)
+		? [dropA, dropB]
+		: [dropB, dropA];
+	const [current] = driver.stops;
+	if (current === undefined) throw new Error("busy driver without stops");
+	let stops: Stop[];
+	if (current.kind === "pickup") stops = [current, pickupB, ...dropoffs];
+	else if (driver.arrivedAt !== null) stops = [current, pickupB, dropB];
+	else stops = [pickupB, ...dropoffs];
+	return { ...driver, held, stops };
+}
+
+// stops[0] done: next stop, or idle when none is left.
+function advance(driver: BusyDriver): Driver {
+	const [done, ...stops] = driver.stops;
+	const held =
+		done?.kind === "dropoff"
+			? driver.held.filter((trip) => trip.tripId !== done.tripId)
+			: driver.held;
+	if (stops.length === 0) return idle(driver, driver.cell);
+	return { ...driver, stops, held, arrivedAt: null };
+}
+
+// A trip's remaining stops dropped (cancelled, expired, released).
+function withoutTrip(driver: BusyDriver, tripId: TripId): Driver {
+	const stops = driver.stops.filter((stop) => stop.tripId !== tripId);
+	if (stops.length === 0) return idle(driver, driver.cell);
+	const keepsCurrent = stops[0] === driver.stops[0];
+	return {
+		...driver,
+		stops,
+		held: driver.held.filter((trip) => trip.tripId !== tripId),
+		arrivedAt: keepsCurrent ? driver.arrivedAt : null,
+	};
+}
+
+function waitingAt(
+	driver: Driver | undefined,
+	kind: Stop["kind"],
+): BusyDriver | null {
+	if (driver?.state !== "busy" || driver.arrivedAt === null) return null;
+	return driver.stops[0]?.kind === kind ? driver : null;
+}
+
 function onPickedUp(state: DriverShardState, pickedUp: TripPickedUp): Decision {
 	const addressed = state.drivers.get(pickedUp.driverId);
 	if (addressed === undefined) return { state, outputs: [] };
-	if (addressed.state !== "at_pickup") {
-		return reject(state, pickedUp, "driver_not_at_pickup");
-	}
-	if (addressed.tripId !== pickedUp.tripId) {
+	const waiting = waitingAt(addressed, "pickup");
+	if (waiting === null) return reject(state, pickedUp, "driver_not_at_pickup");
+	if (waiting.stops[0]?.tripId !== pickedUp.tripId) {
 		return reject(state, pickedUp, "driver_on_another_trip");
 	}
-	return replaceDriver(state, {
-		state: "on_trip",
-		id: addressed.id,
-		index: addressed.index,
-		cell: addressed.pickup,
-		tripId: addressed.tripId,
-		region: addressed.region,
-		dropoff: addressed.dropoff,
-	});
+	return replaceDriver(state, advance(waiting));
 }
 
 function onCompleted(
@@ -486,19 +562,14 @@ function onCompleted(
 ): Decision {
 	const addressed = state.drivers.get(completed.driverId);
 	if (addressed === undefined) return { state, outputs: [] };
-	if (addressed.state !== "at_dropoff") {
+	const waiting = waitingAt(addressed, "dropoff");
+	if (waiting === null) {
 		return reject(state, completed, "driver_not_at_dropoff");
 	}
-	if (addressed.tripId !== completed.tripId) {
+	if (waiting.stops[0]?.tripId !== completed.tripId) {
 		return reject(state, completed, "driver_on_another_trip");
 	}
-	return replaceDriver(state, {
-		state: "idle",
-		id: addressed.id,
-		index: addressed.index,
-		cell: addressed.dropoff,
-		wanderTarget: null,
-	});
+	return replaceDriver(state, advance(waiting));
 }
 
 function reject(
@@ -521,68 +592,37 @@ function onTripEnded(
 	state: DriverShardState,
 	ended: TripCancelled | TripOfferExpired,
 ): Decision {
-	// No driver (cancelled before any match), or not this driver's current
-	// trip: the driver isn't involved.
 	if (ended.driverId === null) return { state, outputs: [] };
 	const addressed = state.drivers.get(ended.driverId);
-	if (
-		addressed === undefined ||
-		addressed.state === "idle" ||
-		addressed.state === "offline"
-	) {
+	if (addressed === undefined || addressed.state !== "busy") {
 		return { state, outputs: [] };
 	}
-	if (addressed.tripId !== ended.tripId) return { state, outputs: [] };
-	// Dispatch rejects cancel after pickup and expiry only precedes a match.
-	if (addressed.state === "on_trip" || addressed.state === "at_dropoff") {
-		return reject(state, ended, "trip_already_picked_up");
+	if (!addressed.held.some((trip) => trip.tripId === ended.tripId)) {
+		return { state, outputs: [] };
 	}
-	const cell =
-		addressed.state === "at_pickup" ? addressed.pickup : addressed.cell;
-	return replaceDriver(state, {
-		state: "idle",
-		id: addressed.id,
-		index: addressed.index,
-		cell,
-		wanderTarget: null,
-	});
+	const pickupLeft = addressed.stops.some(
+		(stop) => stop.tripId === ended.tripId && stop.kind === "pickup",
+	);
+	if (!pickupLeft) return reject(state, ended, "trip_already_picked_up");
+	return replaceDriver(state, withoutTrip(addressed, ended.tripId));
 }
 
-// Dispatch's answer to confirm_trip (ADR 0041). Acted on only by a driver
-// still waiting for that trip at that stage; anything else is a late or
-// duplicate reply and is ignored, not rejected.
+// Dispatch's answer to confirm_trip (ADR 0041), for the stop it waits at.
 function onTripStatus(state: DriverShardState, status: TripStatus): Decision {
-	const addressed = state.drivers.get(status.driverId);
 	const ignored = { state, outputs: [] };
-	if (addressed === undefined) return ignored;
-	if (
-		addressed.state === "at_pickup" &&
-		addressed.tripId === status.tripId &&
-		status.stage === "pickup"
-	) {
+	const waiting = waitingAt(state.drivers.get(status.driverId), status.stage);
+	if (waiting === null || waiting.stops[0]?.tripId !== status.tripId) {
+		return ignored;
+	}
+	if (status.stage === "pickup") {
 		if (status.status === "released") {
-			return replaceDriver(state, idle(addressed, addressed.pickup));
+			return replaceDriver(state, withoutTrip(waiting, status.tripId));
 		}
 		if (status.status !== "picked_up") return ignored;
-		return replaceDriver(state, {
-			state: "on_trip",
-			id: addressed.id,
-			index: addressed.index,
-			cell: addressed.pickup,
-			tripId: addressed.tripId,
-			region: addressed.region,
-			dropoff: addressed.dropoff,
-		});
+		return replaceDriver(state, advance(waiting));
 	}
-	if (
-		addressed.state === "at_dropoff" &&
-		addressed.tripId === status.tripId &&
-		status.stage === "dropoff" &&
-		status.status !== "picked_up"
-	) {
-		return replaceDriver(state, idle(addressed, addressed.dropoff));
-	}
-	return ignored;
+	if (status.status === "picked_up") return ignored;
+	return replaceDriver(state, withoutTrip(waiting, status.tripId));
 }
 
 // Prices replace the region's whole; even equal ones re-pick targets on the
@@ -655,51 +695,28 @@ function onTick(
 				drivers.set(driver.id, wander(driver, target, inRegion(moves, region)));
 				break;
 			}
-			case "en_route":
+			case "busy": {
+				if (driver.arrivedAt !== null) {
+					const [stop] = driver.stops;
+					if (stop === undefined) throw new Error("busy without stops");
+					if (!confirmDue(driver.arrivedAt, input.tick)) break;
+					outputs.push({
+						type: "confirm_trip",
+						tripId: stop.tripId,
+						driverId: driver.id,
+						stage: stop.kind,
+						cell: stop.cell,
+						region: driver.region,
+					});
+					break;
+				}
 				drivers.set(
 					driver.id,
-					driveToPickup(
-						driver,
-						input.tick,
-						inRegion(moves, driver.region),
-						outputs,
-					),
+					driveToStop(driver, input.tick, inRegion(moves, driver.region), outputs),
 				);
 				break;
-			case "at_pickup":
-				if (!confirmDue(driver.arrivedAt, input.tick)) break;
-				outputs.push({
-					type: "confirm_trip",
-					tripId: driver.tripId,
-					driverId: driver.id,
-					stage: "pickup",
-					cell: driver.pickup,
-					region: driver.region,
-				});
-				break;
-			case "at_dropoff":
-				if (!confirmDue(driver.arrivedAt, input.tick)) break;
-				outputs.push({
-					type: "confirm_trip",
-					tripId: driver.tripId,
-					driverId: driver.id,
-					stage: "dropoff",
-					cell: driver.dropoff,
-					region: driver.region,
-				});
-				break;
+			}
 			case "offline":
-				break;
-			case "on_trip":
-				drivers.set(
-					driver.id,
-					driveToDropoff(
-						driver,
-						input.tick,
-						inRegion(moves, driver.region),
-						outputs,
-					),
-				);
 				break;
 			default: {
 				const unhandled: never = driver;
@@ -802,8 +819,6 @@ function changeShift(
 
 type IdleDriver = Extract<Driver, { state: "idle" }>;
 type OfflineDriver = Extract<Driver, { state: "offline" }>;
-type EnRouteDriver = Extract<Driver, { state: "en_route" }>;
-type OnTripDriver = Extract<Driver, { state: "on_trip" }>;
 
 // A driver picking a target chases if it can; on the tick after new prices
 // (repick) so does one heading outside any surge area, else it keeps its
@@ -884,69 +899,38 @@ function wander(
 	return { ...driver, cell, wanderTarget: arrived ? null : wanderTarget };
 }
 
-function driveToPickup(
-	driver: EnRouteDriver,
+function driveToStop(
+	driver: BusyDriver,
 	tick: Tick,
 	moves: DriverMove[],
 	outputs: DriverShardOutput[],
 ): Driver {
+	const [stop] = driver.stops;
+	if (stop === undefined) throw new Error("busy without stops");
 	let cell = driver.cell;
-	if (distance(cell, driver.pickup) > 0) {
-		cell = stepToward(cell, driver.pickup);
+	if (distance(cell, stop.cell) > 0) {
+		cell = stepToward(cell, stop.cell);
 		moves.push({ driverIndex: driver.index, cell });
 	}
-	if (distance(cell, driver.pickup) > 0) {
-		return { ...driver, cell };
-	}
-	outputs.push({
-		type: "driver.arrived_at_pickup",
-		tick,
-		driverId: driver.id,
-		tripId: driver.tripId,
-		cell,
-		region: driver.region,
-	});
-	return {
-		state: "at_pickup",
-		id: driver.id,
-		index: driver.index,
-		tripId: driver.tripId,
-		region: driver.region,
-		pickup: driver.pickup,
-		dropoff: driver.dropoff,
-		arrivedAt: tick,
-	};
-}
-
-function driveToDropoff(
-	driver: OnTripDriver,
-	tick: Tick,
-	moves: DriverMove[],
-	outputs: DriverShardOutput[],
-): Driver {
-	let cell = driver.cell;
-	if (distance(cell, driver.dropoff) > 0) {
-		cell = stepToward(cell, driver.dropoff);
-		moves.push({ driverIndex: driver.index, cell });
-	}
-	if (distance(cell, driver.dropoff) > 0) {
-		return { ...driver, cell };
-	}
-	outputs.push({
-		type: "driver.arrived_at_dropoff",
-		tick,
-		driverId: driver.id,
-		tripId: driver.tripId,
-		cell,
-		region: driver.region,
-	});
-	return {
-		state: "at_dropoff",
-		id: driver.id,
-		index: driver.index,
-		tripId: driver.tripId,
-		region: driver.region,
-		dropoff: driver.dropoff,
-		arrivedAt: tick,
-	};
+	if (distance(cell, stop.cell) > 0) return { ...driver, cell };
+	outputs.push(
+		stop.kind === "pickup"
+			? {
+					type: "driver.arrived_at_pickup",
+					tick,
+					driverId: driver.id,
+					tripId: stop.tripId,
+					cell,
+					region: driver.region,
+				}
+			: {
+					type: "driver.arrived_at_dropoff",
+					tick,
+					driverId: driver.id,
+					tripId: stop.tripId,
+					cell,
+					region: driver.region,
+				},
+	);
+	return { ...driver, cell, arrivedAt: tick };
 }
