@@ -113,6 +113,7 @@ export type DispatchState = {
 	ridden: Map<TripId, number>;
 	lastStop: Map<DriverId, Cell>;
 	pooledOpen: number;
+	pickedUpAt: Map<TripId, Tick>;
 };
 
 // ADR 0030: batched matches only on ticks that are multiples of windowTicks.
@@ -207,6 +208,7 @@ export function startDispatch(config: {
 		ridden: new Map(),
 		lastStop: new Map(),
 		pooledOpen: 0,
+		pickedUpAt: new Map(),
 	};
 }
 
@@ -265,14 +267,7 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 		const partner = bestPartner(state, partners, trip);
 		if (partner === null) return false;
 		partners.splice(partners.indexOf(partner), 1);
-		// The driver turns here: the leg to its cell counts as ridden.
-		const ridden = state.ridden.get(partner.trip.id);
-		const last = state.lastStop.get(partner.driverId);
-		const at = driverCellOf(state.drivers, partner.driverId);
-		if (ridden !== undefined && last !== undefined && at !== undefined) {
-			state.ridden.set(partner.trip.id, ridden + distance(last, at));
-			state.lastStop.set(partner.driverId, at);
-		}
+		checkpoint(state, partner.driverId);
 		offer(trip, partner.driverId);
 		return true;
 	};
@@ -411,7 +406,7 @@ function bestPartner(
 				!canShareAboard(
 					at,
 					partner.trip,
-					ridden + distance(lastStop, at),
+					rideSoFar(state, partner.trip.id, ridden + distance(lastStop, at)),
 					trip,
 				)
 			) {
@@ -709,8 +704,13 @@ function arrive(
 		}
 		state.ridden.set(other, ridden + distance(last, stop));
 	}
-	if (atPickup) state.ridden.set(trip.id, 0);
-	else state.ridden.delete(trip.id);
+	if (atPickup) {
+		state.ridden.set(trip.id, 0);
+		state.pickedUpAt.set(trip.id, state.tick);
+	} else {
+		state.ridden.delete(trip.id);
+		state.pickedUpAt.delete(trip.id);
+	}
 	state.lastStop.set(input.driverId, stop);
 	storeTrip(state, next.value);
 	return {
@@ -794,7 +794,10 @@ function storeTrip(state: DispatchState, trip: Trip): void {
 				state.held.delete(wasBusy);
 				state.lastStop.delete(wasBusy);
 				markFree(state.drivers, wasBusy);
-			} else state.held.set(wasBusy, left);
+			} else {
+				state.held.set(wasBusy, left);
+				checkpoint(state, wasBusy);
+			}
 		}
 		if (nowBusy !== undefined) {
 			const holding = state.held.get(nowBusy) ?? [];
@@ -829,4 +832,24 @@ function busyDriver(trip: Trip | undefined): DriverId | undefined {
 			throw new Error(`unhandled trip state: ${unhandled}`);
 		}
 	}
+}
+
+// SPIKE (#327): the driver turns at its cell (a join, or a trip leaving it):
+// the leg to there counts as ridden for its picked-up trips.
+function checkpoint(state: DispatchState, driverId: DriverId): void {
+	const last = state.lastStop.get(driverId);
+	const at = driverCellOf(state.drivers, driverId);
+	if (last === undefined || at === undefined) return;
+	for (const tripId of state.held.get(driverId) ?? []) {
+		const ridden = state.ridden.get(tripId);
+		if (ridden !== undefined) state.ridden.set(tripId, ridden + distance(last, at));
+	}
+	state.lastStop.set(driverId, at);
+}
+
+// SPIKE (#327): SPIKE_RIDDEN=ticks counts ride so far as ticks since pickup.
+function rideSoFar(state: DispatchState, tripId: TripId, legs: number): number {
+	if (process.env.SPIKE_RIDDEN !== "ticks") return legs;
+	const at = state.pickedUpAt.get(tripId);
+	return at === undefined ? legs : state.tick - at;
 }
