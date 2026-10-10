@@ -847,9 +847,10 @@ function checkpoint(state: DispatchState, driverId: DriverId): void {
 	state.lastStop.set(driverId, at);
 }
 
-// SPIKE (#327): SPIKE_RIDDEN=ticks counts ride so far as ticks since pickup.
+// SPIKE (#327): ride so far = ticks since pickup; SPIKE_RIDDEN=legs sums the
+// legs between stops and turns instead (one tick behind at each turn).
 function rideSoFar(state: DispatchState, tripId: TripId, legs: number): number {
-	if (process.env.SPIKE_RIDDEN !== "ticks") return legs;
+	if (process.env.SPIKE_RIDDEN === "legs") return legs;
 	const at = state.pickedUpAt.get(tripId);
 	return at === undefined ? legs : state.tick - at;
 }
