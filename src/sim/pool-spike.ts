@@ -19,7 +19,11 @@ const matching: Matching =
 	args.value.matching === "batched"
 		? { type: "batched", windowTicks }
 		: { type: "greedy" };
-const runConfig = { ...config, matching };
+const runConfig = {
+	...config,
+	matching,
+	lossShare: Number(process.env.SPIKE_LOSS ?? "0"),
+};
 const drivers = config.driverShards.count * config.driverShards.driversPerShard;
 
 const checker = createInvariantChecker(config.grid);
