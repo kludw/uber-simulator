@@ -116,7 +116,11 @@ describe.skipIf(!natsUrl || !config)("bun run replay", () => {
 	// regions) stored by the persister and replayed into the UI's view. Live
 	// is what the page sees without ?replay. The persister reads a test
 	// stream (SIM_EVENTS may belong to `bun run dev`), fed live's messages in
-	// the order they arrived, as JetStream numbers SIM_EVENTS.
+	// the order they arrived, as JetStream numbers SIM_EVENTS. Replay
+	// publishes in tick, stream sequence order, not arrival order (ADR 0034):
+	// a tick-t event arriving live after clock.ticked t+1 is replayed before
+	// it (issue #323). So live's view is built from its events in that order,
+	// arrival order stably sorted by tick; replay's as they arrive.
 	test("a fresh run stored and replayed gives the UI the same view as live at chosen ticks", async () => {
 		const config = {
 			seed: 1,
@@ -145,13 +149,13 @@ describe.skipIf(!natsUrl || !config)("bun run replay", () => {
 			startPersister({ nats, clickhouse, source, log: () => {} }),
 		);
 		try {
-			const live = viewsAt(chosenTicks);
+			const liveEvents: SimEvent[] = [];
 			const liveSubject = subscriptionFor("");
 			if (!liveSubject.ok) throw new Error("no live subscription");
 			const liveSubscription = nats.subscribe(liveSubject.value.subject, {
 				callback: (error, message) => {
 					if (error) throw error;
-					live.apply(message);
+					liveEvents.push(eventOf(message));
 					nats.publish(`test-${id}.${message.subject}`, message.data, {
 						headers: message.headers,
 					});
@@ -163,6 +167,9 @@ describe.skipIf(!natsUrl || !config)("bun run replay", () => {
 			liveSubscription.unsubscribe();
 			if (!run.ok) throw new Error("NATS unavailable", { cause: run });
 			await persisted(nats, source);
+			const live = viewsAt(chosenTicks);
+			liveEvents.sort((a, b) => a.tick - b.tick);
+			for (const event of liveEvents) live.apply(event);
 
 			const replaySubject = subscriptionFor(`?replay=${run.value.runId}`);
 			if (!replaySubject.ok) throw new Error("no replay subscription");
@@ -170,7 +177,7 @@ describe.skipIf(!natsUrl || !config)("bun run replay", () => {
 			nats.subscribe(replaySubject.value.subject, {
 				callback: (error, message) => {
 					if (error) throw error;
-					replayed.apply(message);
+					replayed.apply(eventOf(message));
 				},
 			});
 			await nats.flush();
@@ -240,22 +247,25 @@ function requested(tick: number): SimEvent {
 	};
 }
 
-// The UI's view, fed each message as the page decodes it (src/ui/main.ts),
-// copied at the end of each chosen tick (just before the next clock.ticked)
-// and once everything is fed.
+// A message decoded as the page decodes it (src/ui/main.ts).
+function eventOf(message: Msg): SimEvent {
+	const parsed = parseMessage(message.json());
+	if (!parsed.ok || !isSimEvent(parsed.value)) {
+		throw new Error(`not an event on ${message.subject}`);
+	}
+	return parsed.value;
+}
+
+// The UI's view, fed each event in turn, copied at the end of each chosen
+// tick (just before the next clock.ticked) and once everything is fed.
 function viewsAt(ticks: number[]): {
-	apply(message: Msg): void;
+	apply(event: SimEvent): void;
 	views(): Map<number | "end", View>;
 } {
 	const view = emptyView();
 	const taken = new Map<number | "end", View>();
 	return {
-		apply(message) {
-			const parsed = parseMessage(message.json());
-			if (!parsed.ok || !isSimEvent(parsed.value)) {
-				throw new Error(`not an event on ${message.subject}`);
-			}
-			const event = parsed.value;
+		apply(event) {
 			if (event.type === "clock.ticked" && ticks.includes(event.tick - 1)) {
 				taken.set(event.tick - 1, structuredClone(view));
 			}
