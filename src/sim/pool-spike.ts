@@ -67,6 +67,11 @@ let sharedRides = 0;
 let sharedRideTicks = 0;
 let sharedDetourSum = 0;
 let sharedCompleted = 0;
+// Shared trips riding over 1.5 x direct (+ slack ticks), and the worst ratio.
+const slack = Number(process.env.SPIKE_SLACK ?? "2");
+let overLimit = 0;
+let overLimitNoSlack = 0;
+let worstRatio = 0;
 let occupiedTicks = 0;
 let riderTicks = 0;
 
@@ -130,6 +135,9 @@ const result = runInProcess(runConfig, {
 					rideTicks += ride;
 					detourSum += ride / direct - 1;
 					if (trip.shared) {
+						if (ride > 1.5 * direct + slack) { overLimit++; if (process.env.SPIKE_DEBUG) console.error(JSON.stringify({ tripId: message.tripId, driverId: message.driverId, ride, direct, pickedUpAt: trip.pickedUpAt, pickup: trip.pickup, dropoff: trip.dropoff })); }
+						if (ride > 1.5 * direct) overLimitNoSlack++;
+						worstRatio = Math.max(worstRatio, ride / direct);
 						sharedRides++;
 						sharedRideTicks += ride;
 						sharedDetourSum += ride / direct - 1;
@@ -175,6 +183,9 @@ console.log(
 		sharedMeanRide: sharedRides === 0 ? null : round(sharedRideTicks / sharedRides),
 		sharedDetourPct:
 			sharedRides === 0 ? null : round((100 * sharedDetourSum) / sharedRides),
+		overLimit,
+		overLimitNoSlack,
+		worstRatio: round(worstRatio, 2),
 		occupiedPct: round((100 * occupiedTicks) / (drivers * config.ticks)),
 		ridersPerOccupiedTick: round(riderTicks / Math.max(occupiedTicks, 1), 3),
 		revenue: round(revenue / 100, 2),

@@ -422,3 +422,8 @@ export function driverCellOf(idle: IdleDrivers, driverId: DriverId): Cell | unde
 	const driver = idle[internals].byId.get(driverId);
 	return driver === undefined ? undefined : cellAt(driver.x, driver.y);
 }
+
+// SPIKE (#327): whether dispatch holds the driver online.
+export function driverOnline(idle: IdleDrivers, driverId: DriverId): boolean {
+	return idle[internals].byId.get(driverId)?.online === true;
+}

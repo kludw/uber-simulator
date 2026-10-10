@@ -1,4 +1,4 @@
-import { distance, type Grid } from "../shared/grid.ts";
+import { type Cell, distance, type Grid } from "../shared/grid.ts";
 import type {
 	CancelTrip,
 	CancelTripAccepted,
@@ -51,6 +51,7 @@ import {
 import { canShare, canShareAboard, spikePool } from "../shared/pool.ts";
 import {
 	driverCellOf,
+	driverOnline,
 	type IdleDriver,
 	type IdleDrivers,
 	idleCount,
@@ -107,6 +108,11 @@ export type DispatchState = {
 	drivers: IdleDrivers;
 	// SPIKE (#327): trips holding each busy driver, offer or active.
 	held: Map<DriverId, TripId[]>;
+	// SPIKE (#327): per picked-up trip, the planned legs ridden up to its
+	// driver's last stop; per busy driver, that stop's cell; open pooled trips.
+	ridden: Map<TripId, number>;
+	lastStop: Map<DriverId, Cell>;
+	pooledOpen: number;
 };
 
 // ADR 0030: batched matches only on ticks that are multiples of windowTicks.
@@ -198,6 +204,9 @@ export function startDispatch(config: {
 			regionBounds(config.regions ?? oneRegion, config.grid, region),
 		),
 		held: new Map(),
+		ridden: new Map(),
+		lastStop: new Map(),
+		pooledOpen: 0,
 	};
 }
 
@@ -250,12 +259,20 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 		);
 	};
 	const queued = queuedTrips(state);
-	const partners = spikePool.on ? openPartners(state) : [];
+	const partners = state.pooledOpen > 0 ? openPartners(state) : [];
 	const join = (trip: QueuedTrip): boolean => {
 		if (!trip.pooled) return false;
 		const partner = bestPartner(state, partners, trip);
 		if (partner === null) return false;
 		partners.splice(partners.indexOf(partner), 1);
+		// The driver turns here: the leg to its cell counts as ridden.
+		const ridden = state.ridden.get(partner.trip.id);
+		const last = state.lastStop.get(partner.driverId);
+		const at = driverCellOf(state.drivers, partner.driverId);
+		if (ridden !== undefined && last !== undefined && at !== undefined) {
+			state.ridden.set(partner.trip.id, ridden + distance(last, at));
+			state.lastStop.set(partner.driverId, at);
+		}
 		offer(trip, partner.driverId);
 		return true;
 	};
@@ -358,6 +375,7 @@ function openPartners(state: DispatchState): Partner[] {
 		if (driverId === undefined) continue;
 		if (trip.state === "picked_up" && spikePool.join !== "aboard") continue;
 		if (state.held.get(driverId)?.length !== 1) continue;
+		if (!driverOnline(state.drivers, driverId)) continue;
 		partners.push({ trip, driverId });
 	}
 	return partners;
@@ -386,8 +404,16 @@ function bestPartner(
 		if (at === undefined) continue;
 		let eta: number;
 		if (partner.trip.state === "picked_up") {
+			const lastStop = state.lastStop.get(partner.driverId);
+			const ridden = state.ridden.get(partner.trip.id);
+			if (lastStop === undefined || ridden === undefined) continue;
 			if (
-				!canShareAboard(at, partner.trip, distance(partner.trip.pickup, at), trip)
+				!canShareAboard(
+					at,
+					partner.trip,
+					ridden + distance(lastStop, at),
+					trip,
+				)
 			) {
 				continue;
 			}
@@ -674,6 +700,18 @@ function arrive(
 	// lost last move can't leave it idle at a stale cell (ADR 0050). Only here:
 	// a rejected arrival may name an idle driver.
 	placeDriver(state.drivers, input.driverId, input.cell.x, input.cell.y);
+	const stop = atPickup ? trip.pickup : trip.dropoff;
+	const last = state.lastStop.get(input.driverId);
+	for (const other of state.held.get(input.driverId) ?? []) {
+		const ridden = state.ridden.get(other);
+		if (other === trip.id || ridden === undefined || last === undefined) {
+			continue;
+		}
+		state.ridden.set(other, ridden + distance(last, stop));
+	}
+	if (atPickup) state.ridden.set(trip.id, 0);
+	else state.ridden.delete(trip.id);
+	state.lastStop.set(input.driverId, stop);
 	storeTrip(state, next.value);
 	return {
 		state,
@@ -754,6 +792,7 @@ function storeTrip(state: DispatchState, trip: Trip): void {
 			const left = (state.held.get(wasBusy) ?? []).filter((id) => id !== trip.id);
 			if (left.length === 0) {
 				state.held.delete(wasBusy);
+				state.lastStop.delete(wasBusy);
 				markFree(state.drivers, wasBusy);
 			} else state.held.set(wasBusy, left);
 		}
@@ -764,9 +803,11 @@ function storeTrip(state: DispatchState, trip: Trip): void {
 		}
 	}
 	if (trip.state !== "completed" && trip.state !== "cancelled") {
+		if (trip.pooled && !state.trips.has(trip.id)) state.pooledOpen++;
 		state.trips.set(trip.id, trip);
 		return;
 	}
+	if (trip.pooled && state.trips.has(trip.id)) state.pooledOpen--;
 	state.trips.delete(trip.id);
 	state.endedTrips.set(trip.id, trip);
 }
