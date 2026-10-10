@@ -1,6 +1,6 @@
 # Scaling case study
 
-How the simulator went from 100 drivers in one process to 600,000 drivers live over NATS: what was measured at each step, what limited it, what was tried, and what went wrong along the way. Every number here comes from [performance-history.md](performance-history.md), [performance.md](performance.md), [ui.md](ui.md) or an ADR, linked where it is used; those pages hold the full tables, CI run IDs and caveats.
+How the simulator went from 100 drivers in one process to 600,000 drivers live over NATS: what was measured at each step, what limited it, what was tried, and what went wrong along the way. [Section 11](#11-surge-pricing-and-drivers-chasing-it) covers surge pricing, the first feature past the original scope, measured the same way. Every number here comes from [performance-history.md](performance-history.md), [performance.md](performance.md), [ui.md](ui.md), an ADR, the README or a PR review, linked where it is used; those pages hold the full tables, CI run IDs and caveats.
 
 ## What "keeps up" means
 
@@ -149,6 +149,34 @@ Milestone 25: greedy `1x1` 600k, 4 of 4 runs; spot-checks `2x1` 600k and `2x2` 5
 The browser UI was measured with the same honesty test: does it apply everything that arrives? Before milestone 26, at 100k it drew 5.0 frames per second and applied 19% of the feed's bytes; at 400k 1.7 frames per second and about 2%, and NATS cut the page off as a slow consumer. The view copied its maps on every event, and the canvas drew one arc per driver per frame, 354 ms per frame at 400k ([Today's UI](ui.md#todays-ui-master-1ab377c)).
 
 [ADR 0053](adr/0053-scale-the-ui-in-the-browser.md) keeps drivers in typed arrays by index, updated in place, and above 10,000 drivers draws a heatmap of 5 × 5-cell tiles recomputed once per tick. The page now applies all of the feed at 60 frames per second at 10k, 100k and 400k, spending 32.3-32.9 ms per second on decode and apply at 400k ([Heatmap](ui.md#heatmap-285)). `bun run demo` runs it at 100k.
+
+## 11. Surge pricing, and drivers chasing it
+
+Surge was the first feature past the original scope. The goal was a model each part of which fits in a sentence, not realistic economics ([ADR 0054](adr/0054-price-trips-with-zone-surge.md)).
+
+**The model.** The grid is cut into 50 × 50-cell zones (500 m). Every 30 ticks dispatch sets each zone's surge to its unmatched trips (requested, no driver yet) over its idle drivers, rounded to 0.1 and clamped to 1.0-2.0×. A new rider draws a max surge, uniform in 1.0-3.0: if its zone's price is higher, it declines and leaves; otherwise it pays ($2.50 + $2 per km) × surge, fixed at request. Dispatch already held both counts, exact and per region, so pricing needed no new view and no extra decoding of moves. In the spike, a plain ratio capped at 3.0 jumped 1 → 2 → 3 in sparse zones, so most riders who saw a surge declined: 638 declines on heavy batched load against 440 at cap 2.0. A softer formula did about as well as the plain ratio at cap 2.0, with more words to explain ([ADR 0054](adr/0054-price-trips-with-zone-surge.md#context)).
+
+**What it does.** At spec load almost nothing surged in the spike (one surged request in 2,264), and completed, cancelled and pickup times were identical. Under heavy load, surge trades patience cancellations for up-front declines. Cancellations fell 25-36%, 23-26% of spawned riders declined, completed trips stayed supply-bound (−8% to +3%) and revenue rose 13-33%. Heavy greedy, for example: cancellations 1,358 → 1,016, declines 0 → 392, revenue $1,818 → $2,414. Surge adds no drivers; it turns away up front riders who would have waited and given up. In the busy city, batched matching lost 20 completions (−3%); the ADR says this is "likely" because declines cluster at the downtown hotspot, and does not claim more ([ADR 0054 rationale](adr/0054-price-trips-with-zone-surge.md#rationale)).
+
+**Drivers chase surge.** Milestone 30 closed the loop: an idle driver picking a target heads for a random cell of the nearest surging zone within 4 zones (2 km), and on each new price every idle driver not already heading into a surging zone looks again ([ADR 0055](adr/0055-idle-drivers-chase-surge.md)). Both rules came from the spike. A reach of 3-5 zones scored close together; 1-2 zones were too short to find surge, and 6 or more pulled drivers past nearer demand. Re-picking on new prices doubled the effect, cutting declines by 65% instead of 30%, because a random wander target is about 333 cells away and a driver otherwise ignores surge for minutes.
+
+At the README's 100 drivers chasing changes nothing beyond seed noise: an idle driver is offered a trip within a tick or two wherever it is. At 10k drivers with city demand (greedy, seed 42, 1,800 ticks), idle drivers sit in quiet zones while downtown surges ([ADR 0055](adr/0055-idle-drivers-chase-surge.md#context), [README](../README.md#compare-surge-off-and-on)):
+
+| | Completed | Cancelled | Declined | Mean ticks to pickup | Revenue |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| surge off | 32,764 | 2,931 | 0 | 68.2 | $272,062 |
+| surge on, no chasing | 30,489 | 868 | 5,803 | 48.0 | $289,878 |
+| surge on, chasing | 34,343 | 505 | 2,003 | 32.3 | $297,288 |
+
+Surge alone completed 7% fewer trips than no surge; with chasing it completed 5% more, at half the ticks to pickup. Live, greedy `1x1` 600k with surge on and chasing passed both runs at settle p95 522.9 and 525.1 ms, against 552.8 and 567.3 ms for milestone 28 without chasing. The runs landed on different CPU models and the load test's uniform demand rarely surges, so this shows no regression, not a speed-up ([After milestone 30](performance-history.md#after-milestone-30)).
+
+**Surge off stays byte-identical.** Each surge PR had to keep surge-off outputs and event logs byte-identical, checked on the README seeds ([ADR 0054](adr/0054-price-trips-with-zone-surge.md#consequences)). Willingness to pay and chase targets come from their own seeded child streams (`willingness:<tick>`, `chase:<tick>`), so a decline or a chase shifts no other draw. The cost of keeping it simple: chasing has no off switch, so surge on without chasing can now only be compared on paper, against ADR 0054's table ([ADR 0055 decision 6](adr/0055-idle-drivers-chase-surge.md#decision)).
+
+**What review caught.** Three findings from the reviews of the two ADRs:
+
+- **Prices that never arrived.** The draft gave `zones.priced` a `region` field and called its subject unregioned. The publisher added `.region-<k>` to any message with a `region` field, but subscribers did so only for a fixed set of ten types. Over NATS, riders would never have seen a price; the spike ran in process, where the bus routes by type, so it never showed. The fix was to key subjects on the type set ([#302 review](https://github.com/kludw/uber-simulator/pull/302#discussion_r4222147017)).
+- **"Waiting" meant two things.** The draft priced zones by "waiting trips", but `waiting` was already a rider state and the UI's waiting riders, which include matched trips. The term became **unmatched trips** ([#302 review](https://github.com/kludw/uber-simulator/pull/302#discussion_r4222147021)).
+- **Heap growth that was garbage.** The chasing ADR's draft read a +43% "heap at end" from `bun run bench` at 600k as growth to explain ([ADR 0055](adr/0055-idle-drivers-chase-surge.md#context)). The bench reads the heap without collecting first, and chasing allocates a record per re-pick. With a forced collection first, the review found no retained growth. The ADR now states the metric, and the live check reported peak RSS instead ([#320 review](https://github.com/kludw/uber-simulator/pull/320#discussion_r4224504548)).
 
 ## Mistakes and surprises
 
