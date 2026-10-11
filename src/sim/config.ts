@@ -82,6 +82,10 @@ export function preferencesNamed(
 // Every process of a run must get the same value (ADR 0054).
 export const SurgeName = z.enum(["off", "on"]);
 
+// Riders opting in to pooling, by name, from env (POOLING) or the CLI
+// (--pooling). Riders only (ADR 0056).
+export const PoolingName = z.enum(["off", "on"]);
+
 // Every process of a run must get the same value (ADR 0050).
 const Regions = RegionLayout.refine(
 	({ columns, rows }) => columns <= specGrid.width && rows <= specGrid.height,
@@ -122,6 +126,7 @@ const Env = z.object({
 	PREFERENCES: PreferencesName.default("off"),
 	REGIONS: Regions,
 	SURGE: SurgeName.default("off"),
+	POOLING: PoolingName.default("off"),
 });
 
 export function parseServiceConfig(
@@ -153,6 +158,7 @@ export function parseServiceConfig(
 			preferences: preferencesNamed(vars.PREFERENCES),
 			regions: vars.REGIONS,
 			surge: vars.SURGE === "on",
+			pooling: vars.POOLING === "on",
 		},
 	};
 }

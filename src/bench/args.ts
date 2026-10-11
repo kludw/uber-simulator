@@ -5,7 +5,7 @@ import * as z from "zod";
 import { specGrid } from "../shared/grid.ts";
 import { RegionLayout } from "../shared/regions.ts";
 import type { Result } from "../shared/result.ts";
-import { SurgeName } from "../sim/config.ts";
+import { PoolingName, SurgeName } from "../sim/config.ts";
 import type { RunConfig } from "../sim/run.ts";
 
 // Message is for the terminal: parseArgs and Zod both describe the problem.
@@ -37,6 +37,7 @@ const Args = z
 			.optional(),
 		regions: RegionLayout,
 		surge: SurgeName,
+		pooling: PoolingName,
 	})
 	.refine((args) => args.drivers % args.shards === 0, {
 		error: "--drivers must split evenly over --shards",
@@ -73,6 +74,8 @@ export function parseBenchArgs(argv: string[]): Result<BenchArgs, InvalidArgs> {
 				regions: { type: "string", default: "1x1" },
 				// Off: no message carries a price (ADR 0054).
 				surge: { type: "string", default: "off" },
+				// Off: no trip is pooled (ADR 0056).
+				pooling: { type: "string", default: "off" },
 			},
 			strict: true,
 		}).values;
@@ -113,6 +116,7 @@ export function parseBenchArgs(argv: string[]): Result<BenchArgs, InvalidArgs> {
 				shifts: { type: "always_online" },
 				regions: args.regions,
 				surge: args.surge === "on",
+				pooling: args.pooling === "on",
 			},
 			maxMinutes: args["max-minutes"],
 		},

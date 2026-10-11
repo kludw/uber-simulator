@@ -53,6 +53,8 @@ export type RidersState = {
 	surge: boolean;
 	// The last zones.priced per region, by zone: zones not listed are 1.0.
 	prices: Map<Region, Map<Zone, Surge>>;
+	// Whether riders opt in to pooling (ADR 0056).
+	pooling: boolean;
 };
 
 export type RidersInput =
@@ -77,13 +79,15 @@ type Rejected = InputRejected<
 
 type Decision = { state: RidersState; outputs: RidersOutput[] };
 
-// Missing demand = uniform; missing regions = one region; missing surge = off.
+// Missing demand = uniform; missing regions = one region; missing surge or
+// pooling = off.
 export function startRiders(config: {
 	grid: Grid;
 	requestsPerMinute: number;
 	demand?: Demand;
 	regions?: RegionLayout;
 	surge?: boolean;
+	pooling?: boolean;
 }): RidersState {
 	const demand = config.demand ?? { type: "uniform" };
 	assertValidDemand(demand, config.grid);
@@ -96,6 +100,7 @@ export function startRiders(config: {
 		riders: new Map(),
 		surge: config.surge ?? false,
 		prices: new Map(),
+		pooling: config.pooling ?? false,
 	};
 }
 
@@ -232,6 +237,8 @@ function onTick(
 	const willingness = state.surge
 		? random.child(`willingness:${input.tick}`)
 		: null;
+	// Pooling off draws nothing from it (ADR 0056).
+	const optIn = state.pooling ? random.child(`pool:${input.tick}`) : null;
 	const spawnCount = poisson(state.requestsPerMinute / 60, demand);
 	const nextPickup = pickupsForTick(state.demand, state.grid, input.tick, {
 		root: random,
@@ -272,6 +279,9 @@ function onTick(
 			requestedAt: input.tick,
 			patience: patience.int(120, 300),
 		};
+		// One draw per spawned rider, declined or not, so a decline never
+		// shifts later draws.
+		const pooled = optIn !== null && optIn.float() < poolShare;
 		let quote: Surge | undefined;
 		if (willingness !== null) {
 			quote =
@@ -301,10 +311,14 @@ function onTick(
 			dropoff,
 			region: rider.region,
 			...(quote === undefined ? {} : { surge: quote }),
+			...(pooled ? { pooled: true as const } : {}),
 		});
 	}
 	return { state, outputs };
 }
+
+// The probability a spawned rider opts in to pooling (ADR 0056).
+const poolShare = 0.5;
 
 // Largest mean Knuth's method draws exactly: Math.exp(-mean) stays a normal
 // double up to ~708 and underflows to 0 at ~745, capping the draw there.

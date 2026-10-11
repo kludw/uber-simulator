@@ -27,6 +27,7 @@ describe("parseBenchArgs", () => {
 					shifts: { type: "always_online" },
 					regions: { columns: 1, rows: 1 },
 					surge: false,
+					pooling: false,
 				},
 				maxMinutes: undefined,
 			},
@@ -38,6 +39,14 @@ describe("parseBenchArgs", () => {
 		expect(parseBenchArgs(["--surge", "on"])).toMatchObject({
 			ok: true,
 			value: { config: { surge: true } },
+		});
+	});
+
+	// ADR 0056.
+	test("--pooling on lets riders opt in to pooling", () => {
+		expect(parseBenchArgs(["--pooling", "on"])).toMatchObject({
+			ok: true,
+			value: { config: { pooling: true } },
 		});
 	});
 

@@ -7,6 +7,7 @@ import type { Result } from "../shared/result.ts";
 import {
 	DemandName,
 	demandNamed,
+	PoolingName,
 	PreferencesName,
 	preferencesNamed,
 	ShiftsName,
@@ -21,6 +22,8 @@ export type SimArgs = {
 	compare: boolean;
 	// The configured matching with surge off and on, side by side (ADR 0054).
 	compareSurge: boolean;
+	// The configured matching with pooling off and on, side by side (ADR 0056).
+	comparePooling: boolean;
 	matching: "greedy" | "batched";
 	// Batched only.
 	windowTicks: number;
@@ -57,6 +60,8 @@ const Args = z
 		compare: z.boolean(),
 		"compare-surge": z.boolean(),
 		surge: SurgeName,
+		"compare-pooling": z.boolean(),
+		pooling: PoolingName,
 		demand: DemandName,
 		shifts: ShiftsName,
 		preferences: PreferencesName,
@@ -76,6 +81,18 @@ const Args = z
 		error: "--compare and --compare-surge are exclusive",
 		path: ["compare-surge"],
 	})
+	.refine((args) => !(args["compare-pooling"] && args.bus === "nats"), {
+		error: "--compare-pooling runs in process only",
+		path: ["compare-pooling"],
+	})
+	.refine(
+		(args) =>
+			!(args["compare-pooling"] && (args.compare || args["compare-surge"])),
+		{
+			error: "--compare-pooling, --compare and --compare-surge are exclusive",
+			path: ["compare-pooling"],
+		},
+	)
 	.refine(
 		({ regions }) =>
 			regions.columns <= specGrid.width && regions.rows <= specGrid.height,
@@ -98,6 +115,9 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 				"compare-surge": { type: "boolean", default: false },
 				// Off: no message carries a price (ADR 0054).
 				surge: { type: "string", default: "off" },
+				"compare-pooling": { type: "boolean", default: false },
+				// Off: no trip is pooled (ADR 0056).
+				pooling: { type: "string", default: "off" },
 				// Spec defaults (docs/spec.md).
 				demand: { type: "string", default: "uniform" },
 				shifts: { type: "string", default: "off" },
@@ -131,6 +151,7 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 			bus: args.bus,
 			compare: args.compare,
 			compareSurge: args["compare-surge"],
+			comparePooling: args["compare-pooling"],
 			matching: args.matching,
 			windowTicks: args["batch-window"],
 			demandName: args.demand,
@@ -148,6 +169,7 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 				preferences: preferencesNamed(args.preferences),
 				regions: args.regions,
 				surge: args.surge === "on",
+				pooling: args.pooling === "on",
 			},
 		},
 	};
