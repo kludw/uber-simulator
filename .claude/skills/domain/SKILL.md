@@ -99,7 +99,7 @@ Living document. New concept in code = add term here in same change. Meaning shi
 
 ## Pooling (0056)
 
-Decided; the rules are in `src/shared/pool.ts` (`joinEtaOf`, `partnerDropsFirst`), the pooled fare in `fareOf`, `pooled` on messages (#345); no brain uses them yet (lands with #328, #329). Off by default (`--pooling on|off` for `bun run sim` and `bun run bench`, `POOLING` for `bun run dev`, `SimConfig.pooling`); with pooling off no trip is pooled and no message carries `pooled`.
+Decided; the rules are in `src/shared/pool.ts` (`joinEtaOf`, `partnerDropsFirst`), the pooled fare in `fareOf`, `pooled` on messages (#345); busy drivers keep their trips and next stops (#346), one trip each so far; no brain uses the rules yet (lands with #328, #329). Off by default (`--pooling on|off` for `bun run sim` and `bun run bench`, `POOLING` for `bun run dev`, `SimConfig.pooling`); with pooling off no trip is pooled and no message carries `pooled`.
 
 - **Pooling**: riders sharing one driver.
 - **Pooled trip**: a trip whose rider opted in: `pooled: true` on its `request_trip`, `trip.requested` and `offer`s. **Pool share**: the probability a spawned rider opts in, 0.5, drawn from child stream `pool:<tick>` (riders only).
