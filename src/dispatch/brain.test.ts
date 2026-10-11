@@ -2229,3 +2229,156 @@ describe("decideDispatch pricing", () => {
 		expect(outputs).toEqual([]);
 	});
 });
+
+// ADR 0056. A 300 × 300 grid so joins can be up to 120 ticks away; cells on
+// row 0 unless noted, so distances are differences of x.
+describe("decideDispatch pooling", () => {
+	const poolGrid: Grid = { width: 300, height: 300 };
+
+	function at(x: number, y = 0): Cell {
+		return cellAt(x as Coordinate, y as Coordinate);
+	}
+
+	function trip(n: number): TripId {
+		return TripId.parse(`t-${n}`);
+	}
+
+	function pooled(n: number, pickup: Cell, dropoff: Cell): RequestTrip {
+		return {
+			type: "request_trip",
+			tick: tick(1),
+			tripId: trip(n),
+			riderId: RiderId.parse(`r-${n}`),
+			pickup,
+			dropoff,
+			region: Region.parse(0),
+			pooled: true,
+		};
+	}
+
+	function online(driverIndex: DriverIndex, cell: Cell): DispatchInput {
+		return driversWentOnline(tick(0), Region.parse(0), fleetSize, [
+			{ driverIndex, cell },
+		]);
+	}
+
+	// The last input's outputs of one type.
+	function outputsOf(
+		type: string,
+		inputs: DispatchInput[],
+		options: { matching?: Matching; surge?: boolean } = {},
+	) {
+		let state = startDispatch({
+			grid: poolGrid,
+			fleetSize,
+			tick: tick(0),
+			...options,
+		});
+		let outputs: unknown[] = [];
+		for (const input of inputs) {
+			({ state, outputs } = decideDispatch(state, input, random));
+		}
+		return outputs.filter(
+			(output) => (output as { type: string }).type === type,
+		);
+	}
+
+	function offers(inputs: DispatchInput[], matching?: Matching) {
+		return outputsOf("offer", inputs, { matching });
+	}
+
+	test("announces a pooled trip requested as pooled", () => {
+		const outputs = outputsOf("trip.requested", [pooled(1, at(10), at(110))]);
+
+		expect(outputs).toEqual([
+			{
+				type: "trip.requested",
+				tick: tick(1),
+				tripId: trip(1),
+				riderId: RiderId.parse("r-1"),
+				pickup: at(10),
+				dropoff: at(110),
+				pooled: true,
+			},
+		]);
+	});
+
+	// Distance 100: base fare 250 + 2 × 100 = 450 cents; × 1.2 surge × 0.75
+	// pooled = 405.
+	test("prices a pooled trip at the pooled fare of its rider's quote", () => {
+		const outputs = outputsOf(
+			"trip.requested",
+			[{ ...pooled(1, at(10), at(110)), surge: Surge.parse(1.2) }],
+			{ surge: true },
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "trip.requested",
+				tick: tick(1),
+				tripId: trip(1),
+				riderId: RiderId.parse("r-1"),
+				pickup: at(10),
+				dropoff: at(110),
+				surge: 1.2,
+				fare: 405,
+				pooled: true,
+			},
+		]);
+	});
+
+	test("offers a pooled trip as pooled", () => {
+		const outputs = offers([
+			pooled(1, at(10), at(110)),
+			online(i1, at(0)),
+			ticked(1),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: trip(1),
+				driverId: d1,
+				pickup: at(10),
+				dropoff: at(110),
+				pooled: true,
+			},
+		]);
+	});
+
+	// t-1 (10 → 110) matched to d-01 at 0. t-2 (20 → 100) joins: join ETA
+	// 10 + 10 = 20; t-1 rides 10 + 80 + 10 = 100 of its 150, t-2 its direct 80.
+	const partnerMatched: DispatchInput[] = [
+		pooled(1, at(10), at(110)),
+		online(i1, at(0)),
+		ticked(1),
+		accepted(trip(1), d1),
+	];
+
+	function joinOffer(
+		n: number,
+		driverId: DriverId,
+		pickup: Cell,
+		dropoff: Cell,
+	) {
+		return {
+			type: "offer",
+			tripId: trip(n),
+			driverId,
+			pickup,
+			dropoff,
+			pooled: true,
+		};
+	}
+
+	test("offers a queued pooled trip to its partner's driver before a nearer idle driver", () => {
+		const outputs = offers([
+			...partnerMatched,
+			online(i2, at(20)),
+			pooled(2, at(20), at(100)),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([joinOffer(2, d1, at(20), at(100))]);
+	});
+});
