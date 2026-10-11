@@ -51,6 +51,9 @@ import {
 
 // region: the trip's, its pickup's region, from the offer until the trip
 // is over; the driver's trip messages go there (ADR 0050).
+// A busy driver's current stop is its own fields (tripId and pickup or
+// dropoff); trips: the trips it holds; next: its stops after the current
+// one, in order (ADR 0056). Both built once per change, never per tick.
 type Driver =
 	| { state: "offline"; id: DriverId; index: DriverIndex; cell: Cell }
 	| {
@@ -69,6 +72,8 @@ type Driver =
 			region: Region;
 			pickup: Cell;
 			dropoff: Cell;
+			trips: HeldTrips;
+			next: readonly Stop[];
 	  }
 	// Position is the pickup: no separate cell.
 	| {
@@ -80,6 +85,8 @@ type Driver =
 			pickup: Cell;
 			dropoff: Cell;
 			arrivedAt: Tick;
+			trips: HeldTrips;
+			next: readonly Stop[];
 	  }
 	| {
 			state: "on_trip";
@@ -89,6 +96,8 @@ type Driver =
 			tripId: TripId;
 			region: Region;
 			dropoff: Cell;
+			trips: HeldTrips;
+			next: readonly Stop[];
 	  }
 	// Position is the dropoff: no separate cell.
 	| {
@@ -99,7 +108,24 @@ type Driver =
 			region: Region;
 			dropoff: Cell;
 			arrivedAt: Tick;
+			trips: HeldTrips;
+			next: readonly Stop[];
 	  };
+
+type HeldTrip = {
+	tripId: TripId;
+	pickup: Cell;
+	dropoff: Cell;
+	pooled: boolean;
+};
+
+// At most two trips per driver (ADR 0056).
+type HeldTrips = [HeldTrip] | [HeldTrip, HeldTrip];
+
+type Stop = { kind: "pickup" | "dropoff"; tripId: TripId; cell: Cell };
+
+// Shared by every driver with no stop after its current one.
+const noStops: readonly Stop[] = [];
 
 // Missing = always_online. In shift mode drivers alternate online and offline
 // periods with lengths uniform in the ranges (ADR 0032).
@@ -429,6 +455,15 @@ function onOffer(
 		region,
 		pickup: offer.pickup,
 		dropoff: offer.dropoff,
+		trips: [
+			{
+				tripId: offer.tripId,
+				pickup: offer.pickup,
+				dropoff: offer.dropoff,
+				pooled: offer.pooled === true,
+			},
+		],
+		next: [{ kind: "dropoff", tripId: offer.tripId, cell: offer.dropoff }],
 	});
 	return {
 		state,
@@ -477,6 +512,8 @@ function onPickedUp(state: DriverShardState, pickedUp: TripPickedUp): Decision {
 		tripId: addressed.tripId,
 		region: addressed.region,
 		dropoff: addressed.dropoff,
+		trips: addressed.trips,
+		next: noStops,
 	});
 }
 
@@ -572,6 +609,8 @@ function onTripStatus(state: DriverShardState, status: TripStatus): Decision {
 			tripId: addressed.tripId,
 			region: addressed.region,
 			dropoff: addressed.dropoff,
+			trips: addressed.trips,
+			next: noStops,
 		});
 	}
 	if (
@@ -915,6 +954,8 @@ function driveToPickup(
 		pickup: driver.pickup,
 		dropoff: driver.dropoff,
 		arrivedAt: tick,
+		trips: driver.trips,
+		next: driver.next,
 	};
 }
 
@@ -948,5 +989,7 @@ function driveToDropoff(
 		region: driver.region,
 		dropoff: driver.dropoff,
 		arrivedAt: tick,
+		trips: driver.trips,
+		next: driver.next,
 	};
 }
