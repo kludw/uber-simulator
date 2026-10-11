@@ -1,4 +1,4 @@
-import { type Cell, distance } from "../shared/grid.ts";
+import { type Cell, sameCell } from "../shared/grid.ts";
 import type {
 	DriverId,
 	RequestTrip,
@@ -199,7 +199,7 @@ function arrivalRejection(
 	if (trip.driverId !== driverId) {
 		return { type: "wrong_driver", tripId: trip.id, driverId };
 	}
-	if (distance(cell, target) !== 0) {
+	if (!sameCell(cell, target)) {
 		return { type: "wrong_cell", tripId: trip.id, cell };
 	}
 	return null;

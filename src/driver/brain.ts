@@ -7,6 +7,7 @@ import {
 	type Grid,
 	onRoad,
 	randomCell,
+	sameCell,
 	stepToward,
 } from "../shared/grid.ts";
 import type {
@@ -1015,12 +1016,12 @@ function wander(
 	wanderTarget: Cell,
 	moves: DriverMove[],
 ): IdleDriver {
-	if (distance(driver.cell, wanderTarget) === 0) {
+	if (sameCell(driver.cell, wanderTarget)) {
 		return { ...driver, wanderTarget: null };
 	}
-	const cell = stepToward(driver.cell, wanderTarget);
+	const cell = stepToward(driver.cell, wanderTarget, driver.index);
 	moves.push({ driverIndex: driver.index, cell });
-	const arrived = distance(cell, wanderTarget) === 0;
+	const arrived = sameCell(cell, wanderTarget);
 	return { ...driver, cell, wanderTarget: arrived ? null : wanderTarget };
 }
 
@@ -1031,11 +1032,11 @@ function driveToPickup(
 	outputs: DriverShardOutput[],
 ): Driver {
 	let cell = driver.cell;
-	if (distance(cell, driver.pickup) > 0) {
-		cell = stepToward(cell, driver.pickup);
+	if (!sameCell(cell, driver.pickup)) {
+		cell = stepToward(cell, driver.pickup, driver.index);
 		moves.push({ driverIndex: driver.index, cell });
 	}
-	if (distance(cell, driver.pickup) > 0) {
+	if (!sameCell(cell, driver.pickup)) {
 		return { ...driver, cell };
 	}
 	outputs.push({
@@ -1066,11 +1067,11 @@ function driveToDropoff(
 	outputs: DriverShardOutput[],
 ): Driver {
 	let cell = driver.cell;
-	if (distance(cell, driver.dropoff) > 0) {
-		cell = stepToward(cell, driver.dropoff);
+	if (!sameCell(cell, driver.dropoff)) {
+		cell = stepToward(cell, driver.dropoff, driver.index);
 		moves.push({ driverIndex: driver.index, cell });
 	}
-	if (distance(cell, driver.dropoff) > 0) {
+	if (!sameCell(cell, driver.dropoff)) {
 		return { ...driver, cell };
 	}
 	outputs.push({

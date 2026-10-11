@@ -244,7 +244,9 @@ function fromLanding(
 		return Math.abs(lx - tx) + Math.abs(ly - ty);
 	let best = Number.POSITIVE_INFINITY;
 	const row = l * net.landings;
-	for (const q of net.landingsOf[dt] as Int32Array) {
+	const listq = net.landingsOf[dt] as Int32Array;
+	for (let iq = 0; iq < listq.length; iq++) {
+		const q = listq[iq] as number;
 		const c =
 			(net.between[row + q] as number) +
 			Math.abs((net.landingX[q] as number) - tx) +
@@ -283,7 +285,9 @@ export function roadDistance(
 		throw new Error(`off road: (${ax}, ${ay}) or (${tx}, ${ty})`);
 	if (da === dt) return Math.abs(ax - tx) + Math.abs(ay - ty);
 	let best = Number.POSITIVE_INFINITY;
-	for (const p of net.landingsOf[da] as Int32Array) {
+	const listp = net.landingsOf[da] as Int32Array;
+	for (let ip = 0; ip < listp.length; ip++) {
+		const p = listp[ip] as number;
 		const c =
 			Math.abs((net.landingX[p] as number) - ax) +
 			Math.abs((net.landingY[p] as number) - ay) +
@@ -333,7 +337,9 @@ export function roadDistanceFrom(
 		net.cacheY = fy;
 	}
 	let best = Number.POSITIVE_INFINITY;
-	for (const p of net.landingsOf[d] as Int32Array) {
+	const listp = net.landingsOf[d] as Int32Array;
+	for (let ip = 0; ip < listp.length; ip++) {
+		const p = listp[ip] as number;
 		const c =
 			Math.abs((net.landingX[p] as number) - x) +
 			Math.abs((net.landingY[p] as number) - y) +
@@ -343,23 +349,24 @@ export function roadDistanceFrom(
 	return best;
 }
 
-// The next cell on a shortest road path toward a district cell: within a
-// district today's step rule; else toward the best exit landing (ties to the
-// lowest), onto its bridge when there, across a bridge to the nearer end.
+// The next cell on a shortest road path toward a district cell, as
+// y * width + x (no allocation): within a district today's step rule; else
+// toward the best exit landing (ties to the lowest), onto its bridge when
+// there, across a bridge to the nearer end.
 export function roadStep(
 	net: RoadNetwork,
 	ax: number,
 	ay: number,
 	tx: number,
 	ty: number,
-	stepToward: (
-		x: number,
-		y: number,
-		tx: number,
-		ty: number,
-	) => [number, number],
-): [number, number] {
-	const bridge = net.bridgeOf[ay * net.width + ax] as number;
+	driverIndex = -1,
+): number {
+	const w = net.width;
+	// Districts first: their lookups are two small arrays; bridges are rare.
+	const da = districtOf(net, ax, ay);
+	const dt = districtOf(net, tx, ty);
+	if (da >= 0 && da === dt) return gridStep(w, ax, ay, tx, ty);
+	const bridge = net.bridgeOf[ay * w + ax] as number;
 	if (bridge >= 0) {
 		const l0 = 2 * bridge;
 		const d0 = roadDistance(
@@ -377,32 +384,84 @@ export function roadStep(
 			ty,
 		);
 		const l = d1 < d0 ? l0 + 1 : l0;
-		return [net.landingX[l] as number, net.landingY[l] as number];
+		return (net.landingY[l] as number) * w + (net.landingX[l] as number);
 	}
-	const da = districtOf(net, ax, ay);
-	const dt = districtOf(net, tx, ty);
 	if (da < 0 || dt < 0)
 		throw new Error(`off road step (${ax}, ${ay}) -> (${tx}, ${ty})`);
-	if (da === dt) return stepToward(ax, ay, tx, ty);
-	let best = Number.POSITIVE_INFINITY;
+	// SPIKE: a driver keeps its exit (waypoint) while its target is the same
+	// and it stands where its last step put it; still on a shortest path (each
+	// step lowers the cost via it by 1).
+	const key = ty * w + tx;
 	let exit = -1;
-	for (const p of net.landingsOf[da] as Int32Array) {
-		const c =
-			Math.abs((net.landingX[p] as number) - ax) +
-			Math.abs((net.landingY[p] as number) - ay) +
-			exitCostOf(net, p, tx, ty, dt);
-		if (c < best) {
-			best = c;
-			exit = p;
+	if (
+		driverIndex >= 0 &&
+		driverIndex < viaTarget.length &&
+		viaTarget[driverIndex] === key &&
+		viaFrom[driverIndex] === ay * w + ax
+	) {
+		const kept = viaExit[driverIndex] as number;
+		if (kept >= 0 && net.landingDistrict[kept] === da) exit = kept;
+	}
+	if (exit < 0) {
+		let best = Number.POSITIVE_INFINITY;
+		const listp = net.landingsOf[da] as Int32Array;
+		for (let ip = 0; ip < listp.length; ip++) {
+			const p = listp[ip] as number;
+			const c =
+				Math.abs((net.landingX[p] as number) - ax) +
+				Math.abs((net.landingY[p] as number) - ay) +
+				exitCostOf(net, p, tx, ty, dt);
+			if (c < best) {
+				best = c;
+				exit = p;
+			}
+		}
+		if (driverIndex >= 0) {
+			if (driverIndex >= viaTarget.length) growVia(driverIndex + 1);
+			viaTarget[driverIndex] = key;
+			viaExit[driverIndex] = exit;
 		}
 	}
 	const ex = net.landingX[exit] as number;
 	const ey = net.landingY[exit] as number;
-	if (ex === ax && ey === ay) {
-		const b = exit >> 1;
-		return [net.bridgeX[b] as number, net.bridgeY[b] as number];
-	}
-	return stepToward(ax, ay, ex, ey);
+	const next =
+		ex === ax && ey === ay
+			? (net.bridgeY[exit >> 1] as number) * w +
+				(net.bridgeX[exit >> 1] as number)
+			: gridStep(w, ax, ay, ex, ey);
+	if (driverIndex >= 0) viaFrom[driverIndex] = next;
+	return next;
+}
+
+// Today's rule (larger remaining axis first, ties to x), as y * width + x.
+function gridStep(
+	w: number,
+	x: number,
+	y: number,
+	tx: number,
+	ty: number,
+): number {
+	const dx = tx - x;
+	const dy = ty - y;
+	if (Math.abs(dy) > Math.abs(dx)) return (y + Math.sign(dy)) * w + x;
+	return y * w + x + Math.sign(dx);
+}
+
+let viaTarget = new Int32Array(0);
+let viaExit = new Int32Array(0);
+// The cell the last step returned: the cache holds only for a driver there.
+let viaFrom = new Int32Array(0);
+function growVia(size: number): void {
+	const next = Math.max(size, 2 * viaTarget.length);
+	const target = new Int32Array(next).fill(-1);
+	const exit = new Int32Array(next).fill(-1);
+	const from = new Int32Array(next).fill(-1);
+	target.set(viaTarget);
+	exit.set(viaExit);
+	from.set(viaFrom);
+	viaTarget = target;
+	viaExit = exit;
+	viaFrom = from;
 }
 
 // Spike knob: SPIKE_ROADS=river|canals (off when unset), built on the spec grid.

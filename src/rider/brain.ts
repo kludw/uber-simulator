@@ -1,4 +1,4 @@
-import { distance, type Grid, randomCell } from "../shared/grid.ts";
+import { distance, type Grid, randomCell, sameCell } from "../shared/grid.ts";
 import type {
 	CancelTrip,
 	CancelTripRejected,
@@ -317,7 +317,7 @@ function onTick(
 		state.spawned++;
 		const pickup = nextPickup();
 		let dropoff = randomCell(state.grid, demand);
-		while (distance(pickup, dropoff) === 0) {
+		while (sameCell(pickup, dropoff)) {
 			dropoff = randomCell(state.grid, demand);
 		}
 		const rider: Rider = {

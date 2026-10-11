@@ -13,6 +13,10 @@ import {
 // SPIKE (#335): roads on when SPIKE_ROADS names a network.
 const roads = spikeRoads;
 
+export function sameCell(a: Cell, b: Cell): boolean {
+	return a.x === b.x && a.y === b.y;
+}
+
 export function manhattan(a: Cell, b: Cell): number {
 	return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
@@ -104,17 +108,18 @@ export function randomCell(grid: Grid, random: Random): Cell {
 }
 
 // Stays a valid Cell without a grid check: the step lands between two in-grid cells.
-export function stepToward(from: Cell, target: Cell): Cell {
+export function stepToward(from: Cell, target: Cell, driverIndex = -1): Cell {
 	if (roads !== null) {
-		const [x, y] = roadStep(
+		const next = roadStep(
 			roads,
 			from.x,
 			from.y,
 			target.x,
 			target.y,
-			gridStep,
+			driverIndex,
 		);
-		return { x, y } as Cell;
+		const x = next % roads.width;
+		return { x, y: (next - x) / roads.width } as Cell;
 	}
 	const dx = target.x - from.x;
 	const dy = target.y - from.y;
@@ -122,16 +127,4 @@ export function stepToward(from: Cell, target: Cell): Cell {
 		return { ...from, y: from.y + Math.sign(dy) } as Cell;
 	}
 	return { ...from, x: from.x + Math.sign(dx) } as Cell;
-}
-
-function gridStep(
-	x: number,
-	y: number,
-	tx: number,
-	ty: number,
-): [number, number] {
-	const dx = tx - x;
-	const dy = ty - y;
-	if (Math.abs(dy) > Math.abs(dx)) return [x, y + Math.sign(dy)];
-	return [x + Math.sign(dx), y];
 }
