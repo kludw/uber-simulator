@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type Cell, cellIn } from "./grid.ts";
-import { joinEtaOf, partnerDropsFirst } from "./pool.ts";
+import { joinEtaOf, joinReachOf, partnerDropsFirst } from "./pool.ts";
 
 function cell(x: number, y: number): Cell {
 	const result = cellIn({ width: 500, height: 500 }, x, y);
@@ -121,6 +121,20 @@ describe("joinEtaOf", () => {
 });
 
 // The joining pickup at (50, 50); dropoffs at the given distances from it.
+describe("joinReachOf", () => {
+	test("is the nearest idle driver's pickup distance", () => {
+		expect(joinReachOf(30)).toBe(30);
+	});
+
+	test("is at most 120 ticks however far the nearest idle driver is", () => {
+		expect(joinReachOf(121)).toBe(120);
+	});
+
+	test("is 120 ticks with no idle driver", () => {
+		expect(joinReachOf(undefined)).toBe(120);
+	});
+});
+
 describe("partnerDropsFirst", () => {
 	test("drops the partner first when its dropoff is nearer", () => {
 		expect(

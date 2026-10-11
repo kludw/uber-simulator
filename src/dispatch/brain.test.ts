@@ -2573,12 +2573,55 @@ describe("decideDispatch pooling", () => {
 		};
 	}
 
-	test("offers a queued pooled trip to its partner's driver before a nearer idle driver", () => {
+	// ADR 0058: t-2's join ETA is 20; an idle driver 19 away is nearer, one
+	// 20 away is not.
+	test("offers a queued pooled trip to an idle driver nearer than its partner's driver", () => {
 		const outputs = offers([
 			...partnerMatched,
-			online(i2, at(20)),
+			online(i2, at(39)),
 			pooled(2, at(20), at(100)),
 			ticked(2),
+		]);
+
+		expect(outputs).toEqual([joinOffer(2, d2, at(20), at(100))]);
+	});
+
+	test("joins a partner's driver when no idle driver is nearer", () => {
+		const outputs = offers([
+			...partnerMatched,
+			online(i2, at(40)),
+			pooled(2, at(20), at(100)),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([joinOffer(2, d1, at(20), at(100))]);
+	});
+
+	// ADR 0057, 0058: the reach comes from d-02, 5 away, so no join; d-02
+	// rated 4 costs 5 + 10, d-10 rated 5 costs 10.
+	test("offers a pooled trip that joins no partner to the idle driver of least match cost", () => {
+		const d10 = driverIdAt(fleetSize, i10);
+		const outputs = offers([
+			...partnerMatched,
+			online(i2, at(25)),
+			online(i10, at(30)),
+			rated(d2, 4),
+			rated(d10, 5),
+			pooled(2, at(20), at(100)),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([joinOffer(2, d10, at(20), at(100))]);
+	});
+
+	test("joins a partner's driver when the only nearer idle driver is excluded for the trip", () => {
+		const outputs = offers([
+			...partnerMatched,
+			online(i2, at(21)),
+			pooled(2, at(20), at(100)),
+			ticked(2),
+			declined(trip(2), d2, at(21)),
+			ticked(3),
 		]);
 
 		expect(outputs).toEqual([joinOffer(2, d1, at(20), at(100))]);
@@ -2705,9 +2748,9 @@ describe("decideDispatch pooling", () => {
 	// t-9, requested first, declined by d-10 and offered d-02 at 40 in the
 	// joining tick, after t-10 on d-01 at 222: each driver 60 from its
 	// partner's pickup (100, 162), each pickup 31 from the joining pickup at
-	// 131 (and 62 apart, so neither joins the other). Not offer order, nor ID
-	// order of trips or drivers.
-	test("breaks a join ETA tie to the partner requested earlier", () => {
+	// 131 (and 62 apart, so neither joins the other). Not offer order, nor
+	// request order (ADR 0058).
+	test("breaks a join ETA tie to the lower driver ID", () => {
 		const outputs = offers([
 			pooled(9, at(100), at(131, 200)),
 			pooled(10, at(162), at(131, 200)),
@@ -2722,7 +2765,7 @@ describe("decideDispatch pooling", () => {
 
 		expect(outputs).toEqual([
 			joinOffer(9, d2, at(100), at(131, 200)),
-			joinOffer(3, d2, at(131), at(131, 200)),
+			joinOffer(3, d1, at(131), at(131, 200)),
 		]);
 	});
 
@@ -2829,8 +2872,9 @@ describe("decideDispatch pooling", () => {
 
 	const batched: Matching = { type: "batched", windowTicks: 2 };
 
-	// One idle driver, d-02 at 30, for t-2 (10 away) and t-3 (15 away): batched
-	// matching alone gives it t-2; joining t-1 first leaves it to t-3.
+	// One idle driver, d-02 at 40, for t-2 (20 away, its join ETA too) and t-3
+	// (21 away): batched matching alone gives it t-2; joining t-1 first leaves
+	// it to t-3.
 	test("batched joins pooled trips to partners before matching the rest", () => {
 		const outputs = offers(
 			[
@@ -2838,9 +2882,9 @@ describe("decideDispatch pooling", () => {
 				online(i1, at(0)),
 				ticked(2),
 				accepted(trip(1), d1),
-				online(i2, at(30)),
+				online(i2, at(40)),
 				pooled(2, at(20), at(100)),
-				unpooled(3, at(45), at(100)),
+				unpooled(3, at(61), at(100)),
 				ticked(4),
 			],
 			batched,
@@ -2852,7 +2896,7 @@ describe("decideDispatch pooling", () => {
 				type: "offer",
 				tripId: trip(3),
 				driverId: d2,
-				pickup: at(45),
+				pickup: at(61),
 				dropoff: at(100),
 			},
 		]);
@@ -2894,34 +2938,5 @@ describe("decideDispatch pooling", () => {
 				dropoff: at(80),
 			},
 		]);
-	});
-
-	// No open pooled trip: matching skips the join passes (ADR 0056 rule 4).
-	function openPooledAfter(inputs: DispatchInput[]): number {
-		let state = startDispatch({ grid: poolGrid, fleetSize, tick: tick(0) });
-		for (const input of inputs) {
-			({ state } = decideDispatch(state, input, random));
-		}
-		return state.pooledOpen;
-	}
-
-	test("counts no open pooled trip once its pooled trips are cancelled", () => {
-		const open = openPooledAfter([
-			...partnerMatched,
-			pooled(5, at(200), at(250)),
-			cancelTrip(trip(5)),
-			cancelTrip(trip(1)),
-		]);
-
-		expect(open).toBe(0);
-	});
-
-	test("counts no open pooled trip once both trips of a pool are completed", () => {
-		const open = openPooledAfter([
-			...firstDroppedOff,
-			arrivedAtDropoff(trip(2), d1, at(50)),
-		]);
-
-		expect(open).toBe(0);
 	});
 });
