@@ -1,4 +1,10 @@
-import { type Cell, cellIn, distance, type Grid } from "../shared/grid.ts";
+import {
+	type Cell,
+	cellIn,
+	distance,
+	drivable,
+	type Grid,
+} from "../shared/grid.ts";
 import type {
 	DriverId,
 	Message,
@@ -243,7 +249,7 @@ function observeMove(
 		violations.push({ type: "offline_driver_moved", tick, driverId, cell });
 	}
 	violations.push(...checkStep(log, tick, driverId, cell));
-	if (!cellIn(grid, cell.x, cell.y).ok) {
+	if (!cellIn(grid, cell.x, cell.y).ok || !drivable(cell)) {
 		violations.push({ type: "driver_left_grid", tick, driverId, cell });
 	}
 	log.driverPositions.set(driverId, { tick, cell });
@@ -283,7 +289,9 @@ function checkStep(
 ): Violation[] {
 	const last = log.driverPositions.get(driverId);
 	if (last === undefined) return [];
-	if (tick > last.tick && distance(last.cell, cell) <= 1) return [];
+	if (tick > last.tick && drivable(cell) && distance(last.cell, cell) <= 1) {
+		return [];
+	}
 	return [
 		{
 			type: "driver_moved_too_fast",

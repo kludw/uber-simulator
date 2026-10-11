@@ -2,8 +2,9 @@
 import {
 	type Cell,
 	cellIn,
-	distance,
 	type Grid,
+	manhattan,
+	onRoad,
 	randomCell,
 	specGrid,
 } from "../shared/grid.ts";
@@ -106,6 +107,8 @@ function cellInHotspot(hotspot: Hotspot, grid: Grid, random: Random): Cell {
 			x: random.int(minX, maxX),
 			y: random.int(minY, maxY),
 		} as Cell;
-		if (distance(candidate, center) <= radius) return candidate;
+		if (manhattan(candidate, center) <= radius && onRoad(candidate)) {
+			return candidate;
+		}
 	}
 }

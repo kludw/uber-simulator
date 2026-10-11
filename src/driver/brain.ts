@@ -5,6 +5,7 @@ import {
 	cellAt,
 	distance,
 	type Grid,
+	onRoad,
 	randomCell,
 	stepToward,
 } from "../shared/grid.ts";
@@ -753,10 +754,13 @@ function onTick(
 		const area = state.chaseTable.get(zoneOf(state.grid, driver.cell));
 		if (area === undefined) return null;
 		chaseStream ??= random.child(`chase:${input.tick}`);
-		return cellAt(
-			Coordinate.parse(chaseStream.int(area.min.x, area.max.x)),
-			Coordinate.parse(chaseStream.int(area.min.y, area.max.y)),
-		);
+		for (;;) {
+			const cell = cellAt(
+				Coordinate.parse(chaseStream.int(area.min.x, area.max.x)),
+				Coordinate.parse(chaseStream.int(area.min.y, area.max.y)),
+			);
+			if (onRoad(cell)) return cell;
+		}
 	};
 	// Only existing keys are set while iterating: order stays by ID.
 	for (const driver of drivers.values()) {

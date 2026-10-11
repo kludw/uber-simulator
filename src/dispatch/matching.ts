@@ -3,6 +3,7 @@ import {
 	distance,
 	distanceToCoordinates,
 	type Grid,
+	maxDistance,
 } from "../shared/grid.ts";
 import type { DriverId } from "../shared/messages.ts";
 
@@ -177,7 +178,7 @@ export function minCostMatchingByNearest(
 	// (ADR 0051), and no match cost exceeds that plus maxRatingPenalty (ADR
 	// 0057). An off-grid cell is bad input from another service; with one, a
 	// batch may get fewer pairs than the dense solver's.
-	const sentinel = rows * (grid.width + grid.height - 2 + maxRatingPenalty) + 1;
+	const sentinel = rows * (maxDistance(grid) + maxRatingPenalty) + 1;
 	const rowPotential = new Float64Array(rows);
 	const columnOfRow = new Int32Array(rows).fill(unmatched);
 	// Touched drivers (columns), in the order paths reached them. Each path
