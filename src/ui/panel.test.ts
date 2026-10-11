@@ -14,6 +14,7 @@ import {
 	activeTripColor,
 	driverColors,
 	heatmapColors,
+	pooledRingColor,
 	surgeColor,
 	waitingRiderColor,
 } from "./render.ts";
@@ -196,6 +197,50 @@ describe("panelRows", () => {
 				(row) => row.label === "Surging zones",
 			);
 			expect(surging?.swatch).toEqual({ shape: "tile", color: surgeColor });
+		});
+	});
+
+	// ADR 0056. With pooling off no trip is pooled: no pooling rows (above).
+	describe("once a trip is pooled", () => {
+		const pooledView: View = {
+			...emptyView(),
+			tripsPooled: 7,
+			tripsShared: 4,
+			revenue: 383_000,
+		};
+
+		test("adds trips pooled, trips shared, and revenue in dollars", () => {
+			expect(labelsAndValues(panelRows(pooledView)).slice(-3)).toEqual([
+				["Trips pooled", "7"],
+				["Trips shared", "4"],
+				["Revenue", "$3,830.00"],
+			]);
+		});
+
+		test("with surge on too, shows revenue once, last", () => {
+			const view: View = {
+				...pooledView,
+				zonesPriced: new Map([[Region.parse(0), []]]),
+			};
+			expect(
+				labelsAndValues(panelRows(view))
+					.slice(-6)
+					.map(([label]) => label),
+			).toEqual([
+				"Surging zones",
+				"Max surge",
+				"Riders declined",
+				"Trips pooled",
+				"Trips shared",
+				"Revenue",
+			]);
+		});
+
+		test("marks trips shared as the ring drawn around a driver holding two trips", () => {
+			const shared = panelRows(pooledView).find(
+				(row) => row.label === "Trips shared",
+			);
+			expect(shared?.swatch).toEqual({ shape: "ring", color: pooledRingColor });
 		});
 	});
 });

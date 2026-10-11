@@ -4,6 +4,7 @@ import {
 	drawModeOf,
 	driverColors,
 	heatmapColors,
+	pooledRingColor,
 	surgeColor,
 	surgeLabel,
 	waitingRiderColor,
@@ -12,7 +13,7 @@ import type { View } from "./view.ts";
 
 // How the canvas draws what a row counts, so the panel doubles as its legend.
 export type Swatch = {
-	shape: "dot" | "square" | "line" | "tile";
+	shape: "dot" | "square" | "line" | "tile" | "ring";
 	color: string;
 };
 
@@ -21,7 +22,10 @@ export type PanelRow = { label: string; value: string; swatch: Swatch | null };
 const noValue = "-";
 
 type Legend = Record<
-	keyof View["driversPerState"] | "waitingRiders" | "activeTrips",
+	| keyof View["driversPerState"]
+	| "waitingRiders"
+	| "activeTrips"
+	| "tripsShared",
 	Swatch | null
 >;
 
@@ -37,6 +41,7 @@ const legends = {
 		at_dropoff: dot(driverColors.at_dropoff),
 		waitingRiders: { shape: "square", color: waitingRiderColor },
 		activeTrips: { shape: "line", color: activeTripColor },
+		tripsShared: { shape: "ring", color: pooledRingColor },
 	},
 	// Tiles colored idle to busy by their busy share; no trip lines.
 	heatmap: {
@@ -47,6 +52,7 @@ const legends = {
 		at_dropoff: tile(heatmapColors.busy),
 		waitingRiders: tile(heatmapColors.waitingRiders),
 		activeTrips: null,
+		tripsShared: null,
 	},
 } satisfies Record<string, Legend>;
 
@@ -117,6 +123,10 @@ export function panelRows(view: View): PanelRow[] {
 			swatch: null,
 		},
 		...surgeRows(view),
+		...poolingRows(view, legend),
+		...(view.zonesPriced.size > 0 || view.tripsPooled > 0
+			? [{ label: "Revenue", value: dollars(view.revenue), swatch: null }]
+			: []),
 	];
 }
 
@@ -143,6 +153,18 @@ function surgeRows(view: View): PanelRow[] {
 			value: String(view.ridersDeclined),
 			swatch: null,
 		},
-		{ label: "Revenue", value: dollars(view.revenue), swatch: null },
+	];
+}
+
+// Only once a pooled trip was requested: pooling is on (ADR 0056).
+function poolingRows(view: View, legend: Legend): PanelRow[] {
+	if (view.tripsPooled === 0) return [];
+	return [
+		{ label: "Trips pooled", value: String(view.tripsPooled), swatch: null },
+		{
+			label: "Trips shared",
+			value: String(view.tripsShared),
+			swatch: legend.tripsShared,
+		},
 	];
 }

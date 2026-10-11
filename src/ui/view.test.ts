@@ -5,6 +5,7 @@ import {
 	DriverId,
 	driversMoved,
 	driversWentOnline,
+	isSimEvent,
 	RiderId,
 	type SimEvent,
 	Tick,
@@ -12,11 +13,14 @@ import {
 } from "../shared/messages.ts";
 import { Region } from "../shared/regions.ts";
 import { Fare, Surge, Zone } from "../shared/surge.ts";
+import { runInProcess } from "../sim/run.ts";
+import { summarize } from "../sim/summary.ts";
 import {
 	applyEvent,
 	type DriverView,
 	emptyView,
 	forEachDriver,
+	holdsTwoTrips,
 	type View,
 } from "./view.ts";
 
@@ -666,5 +670,220 @@ describe("surge", () => {
 
 	test("a trip completed but never seen requested earns nothing", () => {
 		expect(viewOf(trip.slice(2)).revenue).toBe(0);
+	});
+});
+
+// ADR 0056: a driver may hold two pooled trips.
+describe("pooling", () => {
+	const t2 = TripId.parse("t-2");
+	const pickup2 = cell(3, 2);
+	const dropoff2 = cell(3, 8);
+	const region = Region.parse(0);
+	const pooledRequest = (
+		tripId: TripId,
+		at: number,
+		from: Cell,
+		to: Cell,
+	): SimEvent => ({
+		type: "trip.requested",
+		tick: tick(at),
+		tripId,
+		riderId: r1,
+		pickup: from,
+		dropoff: to,
+		pooled: true,
+	});
+	const pickedUp = (tripId: TripId, at: number): SimEvent => ({
+		type: "trip.picked_up",
+		tick: tick(at),
+		tripId,
+		driverId: d1,
+	});
+	const completed = (tripId: TripId, at: number): SimEvent => ({
+		type: "trip.completed",
+		tick: tick(at),
+		tripId,
+		driverId: d1,
+	});
+	const atPickup = (tripId: TripId, at: number, to: Cell): SimEvent => ({
+		type: "driver.arrived_at_pickup",
+		tick: tick(at),
+		driverId: d1,
+		tripId,
+		cell: to,
+		region,
+	});
+	const atDropoff = (tripId: TripId, at: number, to: Cell): SimEvent => ({
+		type: "driver.arrived_at_dropoff",
+		tick: tick(at),
+		driverId: d1,
+		tripId,
+		cell: to,
+		region,
+	});
+	// t1 matched to d1, then t2 joins before t1's pickup.
+	const joined: SimEvent[] = [
+		online(i1, 0, cell(0, 0)),
+		pooledRequest(t1, 1, pickup, dropoff),
+		matched(t1, d1, 2),
+		pooledRequest(t2, 3, pickup2, dropoff2),
+		matched(t2, d1, 4),
+	];
+	// Then the route: t1's pickup, t2's pickup, t1's dropoff, t2's dropoff.
+	const pool: SimEvent[] = [
+		...joined,
+		atPickup(t1, 7, pickup),
+		pickedUp(t1, 7),
+		atPickup(t2, 9, pickup2),
+		pickedUp(t2, 9),
+		atDropoff(t1, 12, dropoff),
+		completed(t1, 12),
+		atDropoff(t2, 15, dropoff2),
+		completed(t2, 15),
+	];
+	const stateAfter = (events: SimEvent[]) =>
+		driversOf(viewOf(events)).get(i1)?.state;
+
+	test("a driver a pooled trip joins holds two trips", () => {
+		expect(holdsTwoTrips(viewOf(joined), i1)).toBe(true);
+	});
+
+	test("a driver holding one trip does not hold two", () => {
+		expect(holdsTwoTrips(viewOf(trip.slice(0, 3)), i1)).toBe(false);
+	});
+
+	test("a joined driver heading to its first pickup stays en route", () => {
+		expect(stateAfter(joined)).toBe("en_route");
+	});
+
+	test("a pool's first pickup leaves its driver en route to the second", () => {
+		expect(stateAfter(pool.slice(0, 7))).toBe("en_route");
+	});
+
+	test("a pool's second pickup puts its driver on trip", () => {
+		expect(stateAfter(pool.slice(0, 9))).toBe("on_trip");
+	});
+
+	test("a pool's first dropoff leaves its driver on trip with the other rider", () => {
+		expect(stateAfter(pool.slice(0, 11))).toBe("on_trip");
+	});
+
+	test("a pool's first dropoff leaves its driver holding one trip", () => {
+		expect(holdsTwoTrips(viewOf(pool.slice(0, 11)), i1)).toBe(false);
+	});
+
+	test("a pool's driver is idle once its last trip completes", () => {
+		expect(stateAfter(pool)).toBe("idle");
+	});
+
+	test("a trip joining a driver with its rider aboard sends it en route to the new pickup", () => {
+		const aboard = [
+			online(i1, 0, cell(0, 0)),
+			pooledRequest(t1, 1, pickup, dropoff),
+			matched(t1, d1, 2),
+			atPickup(t1, 5, pickup),
+			pickedUp(t1, 5),
+			pooledRequest(t2, 6, pickup2, dropoff2),
+			matched(t2, d1, 7),
+		];
+		expect(stateAfter(aboard)).toBe("en_route");
+	});
+
+	test("a trip joining a driver waiting at its dropoff leaves it there, then en route", () => {
+		const waiting = [
+			online(i1, 0, cell(0, 0)),
+			pooledRequest(t1, 1, pickup, dropoff),
+			matched(t1, d1, 2),
+			pickedUp(t1, 5),
+			atDropoff(t1, 10, dropoff),
+			pooledRequest(t2, 10, pickup2, dropoff2),
+			matched(t2, d1, 10),
+		];
+		expect([
+			stateAfter(waiting),
+			stateAfter([...waiting, completed(t1, 11)]),
+		]).toEqual(["at_dropoff", "en_route"]);
+	});
+
+	test("a trip that joined a driver waiting at its dropoff, cancelled, leaves the driver at the dropoff", () => {
+		const waiting = [
+			online(i1, 0, cell(0, 0)),
+			pooledRequest(t1, 1, pickup, dropoff),
+			matched(t1, d1, 2),
+			pickedUp(t1, 5),
+			atDropoff(t1, 10, dropoff),
+			pooledRequest(t2, 10, pickup2, dropoff2),
+			matched(t2, d1, 10),
+			cancelled(t2, d1, 11),
+		];
+		expect(stateAfter(waiting)).toBe("at_dropoff");
+	});
+
+	test("a pool partner cancelled before pickup leaves its driver en route with the other", () => {
+		const view = viewOf([...joined, cancelled(t1, d1, 5)]);
+		expect([driversOf(view).get(i1)?.state, holdsTwoTrips(view, i1)]).toEqual([
+			"en_route",
+			false,
+		]);
+	});
+
+	test("a pooled trip cancelled while offered to a busy driver leaves the driver's trip", () => {
+		const view = viewOf([
+			...joined.slice(0, 4),
+			{ type: "trip.offered", tick: tick(4), tripId: t2, driverId: d1 },
+			cancelled(t2, d1, 5),
+		]);
+		expect(driversOf(view).get(i1)?.state).toBe("en_route");
+	});
+
+	test("pooled trips are counted", () => {
+		expect(viewOf(joined).tripsPooled).toBe(2);
+	});
+
+	test("completed trips that shared their driver are counted", () => {
+		expect(viewOf(pool).tripsShared).toBe(2);
+	});
+
+	test("a pooled trip completed alone is not shared", () => {
+		const alone = [
+			online(i1, 0, cell(0, 0)),
+			pooledRequest(t1, 1, pickup, dropoff),
+			matched(t1, d1, 2),
+			pickedUp(t1, 5),
+			completed(t1, 10),
+		];
+		expect(viewOf(alone).tripsShared).toBe(0);
+	});
+
+	// 25% off base fares: (250 + 2 × 5) × 0.75 = 195, (250 + 2 × 6) × 0.75 =
+	// 196.5 → 197, as the summary counts them.
+	test("revenue counts pooled fares", () => {
+		expect(viewOf(pool).revenue).toBe(392);
+	});
+
+	// A page watching from the first event sees what the summary counts.
+	test("a page watching a pooled run from its start agrees with its summary", () => {
+		const config = {
+			seed: 1,
+			ticks: 1200,
+			grid: { width: 100, height: 100 },
+			driverShards: { count: 1, driversPerShard: 8 },
+			requestsPerMinute: 30,
+			pooling: true,
+		};
+		const run = runInProcess({ ...config, keepEventLog: true });
+		const view = viewOf(run.eventLog.filter(isSimEvent));
+		const summary = summarize(config, run);
+		expect({
+			pooled: view.tripsPooled,
+			completed: view.tripsCompleted,
+			shared: view.tripsShared,
+			revenue: view.revenue,
+		}).toEqual({
+			pooled: summary.pooled,
+			completed: summary.trips.completed,
+			shared: summary.shared,
+			revenue: summary.revenue,
+		});
 	});
 });

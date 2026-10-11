@@ -26,6 +26,12 @@ Surge pricing on ([ADR 0054](docs/adr/0054-price-trips-with-zone-surge.md)): sur
 SURGE=on bun run demo
 ```
 
+Ride pooling on ([ADR 0056](docs/adr/0056-pool-two-riders-going-the-same-way.md)): trips pooled, trips shared and revenue in the side panel; at 10,000 drivers or fewer (dots) a white ring around each driver holding two trips, e.g. `POOLING=on DRIVERS_PER_SHARD=500 REQUESTS_PER_MINUTE=100 bun run demo` ([docs/ui.md](docs/ui.md#pooling-351)):
+
+```bash
+POOLING=on bun run demo
+```
+
 ## Prerequisites
 
 - [Bun](https://bun.com) 1.4.2
