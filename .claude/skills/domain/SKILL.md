@@ -137,6 +137,7 @@ Decided; not in code yet (#336). Off by default (`--roads off|river|canals` for 
 - **Road distance**: shortest path length over road cells and bridges: Manhattan within a district, else via exit and entry landings and the precomputed landing table. Never less than Manhattan distance. With roads on it is every distance a driver drives or a rider pays for (pickup distance, ETA, match cost, join ETA, detour limit, join reach, max pickup distance, fare, direct distance); regions, surge zones, zone distance, chase reach, hotspot radius and heatmap tiles stay geometric.
 - **Waypoint**: the exit landing a driver heads for when its target is in another district, kept by the driver shard until the target changes or the driver enters a district; a driver arrives in exactly its road distance in ticks.
 - **Off road** (`driver_off_road`, `trip_off_road`): the violations of a driver reported on a river cell that is not a bridge, and of a requested trip whose pickup or dropoff is not a road cell.
+- **Off-road cell** (`off_road_cell`): a cell from another service that breaks the network (a pickup or dropoff not a road cell, a driver's cell not drivable), an expected failure: dispatch answers `request_trip_rejected` or `input_rejected`, a driver shard declines the offer; never a throw.
 
 ## Events
 
