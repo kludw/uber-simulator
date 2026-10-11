@@ -2381,4 +2381,301 @@ describe("decideDispatch pooling", () => {
 
 		expect(outputs).toEqual([joinOffer(2, d1, at(20), at(100))]);
 	});
+
+	function unpooled(n: number, pickup: Cell, dropoff: Cell): RequestTrip {
+		const { pooled: _pooled, ...request } = pooled(n, pickup, dropoff);
+		return request;
+	}
+
+	function moved(driverIndex: DriverIndex, cell: Cell): DispatchInput {
+		return driversMoved(tick(1), Region.parse(0), fleetSize, [
+			{ driverIndex, cell },
+		]);
+	}
+
+	test("never offers an unpooled trip to a pooled trip's driver", () => {
+		const outputs = offers([
+			...partnerMatched,
+			unpooled(2, at(20), at(100)),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("joins a pooled trip after an earlier pooled trip was cancelled", () => {
+		const outputs = offers([
+			pooled(5, at(200), at(250)),
+			cancelTrip(trip(5)),
+			...partnerMatched,
+			pooled(2, at(20), at(100)),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([joinOffer(2, d1, at(20), at(100))]);
+	});
+
+	test("joins a pooled trip to a partner offered earlier in the same tick", () => {
+		const outputs = offers([
+			pooled(1, at(10), at(110)),
+			pooled(2, at(20), at(100)),
+			online(i1, at(0)),
+			ticked(1),
+		]);
+
+		expect(outputs).toEqual([
+			joinOffer(1, d1, at(10), at(110)),
+			joinOffer(2, d1, at(20), at(100)),
+		]);
+	});
+
+	// t-1 (0 → 100) picked up at tick 1, its driver since moved to 50. t-2
+	// (60 → 100): t-1 rides its ride so far + 10 + 40, at most 150, so a ride
+	// so far of at most 100 ticks; by distance from its pickup it is only 50.
+	const partnerAboard: DispatchInput[] = [
+		pooled(1, at(0), at(100)),
+		online(i1, at(0)),
+		ticked(1),
+		accepted(trip(1), d1),
+		arrivedAtPickup(trip(1), d1, at(0)),
+		moved(i1, at(50)),
+	];
+
+	test("joins a partner aboard whose ride so far keeps it within its detour limit", () => {
+		const outputs = offers([
+			...partnerAboard,
+			ticked(101),
+			pooled(2, at(60), at(100)),
+			ticked(102),
+		]);
+
+		expect(outputs).toEqual([joinOffer(2, d1, at(60), at(100))]);
+	});
+
+	test("does not join a partner aboard whose ride so far in ticks breaks its detour limit", () => {
+		const outputs = offers([
+			...partnerAboard,
+			ticked(102),
+			pooled(2, at(60), at(100)),
+			ticked(103),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	// t-1 (60 → 260) matched to d-01 at 0: a join at x reaches t-1's pickup in
+	// 60 ticks, then x - 60 more.
+	test.each([
+		[120, [joinOffer(2, d1, at(120), at(260))]],
+		[121, []],
+	])(
+		"joins a partner within a join ETA of 120 (pickup at %d)",
+		(x, expected) => {
+			const outputs = offers([
+				pooled(1, at(60), at(260)),
+				online(i1, at(0)),
+				ticked(1),
+				accepted(trip(1), d1),
+				pooled(2, at(x), at(260)),
+				ticked(2),
+			]);
+
+			expect(outputs).toEqual(expected);
+		},
+	);
+
+	// Partners' pickups more than 120 apart, so neither joins the other. From
+	// the joining pickup at 110, t-1's driver is 110 ticks away, t-2's 20.
+	test("joins the partner with the least join ETA", () => {
+		const outputs = offers([
+			pooled(1, at(0), at(110, 200)),
+			pooled(2, at(130), at(110, 200)),
+			online(i1, at(0)),
+			online(i2, at(130)),
+			ticked(1),
+			pooled(3, at(110), at(110, 200)),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([joinOffer(3, d2, at(110), at(110, 200))]);
+	});
+
+	// t-9, requested first, declined by d-10 and offered d-02 at 40 in the
+	// joining tick, after t-10 on d-01 at 222: each driver 60 from its
+	// partner's pickup (100, 162), each pickup 31 from the joining pickup at
+	// 131 (and 62 apart, so neither joins the other). Not offer order, nor ID
+	// order of trips or drivers.
+	test("breaks a join ETA tie to the partner requested earlier", () => {
+		const outputs = offers([
+			pooled(9, at(100), at(131, 200)),
+			pooled(10, at(162), at(131, 200)),
+			online(i10, at(40)),
+			online(i1, at(222)),
+			ticked(1),
+			declined(trip(9), driverIdAt(fleetSize, i10), null),
+			online(i2, at(40)),
+			pooled(3, at(131), at(131, 200)),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([
+			joinOffer(9, d2, at(100), at(131, 200)),
+			joinOffer(3, d2, at(131), at(131, 200)),
+		]);
+	});
+
+	test("never offers a join to a driver whose join offer for the trip expired", () => {
+		const outputs = offers([
+			...partnerMatched,
+			pooled(2, at(20), at(100)),
+			ticked(2),
+			ticked(3),
+			ticked(4),
+			ticked(5),
+			ticked(6),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("offers no join to a partner's driver held offline after declining a join", () => {
+		const outputs = offers([
+			...partnerMatched,
+			pooled(2, at(20), at(100)),
+			ticked(2),
+			declined(trip(2), d1, null),
+			pooled(3, at(20), at(100)),
+			ticked(3),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	// t-1 (0 → 40) picked up at tick 1; t-2 (0 → 50) joins at tick 2 and is
+	// picked up there: t-1 rides 40 of its 60, t-2 40 + 10 = 50 of its 75.
+	const pool: DispatchInput[] = [
+		pooled(1, at(0), at(40)),
+		online(i1, at(0)),
+		ticked(1),
+		accepted(trip(1), d1),
+		arrivedAtPickup(trip(1), d1, at(0)),
+		pooled(2, at(0), at(50)),
+		ticked(2),
+		accepted(trip(2), d1),
+		arrivedAtPickup(trip(2), d1, at(0)),
+	];
+
+	test("offers no third trip to a driver holding two", () => {
+		const outputs = offers([...pool, pooled(3, at(0), at(40)), ticked(3)]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	// After t-1's dropoff at 40, t-3 (45 → 50) joins t-2: t-2 rides its ride
+	// so far + 5 + 5, at most 75, so a ride so far of at most 65 ticks.
+	const firstDroppedOff: DispatchInput[] = [
+		...pool,
+		arrivedAtDropoff(trip(1), d1, at(40)),
+	];
+
+	test("joins the remaining trip of a pool once the other is dropped off", () => {
+		const outputs = offers([
+			...firstDroppedOff,
+			ticked(42),
+			pooled(3, at(45), at(50)),
+			ticked(43),
+		]);
+
+		expect(outputs).toEqual([joinOffer(3, d1, at(45), at(50))]);
+	});
+
+	test("does not join a chained pool's partner once its ride so far uses up its detour limit", () => {
+		const outputs = offers([
+			...firstDroppedOff,
+			ticked(68),
+			pooled(3, at(45), at(50)),
+			ticked(69),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	test("keeps a driver busy while one of its two trips is left", () => {
+		const outputs = offers([
+			...firstDroppedOff,
+			unpooled(3, at(40), at(80)),
+			ticked(3),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	const batched: Matching = { type: "batched", windowTicks: 2 };
+
+	// One idle driver, d-02 at 30, for t-2 (10 away) and t-3 (15 away): batched
+	// matching alone gives it t-2; joining t-1 first leaves it to t-3.
+	test("batched joins pooled trips to partners before matching the rest", () => {
+		const outputs = offers(
+			[
+				pooled(1, at(10), at(110)),
+				online(i1, at(0)),
+				ticked(2),
+				accepted(trip(1), d1),
+				online(i2, at(30)),
+				pooled(2, at(20), at(100)),
+				unpooled(3, at(45), at(100)),
+				ticked(4),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([
+			joinOffer(2, d1, at(20), at(100)),
+			{
+				type: "offer",
+				tripId: trip(3),
+				driverId: d2,
+				pickup: at(45),
+				dropoff: at(100),
+			},
+		]);
+	});
+
+	// One idle driver for two pooled trips: batched matching gives it t-1 (0
+	// away, t-2 10), then t-2 joins t-1.
+	test("batched joins pooled trips left without a driver to partners it just matched", () => {
+		const outputs = offers(
+			[
+				pooled(1, at(0), at(100)),
+				pooled(2, at(10), at(100)),
+				online(i1, at(0)),
+				ticked(2),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([
+			joinOffer(1, d1, at(0), at(100)),
+			joinOffer(2, d1, at(10), at(100)),
+		]);
+	});
+
+	test("frees a driver once both its trips are dropped off", () => {
+		const outputs = offers([
+			...firstDroppedOff,
+			arrivedAtDropoff(trip(2), d1, at(50)),
+			unpooled(3, at(40), at(80)),
+			ticked(3),
+		]);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: trip(3),
+				driverId: d1,
+				pickup: at(40),
+				dropoff: at(80),
+			},
+		]);
+	});
 });

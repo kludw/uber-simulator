@@ -259,7 +259,14 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 		);
 	};
 	const queued = queuedTrips(state);
-	const pool = state.pooledOpen > 0 ? openPool(state) : undefined;
+	// Joins only while a pooled trip is open, on a tick that matches.
+	const pool =
+		state.pooledOpen > 0 &&
+		queued.length > 0 &&
+		(state.matching.type === "greedy" ||
+			ticked.tick % state.matching.windowTicks === 0)
+			? openPool(state)
+			: undefined;
 	// A pooled trip offered to its best partner's driver; false if none fits.
 	const join = (trip: QueuedTrip): boolean => {
 		if (pool === undefined || !trip.pooled) return false;
@@ -290,13 +297,23 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 				if (driverId !== undefined) offerIdle(trip, driverId);
 			}
 			break;
-		case "batched":
+		case "batched": {
 			if (queued.length === 0) break;
 			if (ticked.tick % state.matching.windowTicks !== 0) break;
-			for (const { trip, driverId } of batchedPairs(state, queued)) {
-				offer(trip, driverId);
+			// Joins first, then batched matching of the rest, then joins for
+			// the pooled trips it left without a driver (ADR 0056).
+			const rest =
+				pool === undefined ? queued : queued.filter((trip) => !join(trip));
+			for (const { trip, driverId } of batchedPairs(state, rest)) {
+				offerIdle(trip, driverId);
+			}
+			if (pool === undefined) break;
+			for (const trip of rest) {
+				// An offer stores a new trip: still this one means unoffered.
+				if (state.trips.get(trip.id) === trip) join(trip);
 			}
 			break;
+		}
 		default: {
 			const unhandled: never = state.matching;
 			throw new Error(`unhandled matching: ${unhandled}`);
