@@ -12,10 +12,12 @@ import {
 	DriverId,
 	type RequestTrip,
 	RiderId,
+	type RiderRatedDriver,
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
 import { createRandom, type Random } from "../shared/random.ts";
+import { Stars } from "../shared/rating.ts";
 import { Region, RegionLayout } from "../shared/regions.ts";
 import { Surge, Zone } from "../shared/surge.ts";
 import {
@@ -1026,6 +1028,263 @@ describe("decideRiders trip outcomes", () => {
 			state: { ...waitingRider(), riders: new Map() },
 			outputs: [],
 		});
+	});
+});
+
+// ADR 0057: stars = clamp(round(quality − wait penalty − detour penalty +
+// noise), 1, 5); quality 3.5 + 1.5 × the quality:<driverId> draw, noise
+// 2 × the rating:<tripId> draw − 1.
+describe("decideRiders with ratings on", () => {
+	// r-1 requests t-1 at tick 1, pickup (2, 3), dropoff (7, 8): direct
+	// distance 10.
+	function spawned(ratings: boolean): RidersState {
+		return decideRiders(
+			startRiders({ grid, requestsPerMinute: 10, ratings }),
+			{ type: "clock.ticked", tick: tick(1) },
+			scriptedRandom({
+				"demand:1": { floats: [0.9, 0.5], ints: [2, 3, 7, 8] },
+				"patience:1": { ints: [300] },
+			}),
+		).state;
+	}
+
+	function completed(
+		state: RidersState,
+		n: number,
+		draws: { quality: number; noise: number },
+	) {
+		return decideRiders(
+			state,
+			{ type: "trip.completed", tick: tick(n), tripId: t1, driverId: d1 },
+			scriptedRandom({
+				"quality:d-1": { floats: [draws.quality] },
+				"rating:t-1": { floats: [draws.noise] },
+			}),
+		);
+	}
+
+	// r-1's rating of t-1, by d-1 at tick 71 unless given.
+	function rated(stars: number, n = 71, driverId = d1): RiderRatedDriver[] {
+		return [
+			{
+				type: "rider.rated_driver",
+				tick: tick(n),
+				riderId: r1,
+				tripId: t1,
+				driverId,
+				stars: Stars.parse(stars),
+			},
+		];
+	}
+
+	// Quality 4.25, wait 60 (no penalty), ride 10 over 10 (no detour),
+	// noise 0: 4 stars.
+	test("a rider whose trip completes rates its driver", () => {
+		const riding = pickedUp(spawned(true), 61).state;
+		expect(completed(riding, 71, { quality: 0.5, noise: 0.5 }).outputs).toEqual(
+			rated(4),
+		);
+	});
+
+	// Wait 180: 1 star beyond the first 60. 4.25 − 1 = 3.25: 3 stars.
+	test("a long wait for pickup costs a star per 120 ticks beyond 60", () => {
+		const riding = pickedUp(spawned(true), 181).state;
+		expect(
+			completed(riding, 191, { quality: 0.5, noise: 0.5 }).outputs,
+		).toEqual(rated(3, 191));
+	});
+
+	// Ride 15 over 10: 50% detour, 1 star. 4.25 − 1 = 3.25: 3 stars.
+	test("a pooled ride's detour costs 2 stars per 100% over direct distance", () => {
+		const riding = pickedUp(spawned(true), 56).state;
+		expect(completed(riding, 71, { quality: 0.5, noise: 0.5 }).outputs).toEqual(
+			rated(3),
+		);
+	});
+
+	// Quality 4.25, noise 2 × 0.9 − 1 = 0.8: 5.05, 5 stars.
+	test("noise from the trip's stream moves the stars", () => {
+		const riding = pickedUp(spawned(true), 61).state;
+		expect(completed(riding, 71, { quality: 0.5, noise: 0.9 }).outputs).toEqual(
+			rated(5),
+		);
+	});
+
+	// Wait 301: 241 / 120 ≈ 2.01 stars. 4.25 − 2.01 = 2.24: 2 stars.
+	test("a rider picked up while cancelling still rates", () => {
+		const cancelling = quietTick(spawned(true), 301).state;
+		const riding = pickedUp(cancelling, 302).state;
+		expect(
+			completed(riding, 312, { quality: 0.5, noise: 0.5 }).outputs,
+		).toEqual(rated(2, 312));
+	});
+
+	// Seed 42: quality of d-3 ≈ 4.19, noise of t-1 ≈ −0.17; ride 15 over 10
+	// costs 1 star: 3.02, 3 stars.
+	test("a rider rates d-3 3 stars after a pooled ride for seed 42", () => {
+		const riding = pickedUp(spawned(true), 56).state;
+		const d3 = DriverId.parse("d-3");
+		expect(
+			decideRiders(
+				riding,
+				{ type: "trip.completed", tick: tick(71), tripId: t1, driverId: d3 },
+				createRandom(42),
+			).outputs,
+		).toEqual(rated(3, 71, d3));
+	});
+
+	// scriptedRandom({}) throws on any draw: no rating stream is touched.
+	test("a rider never rates a cancelled trip", () => {
+		const cancelling = quietTick(spawned(true), 301).state;
+		const cancelled = decideRiders(
+			cancelling,
+			{ type: "trip.cancelled", tick: tick(302), tripId: t1, driverId: d1 },
+			scriptedRandom({}),
+		);
+		expect(cancelled.outputs).toEqual([]);
+	});
+
+	test("a rider that missed its pickup does not rate", () => {
+		const completion: RidersInput = {
+			type: "trip.completed",
+			tick: tick(71),
+			tripId: t1,
+			driverId: d1,
+		};
+		expect(
+			decideRiders(spawned(true), completion, scriptedRandom({})).outputs,
+		).toEqual([
+			{ type: "input_rejected", reason: "rider_not_riding", input: completion },
+		]);
+	});
+
+	test("a rider whose trip completes is removed", () => {
+		const riding = pickedUp(spawned(true), 61).state;
+		const { state } = completed(riding, 71, { quality: 0.5, noise: 0.5 });
+		expect(quietTick(state, 400).outputs).toEqual([]);
+	});
+
+	// Two riders on one seeded stream, completing in either order.
+	function ratingsInOrder(order: TripId[]) {
+		const random = createRandom(42);
+		let state = spawnedTwo();
+		for (const tripId of [t1, t2]) {
+			state = decideRiders(
+				state,
+				{ type: "trip.picked_up", tick: tick(70), tripId, driverId: d1 },
+				random,
+			).state;
+		}
+		const outputs: Decision["outputs"] = [];
+		for (const tripId of order) {
+			const decision = decideRiders(
+				state,
+				{ type: "trip.completed", tick: tick(90), tripId, driverId: d1 },
+				random,
+			);
+			state = decision.state;
+			outputs.push(...decision.outputs);
+		}
+		return outputs.toSorted((a, b) =>
+			JSON.stringify(a) < JSON.stringify(b) ? -1 : 1,
+		);
+	}
+
+	// r-1 (2, 3) → (7, 8) and r-2 (4, 4) → (6, 6) at tick 1.
+	function spawnedTwo(): RidersState {
+		return decideRiders(
+			startRiders({ grid, requestsPerMinute: 10, ratings: true }),
+			{ type: "clock.ticked", tick: tick(1) },
+			scriptedRandom({
+				"demand:1": {
+					floats: [0.99, 0.99, 0.5],
+					ints: [2, 3, 7, 8, 4, 4, 6, 6],
+				},
+				"patience:1": { ints: [300, 300] },
+			}),
+		).state;
+	}
+
+	const t2 = TripId.parse("t-2");
+
+	test("a trip's stars are the same whatever order trips complete in", () => {
+		expect(ratingsInOrder([t2, t1])).toEqual(ratingsInOrder([t1, t2]));
+	});
+
+	const driverOf = (tripId: TripId) =>
+		DriverId.parse(`d-${Number(tripId.slice(2)) % 10}`);
+
+	// Over 1,800 ticks every rider is picked up 30 ticks after its request
+	// and completes 40 ticks later, by a driver of ten.
+	function run(seed: number, ratings: boolean) {
+		const random = createRandom(seed);
+		let state = startRiders({ grid, requestsPerMinute: 60, ratings });
+		const outputs: Decision["outputs"] = [];
+		const requests = new Map<number, RequestTrip[]>();
+		const step = (input: RidersInput) => {
+			const decision = decideRiders(state, input, random);
+			state = decision.state;
+			outputs.push(...decision.outputs);
+			for (const output of decision.outputs) {
+				if (output.type !== "request_trip") continue;
+				const due = requests.get(output.tick + 30) ?? [];
+				due.push(output);
+				requests.set(output.tick + 30, due);
+			}
+		};
+		for (let n = 1; n <= 1800; n++) {
+			for (const request of requests.get(n - 40) ?? []) {
+				step({
+					type: "trip.completed",
+					tick: tick(n),
+					tripId: request.tripId,
+					driverId: driverOf(request.tripId),
+				});
+			}
+			for (const request of requests.get(n) ?? []) {
+				step({
+					type: "trip.picked_up",
+					tick: tick(n),
+					tripId: request.tripId,
+					driverId: driverOf(request.tripId),
+				});
+			}
+			step({ type: "clock.ticked", tick: tick(n) });
+		}
+		return outputs;
+	}
+
+	test("same seed gives identical ratings", () => {
+		expect(run(7, true)).toEqual(run(7, true));
+	});
+
+	test("rating never shifts riders' requests or patience", () => {
+		const unrated: Decision["outputs"] = run(7, true).filter(
+			(output) => output.type !== "rider.rated_driver",
+		);
+		expect(unrated).toEqual(run(7, false));
+	});
+});
+
+// scriptedRandom throws on the quality and rating streams: off draws nothing.
+describe("decideRiders with ratings off", () => {
+	test("a rider whose trip completes does not rate", () => {
+		const spawned = decideRiders(
+			startRiders({ grid, requestsPerMinute: 10, ratings: false }),
+			{ type: "clock.ticked", tick: tick(1) },
+			scriptedRandom({
+				"demand:1": { floats: [0.9, 0.5], ints: [2, 3, 7, 8] },
+				"patience:1": { ints: [300] },
+			}),
+		).state;
+		const riding = pickedUp(spawned, 61).state;
+		expect(
+			decideRiders(
+				riding,
+				{ type: "trip.completed", tick: tick(71), tripId: t1, driverId: d1 },
+				scriptedRandom({}),
+			).outputs,
+		).toEqual([]);
 	});
 });
 
