@@ -701,7 +701,7 @@ function onTripStatus(state: DriverShardState, status: TripStatus): Decision {
 		status.stage === "pickup"
 	) {
 		if (status.status === "released") {
-			return replaceDriver(state, idle(addressed, addressed.pickup));
+			return replaceDriver(state, withoutTrip(addressed, status.tripId));
 		}
 		if (status.status !== "picked_up") return ignored;
 		return replaceDriver(
@@ -715,7 +715,7 @@ function onTripStatus(state: DriverShardState, status: TripStatus): Decision {
 		status.stage === "dropoff" &&
 		status.status !== "picked_up"
 	) {
-		return replaceDriver(state, idle(addressed, addressed.dropoff));
+		return replaceDriver(state, withoutTrip(addressed, status.tripId));
 	}
 	return ignored;
 }
