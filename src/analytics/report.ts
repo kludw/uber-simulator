@@ -29,6 +29,8 @@ const ReportRow = z.object({
 	declined: count,
 	revenue: count,
 	pooled: count,
+	ratings: count,
+	stars: count,
 });
 
 export type RunReport = {
@@ -45,6 +47,9 @@ export type RunReport = {
 	surge: { declined: number; revenue: number } | null;
 	// Trips whose rider opted in to pooling (ADR 0056); 0 with pooling off.
 	pooled: number;
+	// Ratings runs only (any rider.rated_driver, ADR 0057): ratings and
+	// their mean stars; null with ratings off.
+	ratings: { count: number; meanStars: number } | null;
 };
 
 export type RunReportError =
@@ -72,7 +77,8 @@ export async function runReport(
 	runId: RunId,
 ): Promise<Result<RunReport, RunReportError>> {
 	// Inner query: one row per trip (plus one for events without a trip:
-	// prices, declines). Revenue sums the events' fares (surge runs only).
+	// prices, declines). Revenue sums the events' fares (surge runs only);
+	// stars, the ratings' (ratings runs only).
 	// Durations count trips with both ends, like summarize.
 	const rows = await clickhouse.query(
 		`SELECT
@@ -91,7 +97,9 @@ export async function runReport(
 			toUInt32(sum(pricings)) AS pricings,
 			toUInt32(sum(declines)) AS declined,
 			toFloat64(sumIf(fare, requests > 0 AND completions > 0)) AS revenue,
-			toUInt32(sum(pooledRequests)) AS pooled
+			toUInt32(sum(pooledRequests)) AS pooled,
+			toUInt32(sum(ratingsOfTrip)) AS ratings,
+			toUInt32(sum(starsOfTrip)) AS stars
 		FROM (
 			SELECT
 				count() AS events,
@@ -109,7 +117,10 @@ export async function runReport(
 				sumIf(JSONExtractUInt(payload, 'fare'), type = 'trip.requested')
 					AS fare,
 				countIf(type = 'trip.requested' AND JSONExtractBool(payload, 'pooled'))
-					AS pooledRequests
+					AS pooledRequests,
+				countIf(type = 'rider.rated_driver') AS ratingsOfTrip,
+				sumIf(JSONExtractUInt(payload, 'stars'), type = 'rider.rated_driver')
+					AS starsOfTrip
 			FROM events FINAL
 			WHERE run_id = {runId:String}
 			GROUP BY trip_id
@@ -140,6 +151,10 @@ export async function runReport(
 					? null
 					: { declined: row.declined, revenue: row.revenue },
 			pooled: row.pooled,
+			ratings:
+				row.ratings === 0
+					? null
+					: { count: row.ratings, meanStars: row.stars / row.ratings },
 		},
 	};
 }

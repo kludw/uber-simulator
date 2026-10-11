@@ -14,6 +14,7 @@ describe("parseLoadtestArgs", () => {
 				regions: { columns: 1, rows: 1 },
 				surge: false,
 				pooling: false,
+				ratings: false,
 				drainBoundMs: 300_000,
 				natsMonitoringUrl: "http://localhost:8222",
 			},
@@ -76,6 +77,21 @@ describe("parseLoadtestArgs", () => {
 
 	test("--pooling other than on or off is invalid", () => {
 		expect(parseLoadtestArgs(["--pooling", "yes"])).toMatchObject({
+			ok: false,
+			error: { type: "invalid_args" },
+		});
+	});
+
+	// ADR 0057: the cost of ratings at scale.
+	test("--ratings on turns ratings on", () => {
+		expect(parseLoadtestArgs(["--ratings", "on"])).toMatchObject({
+			ok: true,
+			value: { ratings: true },
+		});
+	});
+
+	test("--ratings other than on or off is invalid", () => {
+		expect(parseLoadtestArgs(["--ratings", "yes"])).toMatchObject({
 			ok: false,
 			error: { type: "invalid_args" },
 		});

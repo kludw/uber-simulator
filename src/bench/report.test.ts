@@ -109,4 +109,26 @@ describe("benchReport", () => {
 			"pooling: on",
 		]);
 	});
+
+	// ADR 0057: ratings-off output stays as it was.
+	test("a run with ratings on says so after its regions, surge and pooling", () => {
+		const report = benchReport(
+			{ ...config, surge: true, pooling: true, ratings: true },
+			{
+				tickMs: [1],
+				messages: 1,
+				peakRssBytes: 2 ** 20,
+				heapBytes: 2 ** 20,
+				heapObjects: 1,
+				status: { type: "finished" },
+			},
+		);
+
+		expect(report.split("\n").slice(5, 9)).toEqual([
+			"regions: 2x1",
+			"surge: on",
+			"pooling: on",
+			"ratings: on",
+		]);
+	});
 });

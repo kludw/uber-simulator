@@ -86,6 +86,10 @@ export const SurgeName = z.enum(["off", "on"]);
 // (--pooling). Riders only (ADR 0056).
 export const PoolingName = z.enum(["off", "on"]);
 
+// Riders rating drivers, by name, from env (RATINGS) or the CLI (--ratings).
+// Riders only: dispatch acts on the ratings it sees (ADR 0057).
+export const RatingsName = z.enum(["off", "on"]);
+
 // Every process of a run must get the same value (ADR 0050).
 const Regions = RegionLayout.refine(
 	({ columns, rows }) => columns <= specGrid.width && rows <= specGrid.height,
@@ -127,6 +131,7 @@ const Env = z.object({
 	REGIONS: Regions,
 	SURGE: SurgeName.default("off"),
 	POOLING: PoolingName.default("off"),
+	RATINGS: RatingsName.default("off"),
 });
 
 export function parseServiceConfig(
@@ -159,6 +164,7 @@ export function parseServiceConfig(
 			regions: vars.REGIONS,
 			surge: vars.SURGE === "on",
 			pooling: vars.POOLING === "on",
+			ratings: vars.RATINGS === "on",
 		},
 	};
 }

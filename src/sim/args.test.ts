@@ -11,6 +11,7 @@ describe("parseSimArgs", () => {
 				compare: false,
 				compareSurge: false,
 				comparePooling: false,
+				compareRatings: false,
 				matching: "greedy",
 				windowTicks: 5,
 				demandName: "uniform",
@@ -28,6 +29,7 @@ describe("parseSimArgs", () => {
 					regions: { columns: 1, rows: 1 },
 					surge: false,
 					pooling: false,
+					ratings: false,
 				},
 			},
 		});
@@ -68,6 +70,21 @@ describe("parseSimArgs", () => {
 		expect(parseSimArgs(["--compare-pooling"])).toMatchObject({
 			ok: true,
 			value: { comparePooling: true },
+		});
+	});
+
+	// ADR 0057.
+	test("--ratings on lets riders rate drivers", () => {
+		expect(parseSimArgs(["--ratings", "on"])).toMatchObject({
+			ok: true,
+			value: { config: { ratings: true } },
+		});
+	});
+
+	test("--compare-ratings runs ratings off and on side by side", () => {
+		expect(parseSimArgs(["--compare-ratings"])).toMatchObject({
+			ok: true,
+			value: { compareRatings: true },
 		});
 	});
 
@@ -145,6 +162,11 @@ describe("parseSimArgs", () => {
 		[["--compare", "--compare-pooling"]],
 		[["--compare-surge", "--compare-pooling"]],
 		[["--pooling", "yes"]],
+		[["--compare-ratings", "--bus", "nats"]],
+		[["--compare", "--compare-ratings"]],
+		[["--compare-surge", "--compare-ratings"]],
+		[["--compare-pooling", "--compare-ratings"]],
+		[["--ratings", "yes"]],
 		[["--regions", "2"]],
 		// The spec grid is 500 cells wide and high.
 		[["--regions", "501x1"]],

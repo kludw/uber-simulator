@@ -105,6 +105,11 @@ function print(runId: RunId, report: RunReport): void {
 		`completed trips per simulated minute: ${decimal(report.completedPerMinute)}`,
 	);
 	if (report.surge) console.log(`revenue: ${dollars(report.surge.revenue)}`);
+	// Ratings runs only (ADR 0057): ratings-off runs print as before.
+	if (report.ratings) {
+		console.log(`ratings: ${report.ratings.count}`);
+		console.log(`mean stars: ${report.ratings.meanStars.toFixed(2)}`);
+	}
 }
 
 function decimal(value: number | null): string {

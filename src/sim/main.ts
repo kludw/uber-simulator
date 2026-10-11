@@ -2,7 +2,8 @@
 // or --compare: greedy and batched matching in process on the same seed,
 // side by side (ADR 0030); or --compare-surge: the configured matching with
 // surge off and on, likewise (ADR 0054); or --compare-pooling: pooling off
-// and on, likewise (ADR 0056).
+// and on, likewise (ADR 0056); or --compare-ratings: ratings off and on,
+// likewise (ADR 0057).
 // Exit codes: 0 ok, 1 invariant violated, 2 invalid args or NATS_URL,
 // 3 NATS unreachable.
 import * as z from "zod";
@@ -29,6 +30,7 @@ const {
 	compare,
 	compareSurge,
 	comparePooling,
+	compareRatings,
 	windowTicks,
 	demandName,
 	shiftsName,
@@ -48,9 +50,12 @@ const loadLines = [
 	...(config.surge && !compareSurge ? ["surge: on"] : []),
 	// Pooling-off output stays as before pooling existed (ADR 0056).
 	...(config.pooling && !comparePooling ? ["pooling: on"] : []),
+	// Ratings-off output stays as before ratings existed (ADR 0057).
+	...(config.ratings && !compareRatings ? ["ratings: on"] : []),
 ];
 const surge = config.surge ?? false;
 const pooling = config.pooling ?? false;
+const ratings = config.ratings ?? false;
 const batched: Matching = { type: "batched", windowTicks };
 const matching: Matching =
 	args.value.matching === "batched" ? batched : { type: "greedy" };
@@ -69,6 +74,7 @@ if (compare) {
 	printComparison(["greedy", "batched"], greedySummary, batchedSummary, {
 		surge,
 		pooling,
+		ratings,
 	});
 	printAndFailOnViolations("greedy", greedySummary);
 	printAndFailOnViolations("batched", batchedSummary);
@@ -82,6 +88,7 @@ if (compare) {
 	printComparison(["surge off", "surge on"], offSummary, onSummary, {
 		surge: true,
 		pooling,
+		ratings,
 	});
 	printAndFailOnViolations("surge off", offSummary);
 	printAndFailOnViolations("surge on", onSummary);
@@ -99,9 +106,28 @@ if (compare) {
 	printComparison(["pooling off", "pooling on"], offSummary, onSummary, {
 		surge,
 		pooling: true,
+		ratings,
 	});
 	printAndFailOnViolations("pooling off", offSummary);
 	printAndFailOnViolations("pooling on", onSummary);
+} else if (compareRatings) {
+	const offSummary = summarizeInProcess({
+		...config,
+		matching,
+		ratings: false,
+	});
+	const onSummary = summarizeInProcess({ ...config, matching, ratings: true });
+	console.log(`seed: ${config.seed}`);
+	console.log(`ticks: ${config.ticks}`);
+	console.log(matchingLine);
+	for (const line of loadLines) console.log(line);
+	printComparison(["ratings off", "ratings on"], offSummary, onSummary, {
+		surge,
+		pooling,
+		ratings: true,
+	});
+	printAndFailOnViolations("ratings off", offSummary);
+	printAndFailOnViolations("ratings on", onSummary);
 } else {
 	const summary = await run({ ...config, matching });
 
@@ -125,6 +151,10 @@ if (compare) {
 		);
 	}
 	if (surge || pooling) console.log(`revenue: ${dollars(summary.revenue)}`);
+	if (ratings) {
+		console.log(`ratings: ${summary.ratings}`);
+		console.log(`mean stars: ${summary.meanStars?.toFixed(2) ?? "n/a"}`);
+	}
 	console.log(`rejected inputs: ${summary.rejectedInputs}`);
 	console.log(`invariant violations: ${summary.violations.length}`);
 	printAndFailOnViolations(null, summary);
@@ -134,7 +164,7 @@ function printComparison(
 	[firstName, secondName]: [string, string],
 	first: Summary,
 	second: Summary,
-	options: { surge: boolean; pooling: boolean },
+	options: { surge: boolean; pooling: boolean; ratings: boolean },
 ): void {
 	const rows = [
 		{ metric: "", first: firstName, second: secondName },

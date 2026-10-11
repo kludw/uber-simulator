@@ -21,6 +21,10 @@ export type Summary = {
 	shared: number;
 	// Over completed trips seen picked up; null when none.
 	meanTicksToComplete: number | null;
+	// Riders' ratings of drivers (ADR 0057); 0 with ratings off.
+	ratings: number;
+	// Over every rating; null when none.
+	meanStars: number | null;
 	rejectedInputs: number;
 	violations: Violation[];
 };
@@ -46,6 +50,7 @@ export function createSummary(config: RunConfig): RunSummary {
 	const tripSummary = createTripSummary();
 	const surgeSummary = createSurgeSummary();
 	const poolingSummary = createPoolingSummary();
+	const ratingSummary = createRatingSummary();
 	const checker = createInvariantChecker(config.grid);
 	const { count, driversPerShard } = config.driverShards;
 	return {
@@ -54,6 +59,7 @@ export function createSummary(config: RunConfig): RunSummary {
 			tripSummary.observe(message);
 			surgeSummary.observe(message);
 			poolingSummary.observe(message);
+			ratingSummary.observe(message);
 		},
 		result: (rejectedInputs) => ({
 			seed: config.seed,
@@ -62,6 +68,7 @@ export function createSummary(config: RunConfig): RunSummary {
 			...tripSummary.result(),
 			...surgeSummary.result(),
 			...poolingSummary.result(),
+			...ratingSummary.result(),
 			rejectedInputs,
 			violations: checker.violations(),
 		}),
@@ -202,17 +209,42 @@ function createPoolingSummary(): {
 	};
 }
 
+// The summary's ratings and mean stars (ADR 0057).
+function createRatingSummary(): {
+	observe(message: Message): void;
+	result(): Pick<Summary, "ratings" | "meanStars">;
+} {
+	let ratings = 0;
+	let stars = 0;
+	return {
+		observe: (message) => {
+			if (message.type !== "rider.rated_driver") return;
+			ratings++;
+			stars += message.stars;
+		},
+		result: () => ({
+			ratings,
+			meanStars: ratings === 0 ? null : stars / ratings,
+		}),
+	};
+}
+
 // One headline number of two runs on the same seed, formatted: greedy and
-// batched (ADR 0030), surge off and on (ADR 0054), or pooling off and on
-// (ADR 0056).
+// batched (ADR 0030), surge off and on (ADR 0054), pooling off and on
+// (ADR 0056), or ratings off and on (ADR 0057).
 export type ComparisonRow = { metric: string; first: string; second: string };
 
 // surge: add riders declined and revenue. pooling: add trips pooled and
-// shared, ticks from pickup to completion, and revenue.
+// shared, ticks from pickup to completion, and revenue. ratings: add ratings
+// and mean stars.
 export function compareSummaries(
 	first: Summary,
 	second: Summary,
-	{ surge, pooling }: { surge: boolean; pooling: boolean },
+	{
+		surge,
+		pooling,
+		ratings,
+	}: { surge: boolean; pooling: boolean; ratings: boolean },
 ): ComparisonRow[] {
 	type Metric = [string, (summary: Summary) => string];
 	const metrics: Metric[] = [
@@ -242,6 +274,15 @@ export function compareSummaries(
 			: []),
 		...(surge || pooling
 			? [["revenue", (summary) => dollars(summary.revenue)] as Metric]
+			: []),
+		...(ratings
+			? [
+					["ratings", (summary) => String(summary.ratings)] as Metric,
+					[
+						"mean stars",
+						(summary) => summary.meanStars?.toFixed(2) ?? "n/a",
+					] as Metric,
+				]
 			: []),
 		["invariant violations", (summary) => String(summary.violations.length)],
 	];

@@ -36,7 +36,32 @@ describe("parseServiceConfig", () => {
 				regions: { columns: 1, rows: 1 },
 				surge: false,
 				pooling: false,
+				ratings: false,
 			},
+		});
+	});
+
+	// ADR 0057: riders rate drivers; dispatch acts on the ratings it sees.
+	test("RATINGS=on lets riders rate drivers", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			RATINGS: "on",
+		});
+
+		expect(parsed).toMatchObject({ ok: true, value: { ratings: true } });
+	});
+
+	test("names an unknown RATINGS", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			RATINGS: "yes",
+		});
+
+		expect(parsed).toMatchObject({
+			ok: false,
+			error: { type: "invalid_config", issues: [{ variable: "RATINGS" }] },
 		});
 	});
 

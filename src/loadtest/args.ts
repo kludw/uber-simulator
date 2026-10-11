@@ -6,7 +6,7 @@ import type { Matching } from "../dispatch/brain.ts";
 import { specGrid } from "../shared/grid.ts";
 import { RegionLayout } from "../shared/regions.ts";
 import type { Result } from "../shared/result.ts";
-import { PoolingName, SurgeName } from "../sim/config.ts";
+import { PoolingName, RatingsName, SurgeName } from "../sim/config.ts";
 import type { SimConfig } from "../sim/services.ts";
 
 // Message is for the terminal: parseArgs and Zod both describe the problem.
@@ -33,6 +33,7 @@ const Args = z
 		regions: RegionLayout,
 		surge: SurgeName,
 		pooling: PoolingName,
+		ratings: RatingsName,
 	})
 	.refine((args) => args.drivers % args.shards === 0, {
 		error: "--drivers must split evenly over --shards",
@@ -46,7 +47,7 @@ const Args = z
 
 export type LoadtestArgs = Pick<
 	SimConfig,
-	"driverShards" | "requestsPerMinute" | "surge" | "pooling"
+	"driverShards" | "requestsPerMinute" | "surge" | "pooling" | "ratings"
 > & {
 	// One dispatch process per region (ADR 0050).
 	regions: RegionLayout;
@@ -84,6 +85,8 @@ export function parseLoadtestArgs(
 				surge: { type: "string", default: "off" },
 				// ADR 0056.
 				pooling: { type: "string", default: "off" },
+				// ADR 0057.
+				ratings: { type: "string", default: "off" },
 			},
 			strict: true,
 		}).values;
@@ -121,6 +124,7 @@ export function parseLoadtestArgs(
 			regions: args.regions,
 			surge: args.surge === "on",
 			pooling: args.pooling === "on",
+			ratings: args.ratings === "on",
 			drainBoundMs: args["drain-minutes"] * 60_000,
 			natsMonitoringUrl: args["nats-monitoring-url"],
 		},
