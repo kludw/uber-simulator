@@ -71,7 +71,6 @@ type Driver =
 			tripId: TripId;
 			region: Region;
 			pickup: Cell;
-			dropoff: Cell;
 			trips: HeldTrips;
 			next: readonly Stop[];
 	  }
@@ -83,7 +82,6 @@ type Driver =
 			tripId: TripId;
 			region: Region;
 			pickup: Cell;
-			dropoff: Cell;
 			arrivedAt: Tick;
 			trips: HeldTrips;
 			next: readonly Stop[];
@@ -454,7 +452,6 @@ function onOffer(
 		tripId: offer.tripId,
 		region,
 		pickup: offer.pickup,
-		dropoff: offer.dropoff,
 		trips: [
 			{
 				tripId: offer.tripId,
@@ -504,17 +501,34 @@ function onPickedUp(state: DriverShardState, pickedUp: TripPickedUp): Decision {
 	if (addressed.tripId !== pickedUp.tripId) {
 		return reject(state, pickedUp, "driver_on_another_trip");
 	}
-	return replaceDriver(state, {
-		state: "on_trip",
-		id: addressed.id,
-		index: addressed.index,
-		cell: addressed.pickup,
-		tripId: addressed.tripId,
-		region: addressed.region,
-		dropoff: addressed.dropoff,
-		trips: addressed.trips,
-		next: noStops,
-	});
+	return replaceDriver(
+		state,
+		toStop(addressed, addressed.pickup, addressed.trips, addressed.next),
+	);
+}
+
+// The driver heading to the first of stops from cell; idle there when none
+// is left.
+function toStop(
+	driver: { id: DriverId; index: DriverIndex; region: Region },
+	cell: Cell,
+	trips: HeldTrips,
+	stops: readonly Stop[],
+): Driver {
+	const [stop, ...next] = stops;
+	if (stop === undefined) return idle(driver, cell);
+	const heading = {
+		id: driver.id,
+		index: driver.index,
+		cell,
+		tripId: stop.tripId,
+		region: driver.region,
+		trips,
+		next: next.length === 0 ? noStops : next,
+	};
+	return stop.kind === "pickup"
+		? { state: "en_route", ...heading, pickup: stop.cell }
+		: { state: "on_trip", ...heading, dropoff: stop.cell };
 }
 
 function onCompleted(
@@ -601,17 +615,10 @@ function onTripStatus(state: DriverShardState, status: TripStatus): Decision {
 			return replaceDriver(state, idle(addressed, addressed.pickup));
 		}
 		if (status.status !== "picked_up") return ignored;
-		return replaceDriver(state, {
-			state: "on_trip",
-			id: addressed.id,
-			index: addressed.index,
-			cell: addressed.pickup,
-			tripId: addressed.tripId,
-			region: addressed.region,
-			dropoff: addressed.dropoff,
-			trips: addressed.trips,
-			next: noStops,
-		});
+		return replaceDriver(
+			state,
+			toStop(addressed, addressed.pickup, addressed.trips, addressed.next),
+		);
 	}
 	if (
 		addressed.state === "at_dropoff" &&
@@ -952,7 +959,6 @@ function driveToPickup(
 		tripId: driver.tripId,
 		region: driver.region,
 		pickup: driver.pickup,
-		dropoff: driver.dropoff,
 		arrivedAt: tick,
 		trips: driver.trips,
 		next: driver.next,
