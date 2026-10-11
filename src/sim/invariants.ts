@@ -3,6 +3,7 @@ import type {
 	DriverId,
 	Message,
 	RiderId,
+	RiderRatedDriver,
 	Tick,
 	TripCancelled,
 	TripCompleted,
@@ -14,10 +15,17 @@ import { forEachMove, forEachWentOnline } from "../shared/messages.ts";
 // The checker's own trip model, rebuilt from trip.* events alone: importing
 // dispatch's Trip would make the check agree with the code it checks.
 // pooled: from trip.requested (ADR 0056).
-type TripView = { pickup: Cell; dropoff: Cell; pooled: boolean } & (
+type TripView = {
+	riderId: RiderId;
+	pickup: Cell;
+	dropoff: Cell;
+	pooled: boolean;
+} & (
 	| { state: "requested"; offeredTo: DriverId | null }
 	| { state: "matched" | "picked_up"; driverId: DriverId }
-	| { state: "completed" | "cancelled" }
+	// rated: a rider.rated_driver named it (ADR 0057).
+	| { state: "completed"; driverId: DriverId; rated: boolean }
+	| { state: "cancelled" }
 );
 
 type TripEvent = Extract<Message, { type: `trip.${string}` }>;
@@ -93,7 +101,17 @@ export type Violation =
 	  }
 	// ADR 0054: a rider that declined surge never requests a trip, and
 	// declines at most once. tick: the second of the two events.
-	| { type: "declined_rider_requested"; tick: Tick; riderId: RiderId };
+	| { type: "declined_rider_requested"; tick: Tick; riderId: RiderId }
+	// ADR 0057: a rating names a completed trip, its rider and its driver.
+	| {
+			type: "invalid_rating";
+			tick: Tick;
+			tripId: TripId;
+			riderId: RiderId;
+			driverId: DriverId;
+	  }
+	// tick: the second rating's.
+	| { type: "duplicate_rating"; tick: Tick; tripId: TripId };
 
 // What the log has shown so far, rebuilt only from events.
 type LogState = {
@@ -188,6 +206,9 @@ function observe(
 			log.decliningRiders.add(riderId);
 			break;
 		}
+		case "rider.rated_driver":
+			violations.push(...checkRating(log, message));
+			break;
 		case "trip.requested": {
 			const { tick, riderId } = message;
 			if (log.decliningRiders.has(riderId)) {
@@ -226,6 +247,31 @@ function observeMove(
 		violations.push({ type: "driver_left_grid", tick, driverId, cell });
 	}
 	log.driverPositions.set(driverId, { tick, cell });
+}
+
+// Any rating of a completed trip counts toward its one rating, valid or not.
+function checkRating(log: LogState, rating: RiderRatedDriver): Violation[] {
+	const { tick, tripId, riderId, driverId } = rating;
+	const violations: Violation[] = [];
+	const trip = log.trips.get(tripId);
+	if (trip?.state === "completed") {
+		if (trip.rated) violations.push({ type: "duplicate_rating", tick, tripId });
+		trip.rated = true;
+	}
+	const valid =
+		trip?.state === "completed" &&
+		trip.riderId === riderId &&
+		trip.driverId === driverId;
+	if (!valid) {
+		violations.push({
+			type: "invalid_rating",
+			tick,
+			tripId,
+			riderId,
+			driverId,
+		});
+	}
+	return violations;
 }
 
 // At most one 4-neighbor step per tick, measured from the last report.
@@ -412,12 +458,19 @@ function transition(
 ): TripView | null {
 	if (event.type === "trip.requested") {
 		if (trip !== undefined) return null;
-		const { pickup, dropoff } = event;
+		const { riderId, pickup, dropoff } = event;
 		const pooled = event.pooled === true;
-		return { pickup, dropoff, pooled, state: "requested", offeredTo: null };
+		return {
+			riderId,
+			pickup,
+			dropoff,
+			pooled,
+			state: "requested",
+			offeredTo: null,
+		};
 	}
 	if (trip === undefined) return null;
-	const { pickup, dropoff, pooled } = trip;
+	const { riderId, pickup, dropoff, pooled } = trip;
 	switch (event.type) {
 		case "trip.offered":
 			if (trip.state !== "requested" || trip.offeredTo !== null) return null;
@@ -429,6 +482,7 @@ function transition(
 		case "trip.matched":
 			if (!isOfferedTo(trip, event.driverId)) return null;
 			return {
+				riderId,
 				pickup,
 				dropoff,
 				pooled,
@@ -444,10 +498,18 @@ function transition(
 			if (trip.state !== "picked_up" || trip.driverId !== event.driverId) {
 				return null;
 			}
-			return { pickup, dropoff, pooled, state: "completed" };
+			return {
+				riderId,
+				pickup,
+				dropoff,
+				pooled,
+				state: "completed",
+				driverId: event.driverId,
+				rated: false,
+			};
 		case "trip.cancelled":
 			if (trip.state !== "requested" && trip.state !== "matched") return null;
-			return { pickup, dropoff, pooled, state: "cancelled" };
+			return { riderId, pickup, dropoff, pooled, state: "cancelled" };
 		default: {
 			const unhandled: never = event;
 			throw new Error(`unhandled trip event: ${unhandled}`);

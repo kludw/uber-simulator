@@ -10,7 +10,12 @@ import type { DriverId } from "../shared/messages.ts";
 import { ratingPenaltyOf, type Stars } from "../shared/rating.ts";
 import { type Zone, zoneOf } from "../shared/surge.ts";
 
-export type IdleDriver = { driverId: DriverId; cell: Cell };
+// ratingPenalty: 0 unrated (ADR 0057).
+export type IdleDriver = {
+	driverId: DriverId;
+	cell: Cell;
+	ratingPenalty: number;
+};
 
 // Square buckets of cellsPerBucket x cellsPerBucket cells. Below
 // linearScanBelow idle drivers, a linear scan beats searching mostly empty
@@ -292,13 +297,14 @@ export function idleCountsByZone(idle: IdleDrivers): Map<Zone, number> {
 	return counts;
 }
 
-// Idle drivers and their cells, ordered by ID (batched matching's columns).
+// Idle drivers, their cells and rating penalties, ordered by ID (batched
+// matching's columns).
 export function idleDriversById(idle: IdleDrivers): IdleDriver[] {
 	const drivers = idle[internals];
 	const idleDrivers: IdleDriver[] = [];
 	for (const bucket of drivers.buckets) {
-		for (const { driverId, x, y } of bucket) {
-			idleDrivers.push({ driverId, cell: cellAt(x, y) });
+		for (const driver of bucket) {
+			idleDrivers.push(idleDriverOf(drivers, driver));
 		}
 	}
 	return idleDrivers.sort((a, b) => (a.driverId < b.driverId ? -1 : 1));
@@ -362,15 +368,24 @@ export function nearestIdle(
 }
 
 // As nearestIdle, never a driver `skip` holds for, and with the driver's cell
-// (batched matching's nearest untouched driver, ADR 0051).
+// and rating penalty. By pickup distance alone, rated or not: a pooled
+// trip's join reach (ADR 0057, 0058).
 export function nearestIdleSkipping(
 	idle: IdleDrivers,
 	pickup: Cell,
 	skip: (driverId: DriverId) => boolean,
 ): IdleDriver | undefined {
-	const nearest = search(idle[internals], pickup, skip);
-	if (nearest === undefined) return undefined;
-	return { driverId: nearest.driverId, cell: cellAt(nearest.x, nearest.y) };
+	const drivers = idle[internals];
+	const nearest = search(drivers, pickup, skip);
+	return nearest === undefined ? undefined : idleDriverOf(drivers, nearest);
+}
+
+function idleDriverOf(drivers: Drivers, driver: Driver): IdleDriver {
+	return {
+		driverId: driver.driverId,
+		cell: cellAt(driver.x, driver.y),
+		ratingPenalty: drivers.ratings?.penalty[driver.index] ?? 0,
+	};
 }
 
 // The idle driver of least match cost (pickup distance + rating penalty) to
@@ -384,15 +399,39 @@ export function leastMatchCostIdle(
 ): DriverId | undefined {
 	const drivers = idle[internals];
 	if (drivers.ratings === null) return nearestIdle(idle, pickup, excluded);
-	const { penalty } = drivers.ratings;
+	return searchRated(drivers, drivers.ratings.penalty, pickup, (driverId) =>
+		excluded.has(driverId),
+	)?.driverId;
+}
+
+// As leastMatchCostIdle, never a driver `skip` holds for, with the driver's
+// cell and rating penalty (batched matching's untouched driver, ADR 0051,
+// 0057).
+export function leastMatchCostIdleSkipping(
+	idle: IdleDrivers,
+	pickup: Cell,
+	skip: (driverId: DriverId) => boolean,
+): IdleDriver | undefined {
+	const drivers = idle[internals];
+	const best =
+		drivers.ratings === null
+			? search(drivers, pickup, skip)
+			: searchRated(drivers, drivers.ratings.penalty, pickup, skip);
+	return best === undefined ? undefined : idleDriverOf(drivers, best);
+}
+
+function searchRated(
+	drivers: Drivers,
+	penalty: Int32Array,
+	pickup: Cell,
+	skip: (driverId: DriverId) => boolean,
+): Driver | undefined {
 	// As search: the ring bound holds for in-grid pickups only.
 	const pickupOffGrid =
 		pickup.x >= drivers.grid.width || pickup.y >= drivers.grid.height;
-	const best =
-		pickupOffGrid || drivers.idleCount < drivers.search.linearScanBelow
-			? scanAllRated(drivers, penalty, pickup, excluded)
-			: searchRingsRated(drivers, penalty, pickup, excluded);
-	return best?.driverId;
+	return pickupOffGrid || drivers.idleCount < drivers.search.linearScanBelow
+		? scanAllRated(drivers, penalty, pickup, skip)
+		: searchRingsRated(drivers, penalty, pickup, skip);
 }
 
 // As searchRings, by match cost. Penalties are never negative, so a ring,
@@ -403,7 +442,7 @@ function searchRingsRated(
 	drivers: Drivers,
 	penalty: Int32Array,
 	pickup: Cell,
-	excluded: ReadonlySet<DriverId>,
+	skip: (driverId: DriverId) => boolean,
 ): Driver | undefined {
 	const size = drivers.search.cellsPerBucket;
 	const column = Math.floor(pickup.x / size);
@@ -451,7 +490,7 @@ function searchRingsRated(
 					) {
 						continue;
 					}
-					if (excluded.has(driver.driverId)) continue;
+					if (skip(driver.driverId)) continue;
 					best = driver;
 					bestCost = cost;
 				}
@@ -465,13 +504,13 @@ function scanAllRated(
 	drivers: Drivers,
 	penalty: Int32Array,
 	pickup: Cell,
-	excluded: ReadonlySet<DriverId>,
+	skip: (driverId: DriverId) => boolean,
 ): Driver | undefined {
 	let best: Driver | undefined;
 	let bestCost = Number.POSITIVE_INFINITY;
 	for (const bucket of drivers.buckets) {
 		for (const driver of bucket) {
-			if (excluded.has(driver.driverId)) continue;
+			if (skip(driver.driverId)) continue;
 			const cost =
 				distanceToCoordinates(pickup, driver.x, driver.y) +
 				(penalty[driver.index] ?? 0);
