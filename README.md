@@ -32,6 +32,12 @@ Ride pooling on ([ADR 0056](docs/adr/0056-pool-two-riders-going-the-same-way.md)
 POOLING=on bun run demo
 ```
 
+Driver ratings on ([ADR 0057](docs/adr/0057-weigh-driver-ratings-into-matching.md)): ratings and mean stars in the side panel ([docs/ui.md](docs/ui.md#ratings-369)):
+
+```bash
+RATINGS=on bun run demo
+```
+
 ## Prerequisites
 
 - [Bun](https://bun.com) 1.4.2
