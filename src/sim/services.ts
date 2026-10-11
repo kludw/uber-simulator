@@ -90,6 +90,7 @@ const dispatchInputs = [
 	"offer_accepted",
 	"offer_declined",
 	"confirm_trip",
+	"rider.rated_driver",
 ] as const satisfies readonly DispatchInput["type"][];
 
 // Not request_trip_accepted / cancel_trip_accepted: no service takes them.

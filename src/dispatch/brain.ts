@@ -1,3 +1,4 @@
+import { driverIdAt, driverIndexOf } from "../shared/fleet.ts";
 import { distance, type Grid } from "../shared/grid.ts";
 import type {
 	CancelTrip,
@@ -18,6 +19,7 @@ import type {
 	RequestTrip,
 	RequestTripAccepted,
 	RequestTripRejected,
+	RiderRatedDriver,
 	Tick,
 	TripCancelled,
 	TripCompleted,
@@ -56,13 +58,14 @@ import {
 	idleCount,
 	idleCountsByZone,
 	idleDriversById,
+	leastMatchCostIdle,
 	markBusy,
 	markFree,
 	markJoinable,
-	nearestIdle,
 	nearestIdleSkipping,
 	placeDriver,
 	placeDriverAt,
+	rateDriver,
 	removeDriver,
 	startIdleDrivers,
 } from "./idle-drivers.ts";
@@ -132,7 +135,8 @@ export type DispatchInput =
 	| OfferDeclined
 	| DriverArrivedAtPickup
 	| DriverArrivedAtDropoff
-	| ConfirmTrip;
+	| ConfirmTrip
+	| RiderRatedDriver;
 
 type DispatchOutput =
 	| RequestTripAccepted
@@ -153,6 +157,7 @@ type DispatchOutput =
 	| (InputRejected<DriversWentOnline | DriversMoved, "fleet_size_mismatch"> & {
 			expectedFleetSize: number;
 	  })
+	| InputRejected<RiderRatedDriver, "driver_not_in_fleet">
 	| InputRejected<OfferAccepted | OfferDeclined, NoPendingOffer["type"]>
 	| InputRejected<
 			DriverArrivedAtPickup | DriverArrivedAtDropoff | ConfirmTrip,
@@ -235,6 +240,8 @@ export function decideDispatch(
 			return onArrival(state, input);
 		case "confirm_trip":
 			return onConfirmTrip(state, input);
+		case "rider.rated_driver":
+			return onRated(state, input);
 		default: {
 			const unhandled: never = input;
 			throw new Error(`unhandled dispatch input: ${unhandled}`);
@@ -269,21 +276,18 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 	};
 	switch (state.matching.type) {
 		case "greedy":
-			// Each trip in turn takes the nearest idle driver, ties to the lowest
-			// ID, or a pooled trip its best partner's driver when no farther (ADR
-			// 0058); the offer makes that driver busy for the next trip.
+			// Each trip in turn joins a partner when its join is no farther than
+			// the nearest idle driver (pooled, ADR 0058), else takes the idle
+			// driver of least match cost (the nearest until any driver is rated,
+			// ADR 0057), ties to the lowest ID; the offer makes that driver busy
+			// for the next trip.
 			for (const trip of queued) {
-				if (!trip.pooled) {
-					const driverId = nearestIdle(
-						state.drivers,
-						trip.pickup,
-						trip.excludedDrivers,
-					);
-					if (driverId !== undefined) offer(trip, driverId);
-					continue;
-				}
-				const idle = nearestIdleTo(state, trip);
-				const driverId = partnerFor(state, trip, idle) ?? idle?.driverId;
+				if (join(trip)) continue;
+				const driverId = leastMatchCostIdle(
+					state.drivers,
+					trip.pickup,
+					trip.excludedDrivers,
+				);
 				if (driverId !== undefined) offer(trip, driverId);
 			}
 			break;
@@ -579,6 +583,31 @@ function onDriverWentOffline(
 	wentOffline: DriverWentOffline,
 ): Decision {
 	removeDriver(state.drivers, wentOffline.driverId);
+	return { state, outputs: [] };
+}
+
+// Every dispatch keeps every driver's rating, in its region or not (ADR
+// 0057). A driver ID the fleet doesn't make (another index, padding or
+// prefix) names no driver of it: rejected, never dropped.
+function onRated(state: DispatchState, rating: RiderRatedDriver): Decision {
+	const index = driverIndexOf(rating.driverId);
+	if (
+		index === null ||
+		index >= state.fleetSize ||
+		driverIdAt(state.fleetSize, index) !== rating.driverId
+	) {
+		return {
+			state,
+			outputs: [
+				{
+					type: "input_rejected",
+					reason: "driver_not_in_fleet",
+					input: rating,
+				},
+			],
+		};
+	}
+	rateDriver(state.drivers, index, rating.stars);
 	return { state, outputs: [] };
 }
 
