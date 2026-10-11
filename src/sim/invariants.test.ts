@@ -10,6 +10,7 @@ import {
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
+import { Stars } from "../shared/rating.ts";
 import { Region } from "../shared/regions.ts";
 import { Surge } from "../shared/surge.ts";
 import { checkInvariants, createInvariantChecker } from "./invariants.ts";
@@ -626,6 +627,91 @@ describe("checkInvariants capacity", () => {
 		] satisfies Message[];
 
 		expect(checkInvariants(log, grid)).toEqual([]);
+	});
+});
+
+// ADR 0057: one rating per completed trip, by its rider, of its driver.
+describe("checkInvariants ratings", () => {
+	function rated(
+		at: number,
+		{ tripId = t1, riderId = r1, driverId = d1 } = {},
+	): Message {
+		return {
+			type: "rider.rated_driver",
+			tick: tick(at),
+			riderId,
+			tripId,
+			driverId,
+			stars: Stars.parse(4),
+		};
+	}
+
+	test("a rating of a completed trip by its rider of its driver is clean", () => {
+		expect(checkInvariants([...cleanTrip, rated(3)], grid)).toEqual([]);
+	});
+
+	test("a rating before its trip completed is flagged", () => {
+		const beforeCompletion = cleanTrip.slice(0, -1);
+
+		expect(checkInvariants([...beforeCompletion, rated(2)], grid)).toEqual([
+			{
+				type: "invalid_rating",
+				tick: tick(2),
+				tripId: t1,
+				riderId: r1,
+				driverId: d1,
+			},
+		]);
+	});
+
+	test("a rating naming another driver is flagged", () => {
+		expect(
+			checkInvariants([...cleanTrip, rated(3, { driverId: d2 })], grid),
+		).toEqual([
+			{
+				type: "invalid_rating",
+				tick: tick(3),
+				tripId: t1,
+				riderId: r1,
+				driverId: d2,
+			},
+		]);
+	});
+
+	test("a rating by another rider is flagged", () => {
+		const r2 = RiderId.parse("r-2");
+
+		expect(
+			checkInvariants([...cleanTrip, rated(3, { riderId: r2 })], grid),
+		).toEqual([
+			{
+				type: "invalid_rating",
+				tick: tick(3),
+				tripId: t1,
+				riderId: r2,
+				driverId: d1,
+			},
+		]);
+	});
+
+	test("a rating of an unknown trip is flagged", () => {
+		expect(
+			checkInvariants([...cleanTrip, rated(3, { tripId: t2 })], grid),
+		).toEqual([
+			{
+				type: "invalid_rating",
+				tick: tick(3),
+				tripId: t2,
+				riderId: r1,
+				driverId: d1,
+			},
+		]);
+	});
+
+	test("a second rating of one trip is flagged", () => {
+		expect(checkInvariants([...cleanTrip, rated(3), rated(4)], grid)).toEqual([
+			{ type: "duplicate_rating", tick: tick(4), tripId: t1 },
+		]);
 	});
 });
 
