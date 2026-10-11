@@ -59,6 +59,7 @@ const runEnv: Record<string, string | undefined> = {
 	REGIONS: `${regions.columns}x${regions.rows}`,
 	SURGE: args.value.surge ? "on" : "off",
 	POOLING: args.value.pooling ? "on" : "off",
+	RATINGS: args.value.ratings ? "on" : "off",
 };
 const serviceConfig = parseServiceConfig(runEnv);
 if (!serviceConfig.ok) fail(JSON.stringify(serviceConfig.error), 2);
