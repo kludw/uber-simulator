@@ -266,12 +266,17 @@ export type InputRejected<Input, Reason extends string> = {
 	input: Input;
 };
 
+// A pooled trip's rider opted in to pooling (ADR 0056): true on its
+// request_trip, trip.requested and offers; absent otherwise, never false.
+const Pooled = z.literal(true).optional();
+
 export const Offer = z.object({
 	type: z.literal("offer"),
 	tripId: TripId,
 	driverId: DriverId,
 	pickup: Cell,
 	dropoff: Cell,
+	pooled: Pooled,
 });
 export type Offer = z.infer<typeof Offer>;
 
@@ -305,6 +310,7 @@ export const RequestTrip = z.object({
 	region: OwningRegion,
 	// The rider's quote, the price of the trip (ADR 0054); absent with surge off.
 	surge: Surge.optional(),
+	pooled: Pooled,
 });
 export type RequestTrip = z.infer<typeof RequestTrip>;
 
@@ -416,6 +422,7 @@ export const TripRequested = z
 		dropoff: Cell,
 		surge: Surge.optional(),
 		fare: Fare.optional(),
+		pooled: Pooled,
 	})
 	.refine(
 		(requested) =>

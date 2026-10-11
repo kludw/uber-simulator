@@ -121,6 +121,20 @@ describe("fareOf", () => {
 			Fare.parse(328),
 		);
 	});
+
+	// Pooled fare (ADR 0056): $2.50 + 3 cells × 2 cents = 256 cents.
+	test("takes 25% off a pooled trip's fare", () => {
+		expect(fareOf(cell(0, 0), cell(3, 0), baseSurge, true)).toBe(
+			Fare.parse(192),
+		);
+	});
+
+	// 256 × 1.1 × 0.75 = 211.2; rounding at 1.1 first (282) would give 212.
+	test("rounds a pooled fare once, after the discount", () => {
+		expect(fareOf(cell(0, 0), cell(3, 0), Surge.parse(1.1), true)).toBe(
+			Fare.parse(211),
+		);
+	});
 });
 
 describe("dollars", () => {

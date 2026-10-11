@@ -75,12 +75,21 @@ export function surgeOf(unmatched: number, idle: number): Surge {
 	return (Math.min(20, Math.max(10, tenths)) / 10) as Surge;
 }
 
-// Integer cents: $2.50 plus $2 per km (2 cents per 10 m cell), times surge.
+// Integer cents: $2.50 plus $2 per km (2 cents per 10 m cell), times surge;
+// a pooled trip's 25% off (ADR 0056), rounded once.
 export const Fare = z.int().positive().brand<"Fare">();
 export type Fare = z.infer<typeof Fare>;
 
-export function fareOf(pickup: Cell, dropoff: Cell, surge: Surge): Fare {
-	return Math.round((250 + 2 * distance(pickup, dropoff)) * surge) as Fare;
+export function fareOf(
+	pickup: Cell,
+	dropoff: Cell,
+	surge: Surge,
+	pooled = false,
+): Fare {
+	const discount = pooled ? 0.75 : 1;
+	return Math.round(
+		(250 + 2 * distance(pickup, dropoff)) * surge * discount,
+	) as Fare;
 }
 
 // Cents as dollars, e.g. $4,321.50: how revenue is printed and shown.
