@@ -8,6 +8,7 @@ import {
 } from "../shared/grid.ts";
 import type { DriverId } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
+import { Stars } from "../shared/rating.ts";
 import {
 	oneRegion,
 	Region,
@@ -16,17 +17,20 @@ import {
 } from "../shared/regions.ts";
 import { Zone } from "../shared/surge.ts";
 import {
+	anyDriverRated,
 	type IdleDriver,
 	type IdleDrivers,
 	idleCount,
 	idleCountsByZone,
 	idleDriversById,
+	leastMatchCostIdle,
 	markBusy,
 	markFree,
 	nearestIdle,
 	nearestIdleSkipping,
 	placeDriver,
 	placeDriverAt,
+	rateDriver,
 	removeDriver,
 	startIdleDrivers,
 } from "./idle-drivers.ts";
@@ -150,6 +154,105 @@ describe("nearestIdle", () => {
 		markFree(index, id(2));
 
 		expect(nearestIdle(index, cell(5, 5), none)).toBe(id(1));
+	});
+});
+
+function stars(value: number): Stars {
+	return Stars.parse(value);
+}
+
+// ADR 0057: match cost = pickup distance + rating penalty, 10 cells per star
+// below 5 of the average rating.
+describe("leastMatchCostIdle", () => {
+	test("a driver rated one star better wins against one 9 cells nearer", () => {
+		const index = placed([at(1, 5, 6), at(2, 5, 15)]);
+		rateDriver(index, i(1), stars(4));
+		rateDriver(index, i(2), stars(5));
+
+		expect(leastMatchCostIdle(index, cell(5, 5), none)).toBe(id(2));
+	});
+
+	test("a driver rated one star better loses to one 11 cells nearer", () => {
+		const index = placed([at(1, 5, 6), at(2, 5, 17)]);
+		rateDriver(index, i(1), stars(4));
+		rateDriver(index, i(2), stars(5));
+
+		expect(leastMatchCostIdle(index, cell(5, 5), none)).toBe(id(1));
+	});
+
+	test("an unrated driver has no penalty", () => {
+		const index = placed([at(1, 5, 6), at(2, 5, 7)]);
+		rateDriver(index, i(1), stars(4));
+
+		expect(leastMatchCostIdle(index, cell(5, 5), none)).toBe(id(2));
+	});
+
+	test("ties in match cost go to the lowest driver ID", () => {
+		const index = placed([at(10, 5, 5), at(3, 5, 15)]);
+		rateDriver(index, i(10), stars(4));
+
+		expect(leastMatchCostIdle(index, cell(5, 5), none)).toBe(id(3));
+	});
+
+	test("ranks by the average of a driver's ratings", () => {
+		// d-01 averages 4.5 (penalty 5, cost 6); d-02 is 5 cells farther.
+		const index = placed([at(1, 5, 6), at(2, 5, 11)]);
+		rateDriver(index, i(1), stars(4));
+		rateDriver(index, i(1), stars(5));
+
+		expect(leastMatchCostIdle(index, cell(5, 5), none)).toBe(id(1));
+	});
+
+	test("before any rating, takes the nearest idle driver", () => {
+		const index = placed([at(1, 5, 6), at(2, 5, 7)]);
+
+		expect(leastMatchCostIdle(index, cell(5, 5), none)).toBe(id(1));
+	});
+
+	test("keeps no ratings before the first rating", () => {
+		const index = placed([at(1, 5, 6)]);
+
+		expect(anyDriverRated(index)).toBe(false);
+	});
+
+	test("keeps ratings from the first rating, of any driver of the fleet", () => {
+		const index = placed([at(1, 5, 6)]);
+		rateDriver(index, i(11), stars(3));
+
+		expect(anyDriverRated(index)).toBe(true);
+	});
+
+	test("keeps a rating for a driver outside the region until it crosses in", () => {
+		const leftHalf = regionBounds(
+			RegionLayout.parse("2x1"),
+			grid,
+			Region.parse(0),
+		);
+		const index = startIdleDrivers(grid, fleetSize, leftHalf);
+		placeDriverAt(index, i(1), ...xy(5, 7));
+		rateDriver(index, i(2), stars(4));
+		placeDriverAt(index, i(2), ...xy(5, 4));
+
+		expect(leastMatchCostIdle(index, cell(5, 5), none)).toBe(id(1));
+	});
+
+	test("never returns a driver excluded for the trip", () => {
+		const index = placed([at(1, 5, 6), at(2, 5, 7)]);
+		rateDriver(index, i(2), stars(5));
+
+		expect(leastMatchCostIdle(index, cell(5, 5), new Set([id(1)]))).toBe(id(2));
+	});
+
+	test("returns exactly what a linear scan by match cost returns", () => {
+		expectLinearScanPicks(154, { drivers: false, pickups: false }, false, true);
+	});
+
+	test("returns exactly what a linear scan by match cost returns with drivers and pickups off the grid", () => {
+		expectLinearScanPicks(155, { drivers: true, pickups: true }, false, true);
+	});
+
+	test("returns exactly what a linear scan by match cost of the region's drivers returns", () => {
+		expectLinearScanPicks(156, { drivers: true, pickups: false }, true, true);
 	});
 });
 
@@ -380,10 +483,13 @@ type OffGrid = { drivers: boolean; pickups: boolean };
 // does, against a plain model of the same drivers searched linearly. With
 // regions, the index covers one random region of a random layout: the model
 // drops a driver placed outside it unless busy, and one freed outside it.
+// rated: also rates random drivers of the fleet (known, in the region or
+// not) and searches by match cost.
 function expectLinearScanPicks(
 	seed: number,
 	offGrid: OffGrid,
 	regions = false,
+	rated = false,
 ): void {
 	const random = createRandom(seed);
 	for (let run = 0; run < 1000; run++) {
@@ -422,14 +528,23 @@ function expectLinearScanPicks(
 		const model = {
 			cells: new Map<DriverId, Cell>(),
 			busy: new Set<DriverId>(),
+			ratings: new Map<DriverId, { sum: number; count: number }>(),
 		};
 		const found: (DriverId | undefined)[] = [];
 		const expected: (DriverId | undefined)[] = [];
 		for (let step = 0; step < 200; step++) {
-			const action = random.int(0, 9);
+			const action = random.int(0, rated ? 11 : 9);
 			const driverIndex = DriverIndex.parse(random.int(0, scenarioFleet - 1));
 			const driverId = driverIdAt(scenarioFleet, driverIndex);
-			if (action <= 4) {
+			if (action >= 10) {
+				const given = random.int(1, 5);
+				rateDriver(index, driverIndex, Stars.parse(given));
+				const rating = model.ratings.get(driverId) ?? { sum: 0, count: 0 };
+				model.ratings.set(driverId, {
+					sum: rating.sum + given,
+					count: rating.count + 1,
+				});
+			} else if (action <= 4) {
 				const at = randomCell(offGrid.drivers);
 				placeDriverAt(index, driverIndex, at.x, at.y);
 				if (inRegion(at) || model.busy.has(driverId)) {
@@ -457,7 +572,9 @@ function expectLinearScanPicks(
 				const excluded = new Set(
 					[...model.cells.keys()].filter(() => random.int(0, 9) === 0),
 				);
-				const nearest = nearestIdle(index, pickup, excluded);
+				const nearest = rated
+					? leastMatchCostIdle(index, pickup, excluded)
+					: nearestIdle(index, pickup, excluded);
 				found.push(nearest);
 				expected.push(linearScan(model, pickup, excluded));
 				if (nearest !== undefined && !model.busy.has(nearest)) {
@@ -471,19 +588,34 @@ function expectLinearScanPicks(
 	}
 }
 
-// Reference: sort every idle, not excluded driver by (distance, ID).
+// Reference: sort every idle, not excluded driver by (match cost, ID); match
+// cost is distance plus 10 cells per star of average rating below 5, rounded
+// (ADR 0057), distance alone for an unrated driver.
 function linearScan(
-	model: { cells: ReadonlyMap<DriverId, Cell>; busy: ReadonlySet<DriverId> },
+	model: {
+		cells: ReadonlyMap<DriverId, Cell>;
+		busy: ReadonlySet<DriverId>;
+		ratings: ReadonlyMap<DriverId, { sum: number; count: number }>;
+	},
 	pickup: Cell,
 	excluded: ReadonlySet<DriverId>,
 ): DriverId | undefined {
+	const penalty = (driverId: DriverId): number => {
+		const rating = model.ratings.get(driverId);
+		return rating === undefined
+			? 0
+			: Math.round(10 * (5 - rating.sum / rating.count));
+	};
 	const [nearest] = [...model.cells]
 		.filter(
 			([driverId]) => !model.busy.has(driverId) && !excluded.has(driverId),
 		)
 		.map(([driverId, at]) => ({
 			driverId,
-			distance: Math.abs(at.x - pickup.x) + Math.abs(at.y - pickup.y),
+			distance:
+				Math.abs(at.x - pickup.x) +
+				Math.abs(at.y - pickup.y) +
+				penalty(driverId),
 		}))
 		.toSorted(
 			(a, b) =>
