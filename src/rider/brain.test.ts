@@ -12,10 +12,12 @@ import {
 	DriverId,
 	type RequestTrip,
 	RiderId,
+	type RiderRatedDriver,
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
 import { createRandom, type Random } from "../shared/random.ts";
+import { Stars } from "../shared/rating.ts";
 import { Region, RegionLayout } from "../shared/regions.ts";
 import { Surge, Zone } from "../shared/surge.ts";
 import {
@@ -1061,15 +1063,16 @@ describe("decideRiders with ratings on", () => {
 		);
 	}
 
-	function rated(stars: number) {
+	// r-1's rating of t-1, by d-1 at tick 71 unless given.
+	function rated(stars: number, n = 71, driverId = d1): RiderRatedDriver[] {
 		return [
 			{
 				type: "rider.rated_driver",
-				tick: tick(71),
+				tick: tick(n),
 				riderId: r1,
 				tripId: t1,
-				driverId: d1,
-				stars,
+				driverId,
+				stars: Stars.parse(stars),
 			},
 		];
 	}
@@ -1078,9 +1081,9 @@ describe("decideRiders with ratings on", () => {
 	// noise 0: 4 stars.
 	test("a rider whose trip completes rates its driver", () => {
 		const riding = pickedUp(spawned(true), 61).state;
-		expect(
-			completed(riding, 71, { quality: 0.5, noise: 0.5 }).outputs,
-		).toEqual(rated(4));
+		expect(completed(riding, 71, { quality: 0.5, noise: 0.5 }).outputs).toEqual(
+			rated(4),
+		);
 	});
 
 	// Wait 180: 1 star beyond the first 60. 4.25 − 1 = 3.25: 3 stars.
@@ -1088,23 +1091,23 @@ describe("decideRiders with ratings on", () => {
 		const riding = pickedUp(spawned(true), 181).state;
 		expect(
 			completed(riding, 191, { quality: 0.5, noise: 0.5 }).outputs,
-		).toEqual([{ ...rated(3)[0], tick: tick(191) }]);
+		).toEqual(rated(3, 191));
 	});
 
 	// Ride 15 over 10: 50% detour, 1 star. 4.25 − 1 = 3.25: 3 stars.
 	test("a pooled ride's detour costs 2 stars per 100% over direct distance", () => {
 		const riding = pickedUp(spawned(true), 56).state;
-		expect(
-			completed(riding, 71, { quality: 0.5, noise: 0.5 }).outputs,
-		).toEqual(rated(3));
+		expect(completed(riding, 71, { quality: 0.5, noise: 0.5 }).outputs).toEqual(
+			rated(3),
+		);
 	});
 
 	// Quality 4.25, noise 2 × 0.9 − 1 = 0.8: 5.05, 5 stars.
 	test("noise from the trip's stream moves the stars", () => {
 		const riding = pickedUp(spawned(true), 61).state;
-		expect(
-			completed(riding, 71, { quality: 0.5, noise: 0.9 }).outputs,
-		).toEqual(rated(5));
+		expect(completed(riding, 71, { quality: 0.5, noise: 0.9 }).outputs).toEqual(
+			rated(5),
+		);
 	});
 
 	// Wait 301: 241 / 120 ≈ 2.01 stars. 4.25 − 2.01 = 2.24: 2 stars.
@@ -1113,7 +1116,21 @@ describe("decideRiders with ratings on", () => {
 		const riding = pickedUp(cancelling, 302).state;
 		expect(
 			completed(riding, 312, { quality: 0.5, noise: 0.5 }).outputs,
-		).toEqual([{ ...rated(2)[0], tick: tick(312) }]);
+		).toEqual(rated(2, 312));
+	});
+
+	// Seed 42: quality of d-3 ≈ 4.19, noise of t-1 ≈ −0.17; ride 15 over 10
+	// costs 1 star: 3.02, 3 stars.
+	test("a rider rates d-3 3 stars after a pooled ride for seed 42", () => {
+		const riding = pickedUp(spawned(true), 56).state;
+		const d3 = DriverId.parse("d-3");
+		expect(
+			decideRiders(
+				riding,
+				{ type: "trip.completed", tick: tick(71), tripId: t1, driverId: d3 },
+				createRandom(42),
+			).outputs,
+		).toEqual(rated(3, 71, d3));
 	});
 
 	// scriptedRandom({}) throws on any draw: no rating stream is touched.
@@ -1242,9 +1259,10 @@ describe("decideRiders with ratings on", () => {
 	});
 
 	test("rating never shifts riders' requests or patience", () => {
-		expect(
-			run(7, true).filter((output) => output.type !== "rider.rated_driver"),
-		).toEqual(run(7, false));
+		const unrated: Decision["outputs"] = run(7, true).filter(
+			(output) => output.type !== "rider.rated_driver",
+		);
+		expect(unrated).toEqual(run(7, false));
 	});
 });
 

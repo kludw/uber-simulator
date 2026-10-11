@@ -189,7 +189,7 @@ function onCompleted(
 	const ride = state.ratings?.get(addressed.tripId);
 	removeRider(state, addressed.tripId);
 	if (state.ratings === null) return { state, outputs: [] };
-	if (ride?.pickedUpAt == null) {
+	if (ride === undefined || ride.pickedUpAt === null) {
 		throw new Error(`riding rider ${addressed.id} has no ride to rate`);
 	}
 	const rated: RiderRatedDriver = {
