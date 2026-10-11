@@ -20,7 +20,7 @@ Profile (`bun --cpu-prof-md`, 600k, 600 ticks, surge on, greedy, M1 Pro): on mas
 | master (`d3c0699`) | 45.15 / 58.70 | 61.40 / 84.37 |
 | spike, margin 0 | 42.03 / 51.95 | 46.40 / 54.82 |
 
-Whole in-process bench (`bun run bench --drivers 600000 --ticks 300`, surge off, two rounds alternating; dispatch is about a fifth of it, so this mostly shows noise): master off 196.85 / 197.27 ms mean (p95 230.81 / 227.38), on 193.03 / 184.70 (217.28 / 207.01); spike off 197.23 / 191.21 (229.91 / 231.84), on 197.69 / 208.47 (224.25 / 233.89). Peak RSS 2,229-2,362 MiB master, 2,530-2,690 MiB spike; at 600 ticks (the dispatch timing runs) master 3,066 off / 3,372 on, spike 3,582 off / 3,354 on, and other 600-tick runs of each tree spread 3,213-3,784 MiB, so RSS differences here are within run-to-run noise (the spike adds three fields per known driver and one empty bucket set, a few MiB).
+Whole in-process bench (`bun run bench --drivers 600000 --ticks 300`, surge off, two rounds alternating; dispatch is about a fifth of it, so this mostly shows noise): master off 196.85 / 197.27 ms mean (p95 230.81 / 227.38), on 193.03 / 184.70 (217.28 / 207.01); spike off 197.23 / 191.21 (229.91 / 231.84), on 197.69 / 208.47 (224.25 / 233.89). Peak RSS 2,229-2,362 MiB master, 2,530-2,690 MiB spike; at 600 ticks (the dispatch timing runs) master 3,066 off / 3,372 on, spike 3,582 off / 3,354 on, and other 600-tick runs of each tree spread 3,213-3,784 MiB, so RSS differences here are within run-to-run noise. Measured directly (heap after a full GC, an index of 600k placed drivers): 110.6 MiB on master, 129.2 MiB with the three fields per driver and the second bucket set the decision below adds (+18.6 MiB per dispatch at 600k).
 
 Rider outcomes, `bun run sim -- --compare-pooling` (each cell pooling off → on):
 
@@ -69,7 +69,7 @@ We will join a pooled trip to a partner only when the join is no farther than th
 - With pooling off nothing changes: no trip is pooled, no driver is joinable, outputs and event logs byte-identical to master.
 - README and `--compare-pooling` numbers change (spec load shares fewer trips; 10k and 600k complete more); the README table records them.
 - Dispatch looks up the nearest idle driver once more per pooled queued trip in batched's join passes.
-- The idle driver index grows a second bucket set and three fields per known driver; `busyDriverCell` goes.
+- The idle driver index grows a second bucket set and three fields per known driver (+18.6 MiB heap at 600k drivers); `busyDriverCell` and `isBusy` go.
 - #352 re-runs the live greedy `1x1` 600k check with pooling on.
 
 Domain terms (domain skill): **Join reach**; **Join** and **Join ETA** updated.
