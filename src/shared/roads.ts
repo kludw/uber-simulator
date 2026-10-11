@@ -38,6 +38,13 @@ export type RoadNetwork = {
 	cacheX: number;
 	cacheY: number;
 	exitCost: Int32Array;
+	// SPIKE: exit costs per fixed cell (a batch's pickups), owned by this
+	// network so two networks never share rows; dropped past 4,096.
+	exitCosts: Map<number, Int32Array>;
+	// SPIKE: waypoints by driver index (production: the driver shard's state).
+	viaTarget: Int32Array;
+	viaExit: Int32Array;
+	viaFrom: Int32Array;
 };
 
 type Preset = {
@@ -210,6 +217,10 @@ export function roadNetworkNamed(name: string, grid: Grid): RoadNetwork {
 		cacheX: -1,
 		cacheY: -1,
 		exitCost: new Int32Array(landings),
+		exitCosts: new Map(),
+		viaTarget: new Int32Array(0),
+		viaExit: new Int32Array(0),
+		viaFrom: new Int32Array(0),
 	};
 }
 
@@ -391,11 +402,11 @@ export function roadStep(
 	let exit = -1;
 	if (
 		driverIndex >= 0 &&
-		driverIndex < viaTarget.length &&
-		viaTarget[driverIndex] === key &&
-		viaFrom[driverIndex] === ay * w + ax
+		driverIndex < net.viaTarget.length &&
+		net.viaTarget[driverIndex] === key &&
+		net.viaFrom[driverIndex] === ay * w + ax
 	) {
-		const kept = viaExit[driverIndex] as number;
+		const kept = net.viaExit[driverIndex] as number;
 		if (kept >= 0 && net.landingDistrict[kept] === da) exit = kept;
 	}
 	if (exit < 0) {
@@ -413,9 +424,9 @@ export function roadStep(
 			}
 		}
 		if (driverIndex >= 0) {
-			if (driverIndex >= viaTarget.length) growVia(driverIndex + 1);
-			viaTarget[driverIndex] = key;
-			viaExit[driverIndex] = exit;
+			if (driverIndex >= net.viaTarget.length) growVia(net, driverIndex + 1);
+			net.viaTarget[driverIndex] = key;
+			net.viaExit[driverIndex] = exit;
 		}
 	}
 	const ex = net.landingX[exit] as number;
@@ -425,7 +436,7 @@ export function roadStep(
 			? (net.bridgeY[exit >> 1] as number) * w +
 				(net.bridgeX[exit >> 1] as number)
 			: gridStep(w, ax, ay, ex, ey);
-	if (driverIndex >= 0) viaFrom[driverIndex] = next;
+	if (driverIndex >= 0) net.viaFrom[driverIndex] = next;
 	return next;
 }
 
@@ -443,21 +454,17 @@ function gridStep(
 	return y * w + x + Math.sign(dx);
 }
 
-let viaTarget = new Int32Array(0);
-let viaExit = new Int32Array(0);
-// The cell the last step returned: the cache holds only for a driver there.
-let viaFrom = new Int32Array(0);
-function growVia(size: number): void {
-	const next = Math.max(size, 2 * viaTarget.length);
+function growVia(net: RoadNetwork, size: number): void {
+	const next = Math.max(size, 2 * net.viaTarget.length);
 	const target = new Int32Array(next).fill(-1);
 	const exit = new Int32Array(next).fill(-1);
 	const from = new Int32Array(next).fill(-1);
-	target.set(viaTarget);
-	exit.set(viaExit);
-	from.set(viaFrom);
-	viaTarget = target;
-	viaExit = exit;
-	viaFrom = from;
+	target.set(net.viaTarget);
+	exit.set(net.viaExit);
+	from.set(net.viaFrom);
+	net.viaTarget = target;
+	net.viaExit = exit;
+	net.viaFrom = from;
 }
 
 // Spike knob: SPIKE_ROADS=river|canals (off when unset), built on the spec grid.
@@ -479,19 +486,18 @@ export const spikeCounts = {
 
 // SPIKE: exit costs per fixed cell, kept for up to 4,096 cells (a batch's
 // pickups), then dropped; the last one also in net.exitCost.
-const exitCosts = new Map<number, Int32Array>();
 function fillExitCosts(net: RoadNetwork, fx: number, fy: number, df: number) {
 	if (net.cacheX === fx && net.cacheY === fy) return;
 	const key = fy * net.width + fx;
-	let costs = exitCosts.get(key);
+	let costs = net.exitCosts.get(key);
 	if (costs === undefined) {
 		spikeCounts.recompute++;
-		if (exitCosts.size >= 4096) exitCosts.clear();
+		if (net.exitCosts.size >= 4096) net.exitCosts.clear();
 		costs = new Int32Array(net.landings);
 		for (let p = 0; p < net.landings; p++) {
 			costs[p] = exitCostOf(net, p, fx, fy, df);
 		}
-		exitCosts.set(key, costs);
+		net.exitCosts.set(key, costs);
 	}
 	net.exitCost = costs;
 	net.cacheX = fx;
