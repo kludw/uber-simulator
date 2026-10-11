@@ -11,7 +11,7 @@ import {
 	forEachMove,
 	forEachWentOnline,
 } from "../shared/messages.ts";
-import { regionOf } from "../shared/regions.ts";
+import { oneRegion, regionOf } from "../shared/regions.ts";
 import { preferencesNamed, shiftsNamed } from "./config.ts";
 import { checkInvariants } from "./invariants.ts";
 import {
@@ -101,6 +101,22 @@ const poolingConfig = {
 	requestsPerMinute: 30,
 	pooling: true,
 };
+
+// ADR 0057: sixteen drivers on a small grid, enough idle at once that
+// matching weighs ratings.
+const ratingsConfig = {
+	seed: 1,
+	ticks: 1200,
+	grid: { width: 100, height: 100 },
+	driverShards: { count: 2, driversPerShard: 8 },
+	requestsPerMinute: 20,
+	ratings: true,
+};
+
+function ratingsIn(eventLog: readonly Message[]): number {
+	return eventLog.filter((message) => message.type === "rider.rated_driver")
+		.length;
+}
 
 // Shared trips (completed with another trip on their driver while active),
 // and those whose ride, pickup to completion, exceeds the detour limit:
@@ -508,6 +524,56 @@ describe("runInProcess", () => {
 			violations: summary.violations,
 			shares: summary.shared > 0,
 		}).toEqual({ violations: [], shares: true });
+	});
+
+	// Each region's dispatch keeps the whole fleet's ratings (ADR 0057).
+	test.each([
+		["greedy", { type: "greedy" }, oneRegion],
+		["batched", { type: "batched", windowTicks: 5 }, oneRegion],
+		["greedy at 2x2", { type: "greedy" }, { columns: 2, rows: 2 }],
+	] as const)(
+		"a %s ratings run breaks no invariant and rates drivers",
+		(_, matching, regions) => {
+			const config = { ...ratingsConfig, matching, regions };
+			const result = runInProcess({ ...config, keepEventLog: true });
+
+			expect({
+				violations: summarize(config, result).violations,
+				rates: ratingsIn(result.eventLog) > 0,
+			}).toEqual({ violations: [], rates: true });
+		},
+	);
+
+	test("a ratings run on the same seed gives an identical event log", () => {
+		expect(
+			runInProcess({ ...ratingsConfig, keepEventLog: true }).eventLog,
+		).toEqual(runInProcess({ ...ratingsConfig, keepEventLog: true }).eventLog);
+	});
+
+	// Ratings off: every message as before ratings existed.
+	test("a ratings-off run rates no driver", () => {
+		const { eventLog } = runInProcess({
+			...ratingsConfig,
+			ratings: false,
+			keepEventLog: true,
+		});
+
+		expect(ratingsIn(eventLog)).toBe(0);
+	});
+
+	// A rider that missed its pickup or completion doesn't rate; a lost
+	// rating leaves a dispatch preferring less. Neither may break an invariant.
+	test("with 1% of messages lost and ratings on, no invariant breaks", () => {
+		const result = runInProcess({
+			...ratingsConfig,
+			lossShare: 0.01,
+			keepEventLog: true,
+		});
+
+		expect({
+			violations: summarize(ratingsConfig, result).violations,
+			rates: ratingsIn(result.eventLog) > 0,
+		}).toEqual({ violations: [], rates: true });
 	});
 
 	// ADR 0054: a lost zones.priced leaves a rider on a stale quote until the
@@ -1002,6 +1068,17 @@ describe.skipIf(!natsUrl)("runOverNats", () => {
 				(message) => message.type === "trip.requested" && message.pooled,
 			),
 		}).toEqual({ violations: [], pooled: true });
+	}, 60_000);
+
+	// ADR 0057: a rating can reach dispatch a tick later than in process, so
+	// greedy's offers may differ between the buses; the invariants don't.
+	test("a ratings run breaks no invariant and rates drivers", async () => {
+		const { eventLog } = await runOnServer({ ...ratingsConfig, ticks: 600 });
+
+		expect({
+			violations: checkInvariants(eventLog, ratingsConfig.grid),
+			rates: ratingsIn(eventLog) > 0,
+		}).toEqual({ violations: [], rates: true });
 	}, 60_000);
 
 	test("a scarce-supply run breaks no invariant, completes and cancels trips", async () => {
