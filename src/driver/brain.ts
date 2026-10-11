@@ -660,31 +660,32 @@ function onTripEnded(
 	state: DriverShardState,
 	ended: TripCancelled | TripOfferExpired,
 ): Decision {
-	// No driver (cancelled before any match), or not this driver's current
-	// trip: the driver isn't involved.
+	// No driver (cancelled before any match), or not a trip this driver
+	// holds: the driver isn't involved.
 	if (ended.driverId === null) return { state, outputs: [] };
 	const addressed = state.drivers.get(ended.driverId);
 	if (
 		addressed === undefined ||
 		addressed.state === "idle" ||
-		addressed.state === "offline"
+		addressed.state === "offline" ||
+		!addressed.trips.some((trip) => trip.tripId === ended.tripId)
 	) {
 		return { state, outputs: [] };
 	}
-	if (addressed.tripId !== ended.tripId) return { state, outputs: [] };
 	// Dispatch rejects cancel after pickup and expiry only precedes a match.
-	if (addressed.state === "on_trip" || addressed.state === "at_dropoff") {
+	if (!pickupAhead(addressed, ended.tripId)) {
 		return reject(state, ended, "trip_already_picked_up");
 	}
-	const cell =
-		addressed.state === "at_pickup" ? addressed.pickup : addressed.cell;
-	return replaceDriver(state, {
-		state: "idle",
-		id: addressed.id,
-		index: addressed.index,
-		cell,
-		wanderTarget: null,
-	});
+	return replaceDriver(state, withoutTrip(addressed, ended.tripId));
+}
+
+function pickupAhead(driver: BusyDriver, tripId: TripId): boolean {
+	if (driver.tripId === tripId) {
+		return driver.state === "en_route" || driver.state === "at_pickup";
+	}
+	return driver.next.some(
+		(stop) => stop.kind === "pickup" && stop.tripId === tripId,
+	);
 }
 
 // Dispatch's answer to confirm_trip (ADR 0041). Acted on only by a driver

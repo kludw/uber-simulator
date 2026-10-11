@@ -2681,6 +2681,99 @@ describe("decideDriverShard taking a second rider", () => {
 		]);
 	});
 
+	function joinedBeforePickups(random: Random) {
+		return decideDriverShard(holdingPooledTrip(random), secondOffer, random)
+			.state;
+	}
+
+	test("driver whose partner trip is cancelled before pickup serves the joined trip alone", () => {
+		const random = scriptedRandom([0, 0, 0, 0]);
+		const { arrivals } = serve(
+			joinedBeforePickups(random),
+			random,
+			{ from: 1, to: 20 },
+			{
+				1: [
+					{ type: "trip.cancelled", tick: tick(0), tripId: t1, driverId: d1 },
+				],
+			},
+		);
+		expect(arrivals).toEqual([
+			{ stop: "pickup", tripId: t2, cell: cell(6, 5) },
+			{ stop: "dropoff", tripId: t2, cell: cell(9, 2) },
+		]);
+	});
+
+	test("driver whose joined trip is cancelled before pickup serves its partner trip alone", () => {
+		const random = scriptedRandom([0, 0, 0, 0]);
+		const { arrivals } = serve(
+			joinedBeforePickups(random),
+			random,
+			{ from: 1, to: 20 },
+			{
+				1: [
+					{ type: "trip.cancelled", tick: tick(0), tripId: t2, driverId: d1 },
+				],
+			},
+		);
+		expect(arrivals).toEqual([
+			{ stop: "pickup", tripId: t1, cell: cell(5, 5) },
+			{ stop: "dropoff", tripId: t1, cell: cell(8, 2) },
+		]);
+	});
+
+	test("driver carrying its partner whose joined offer expires goes on to the partner's dropoff", () => {
+		// t-1 picked up on tick 10; joined before tick 11, pickup (5, 8) 3
+		// ticks away, expired before 12.
+		const random = scriptedRandom([0, 0, 0, 0]);
+		const { arrivals } = serve(
+			holdingPooledTrip(random),
+			random,
+			{ from: 1, to: 25 },
+			{
+				11: [pooledOffer(t2, cell(5, 8), cell(8, 5))],
+				12: [
+					{
+						type: "trip.offer_expired",
+						tick: tick(11),
+						tripId: t2,
+						driverId: d1,
+					},
+				],
+			},
+		);
+		expect(arrivals).toEqual([
+			{ stop: "pickup", tripId: t1, cell: cell(5, 5) },
+			{ stop: "dropoff", tripId: t1, cell: cell(8, 2) },
+		]);
+	});
+
+	test("cancellation of the partner trip a driver is carrying is rejected while it heads to the joined pickup", () => {
+		// t-1 picked up on tick 10; joined before tick 11, now heading to (6, 5).
+		const random = scriptedRandom([0, 0, 0, 0]);
+		const { state } = serve(
+			holdingPooledTrip(random),
+			random,
+			{ from: 1, to: 10 },
+			{},
+		);
+		const heading = decideDriverShard(state, secondOffer, random).state;
+		const cancelled = {
+			type: "trip.cancelled" as const,
+			tick: tick(10),
+			tripId: t1,
+			driverId: d1,
+		};
+		const { outputs } = decideDriverShard(heading, cancelled, random);
+		expect(outputs).toEqual([
+			{
+				type: "input_rejected",
+				reason: "trip_already_picked_up",
+				input: cancelled,
+			},
+		]);
+	});
+
 	test("picky driver holding a pooled trip accepts a pooled offer beyond its max pickup distance, drawing nothing", () => {
 		// Max pickup distance 2; t-2's offer stream is not scripted, so a draw
 		// would throw.
