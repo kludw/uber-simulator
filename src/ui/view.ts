@@ -260,6 +260,9 @@ export function applyEvent(view: View, event: SimEvent): void {
 		case "rider.declined_surge":
 			view.ridersDeclined++;
 			return;
+		// Shown once the panel counts ratings (ADR 0057, #333).
+		case "rider.rated_driver":
+			return;
 		default: {
 			const unhandled: never = event;
 			throw new Error(`unhandled event: ${JSON.stringify(unhandled)}`);

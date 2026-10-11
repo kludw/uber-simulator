@@ -10,6 +10,7 @@ import {
 	Tick,
 	TripId,
 } from "./messages.ts";
+import { Stars } from "./rating.ts";
 import { Region } from "./regions.ts";
 import {
 	replaySubject,
@@ -207,6 +208,18 @@ describe("subjectFor", () => {
 				surge: Surge.parse(1.5),
 			},
 			"sim.events.rider.declined_surge",
+		],
+		// ADR 0057: not regioned, every dispatch takes every rating.
+		[
+			{
+				type: "rider.rated_driver",
+				tick,
+				riderId,
+				tripId,
+				driverId,
+				stars: Stars.parse(5),
+			},
+			"sim.events.rider.rated_driver",
 		],
 	];
 

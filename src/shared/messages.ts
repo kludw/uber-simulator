@@ -1,6 +1,7 @@
 import * as z from "zod";
 import { type DriverIndex, driverIdAt } from "./fleet.ts";
 import { Cell, type Coordinate, cellAt } from "./grid.ts";
+import { Stars } from "./rating.ts";
 import { Region } from "./regions.ts";
 import type { Result } from "./result.ts";
 import { Fare, Surge, Zone } from "./surge.ts";
@@ -346,6 +347,18 @@ export const RiderDeclinedSurge = z.object({
 });
 export type RiderDeclinedSurge = z.infer<typeof RiderDeclinedSurge>;
 
+// A rider's rating of its driver when its trip completes (ADR 0057). Not
+// regioned: every dispatch takes every rating.
+export const RiderRatedDriver = z.object({
+	type: z.literal("rider.rated_driver"),
+	tick: Tick,
+	riderId: RiderId,
+	tripId: TripId,
+	driverId: DriverId,
+	stars: Stars,
+});
+export type RiderRatedDriver = z.infer<typeof RiderRatedDriver>;
+
 export const RequestTripAccepted = z.object({
 	type: z.literal("request_trip_accepted"),
 	tripId: TripId,
@@ -461,6 +474,7 @@ const Message = z.discriminatedUnion("type", [
 	TripStatus,
 	ZonesPriced,
 	RiderDeclinedSurge,
+	RiderRatedDriver,
 ]);
 export type Message = z.infer<typeof Message>;
 
