@@ -11,6 +11,7 @@ import {
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
+import { Stars } from "../shared/rating.ts";
 import { Region } from "../shared/regions.ts";
 import { Fare, Surge, Zone } from "../shared/surge.ts";
 import { runInProcess } from "../sim/run.ts";
@@ -75,6 +76,16 @@ const trip: SimEvent[] = [
 	},
 	{ type: "trip.completed", tick: tick(10), tripId: t1, driverId: d1 },
 ];
+
+// t1's rider rates d1 on completion (ADR 0057).
+const tripRated: SimEvent = {
+	type: "rider.rated_driver",
+	tick: tick(10),
+	riderId: r1,
+	tripId: t1,
+	driverId: d1,
+	stars: Stars.parse(4),
+};
 
 function viewOf(events: SimEvent[]): View {
 	const view = emptyView();
@@ -397,6 +408,7 @@ describe("fleet size", () => {
 		];
 		const view = viewOf([
 			...trip,
+			tripRated,
 			online(i2, 3, cell(5, 5)),
 			requested(TripId.parse("t-2"), 9, pickup, dropoff),
 			...newRun,
@@ -410,6 +422,7 @@ describe("fleet size", () => {
 describe("new run", () => {
 	const oldRun: SimEvent[] = [
 		...trip,
+		tripRated,
 		{ type: "clock.ticked", tick: tick(10) },
 		online(i2, 3, cell(5, 5)),
 		requested(TripId.parse("t-2"), 9, pickup, dropoff),
@@ -884,6 +897,51 @@ describe("pooling", () => {
 			completed: summary.trips.completed,
 			shared: summary.shared,
 			revenue: summary.revenue,
+		});
+	});
+});
+
+// ADR 0057: riders rate their drivers; the page counts ratings and stars.
+describe("ratings", () => {
+	function rated(trip: string, stars: number): SimEvent {
+		return {
+			type: "rider.rated_driver",
+			tick: tick(10),
+			riderId: r1,
+			tripId: TripId.parse(trip),
+			driverId: d1,
+			stars: Stars.parse(stars),
+		};
+	}
+
+	test("ratings are counted with their stars", () => {
+		const view = viewOf([rated("t-1", 5), rated("t-2", 2), rated("t-3", 4)]);
+		expect({ ratings: view.ratings, stars: view.stars }).toEqual({
+			ratings: 3,
+			stars: 11,
+		});
+	});
+
+	// A page watching from the first event sees what the summary counts.
+	test("a page watching a ratings run from its start agrees with its summary", () => {
+		const config = {
+			seed: 1,
+			ticks: 1200,
+			grid: { width: 100, height: 100 },
+			driverShards: { count: 1, driversPerShard: 8 },
+			requestsPerMinute: 30,
+			ratings: true,
+		};
+		const run = runInProcess({ ...config, keepEventLog: true });
+		const view = viewOf(run.eventLog.filter(isSimEvent));
+		const summary = summarize(config, run);
+		const page: { ratings: number; meanStars: number | null } = {
+			ratings: view.ratings,
+			meanStars: view.stars / view.ratings,
+		};
+		expect(page).toEqual({
+			ratings: summary.ratings,
+			meanStars: summary.meanStars,
 		});
 	});
 });
