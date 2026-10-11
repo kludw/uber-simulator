@@ -1,7 +1,8 @@
 // Headless CLI: one seeded run, in process or over NATS, summary on stdout;
 // or --compare: greedy and batched matching in process on the same seed,
 // side by side (ADR 0030); or --compare-surge: the configured matching with
-// surge off and on, likewise (ADR 0054).
+// surge off and on, likewise (ADR 0054); or --compare-pooling: pooling off
+// and on, likewise (ADR 0056).
 // Exit codes: 0 ok, 1 invariant violated, 2 invalid args or NATS_URL,
 // 3 NATS unreachable.
 import * as z from "zod";
@@ -27,6 +28,7 @@ const {
 	bus,
 	compare,
 	compareSurge,
+	comparePooling,
 	windowTicks,
 	demandName,
 	shiftsName,
@@ -44,7 +46,11 @@ const loadLines = [
 	`regions: ${regions.columns}x${regions.rows}`,
 	// Surge-off output stays as before surge existed (ADR 0054).
 	...(config.surge && !compareSurge ? ["surge: on"] : []),
+	// Pooling-off output stays as before pooling existed (ADR 0056).
+	...(config.pooling && !comparePooling ? ["pooling: on"] : []),
 ];
+const surge = config.surge ?? false;
+const pooling = config.pooling ?? false;
 const batched: Matching = { type: "batched", windowTicks };
 const matching: Matching =
 	args.value.matching === "batched" ? batched : { type: "greedy" };
@@ -61,7 +67,8 @@ if (compare) {
 	console.log(`batch window: ${windowTicks} ticks`);
 	for (const line of loadLines) console.log(line);
 	printComparison(["greedy", "batched"], greedySummary, batchedSummary, {
-		surge: config.surge ?? false,
+		surge,
+		pooling,
 	});
 	printAndFailOnViolations("greedy", greedySummary);
 	printAndFailOnViolations("batched", batchedSummary);
@@ -74,9 +81,27 @@ if (compare) {
 	for (const line of loadLines) console.log(line);
 	printComparison(["surge off", "surge on"], offSummary, onSummary, {
 		surge: true,
+		pooling,
 	});
 	printAndFailOnViolations("surge off", offSummary);
 	printAndFailOnViolations("surge on", onSummary);
+} else if (comparePooling) {
+	const offSummary = summarizeInProcess({
+		...config,
+		matching,
+		pooling: false,
+	});
+	const onSummary = summarizeInProcess({ ...config, matching, pooling: true });
+	console.log(`seed: ${config.seed}`);
+	console.log(`ticks: ${config.ticks}`);
+	console.log(matchingLine);
+	for (const line of loadLines) console.log(line);
+	printComparison(["pooling off", "pooling on"], offSummary, onSummary, {
+		surge,
+		pooling: true,
+	});
+	printAndFailOnViolations("pooling off", offSummary);
+	printAndFailOnViolations("pooling on", onSummary);
 } else {
 	const summary = await run({ ...config, matching });
 
@@ -86,13 +111,20 @@ if (compare) {
 	for (const line of loadLines) console.log(line);
 	console.log(`drivers: ${summary.drivers}`);
 	console.log(`trips requested: ${summary.trips.requested}`);
-	if (config.surge) console.log(`riders declined: ${summary.declined}`);
+	if (surge) console.log(`riders declined: ${summary.declined}`);
+	if (pooling) console.log(`trips pooled: ${summary.pooled}`);
 	console.log(`trips completed: ${summary.trips.completed}`);
+	if (pooling) console.log(`trips shared: ${summary.shared}`);
 	console.log(`trips cancelled: ${summary.trips.cancelled}`);
 	console.log(
 		`mean ticks from request to pickup: ${summary.meanTicksToPickup?.toFixed(1) ?? "n/a"}`,
 	);
-	if (config.surge) console.log(`revenue: ${dollars(summary.revenue)}`);
+	if (pooling) {
+		console.log(
+			`mean ticks from pickup to completion: ${summary.meanTicksToComplete?.toFixed(1) ?? "n/a"}`,
+		);
+	}
+	if (surge || pooling) console.log(`revenue: ${dollars(summary.revenue)}`);
 	console.log(`rejected inputs: ${summary.rejectedInputs}`);
 	console.log(`invariant violations: ${summary.violations.length}`);
 	printAndFailOnViolations(null, summary);
@@ -102,7 +134,7 @@ function printComparison(
 	[firstName, secondName]: [string, string],
 	first: Summary,
 	second: Summary,
-	options: { surge: boolean },
+	options: { surge: boolean; pooling: boolean },
 ): void {
 	const rows = [
 		{ metric: "", first: firstName, second: secondName },
