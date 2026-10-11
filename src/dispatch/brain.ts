@@ -1,4 +1,4 @@
-import { distance, type Grid } from "../shared/grid.ts";
+import { type Cell, distance, type Grid } from "../shared/grid.ts";
 import type {
 	CancelTrip,
 	CancelTripAccepted,
@@ -32,6 +32,7 @@ import type {
 	ZonesPriced,
 } from "../shared/messages.ts";
 import { forEachDriverAt } from "../shared/messages.ts";
+import { joinEtaOf, type Partner } from "../shared/pool.ts";
 import type { Random } from "../shared/random.ts";
 import {
 	oneRegion,
@@ -49,11 +50,13 @@ import {
 	zoneOf,
 } from "../shared/surge.ts";
 import {
+	busyDriverCell,
 	type IdleDriver,
 	type IdleDrivers,
 	idleCount,
 	idleCountsByZone,
 	idleDriversById,
+	isBusy,
 	markBusy,
 	markFree,
 	nearestIdle,
@@ -92,7 +95,12 @@ import {
 // fleetSize: the run's fleet, from dispatch's own config (ADR 0052).
 // region: the region this instance owns, named in zones.priced.
 // surge: whether it prices zones and trips (ADR 0054).
-// trips, endedTrips, and drivers are owned and updated in place (ADR 0033).
+// Pooling (ADR 0056): pooledOpen counts the pooled trips in trips (none:
+// matching skips joins); holdingTwo, the busy drivers holding two trips (a
+// partner and its join); pickedUpAt, each picked-up pooled trip's pickup tick.
+// All stay empty with pooling off.
+// trips, endedTrips, drivers, holdingTwo and pickedUpAt are owned and updated
+// in place (ADR 0033).
 export type DispatchState = {
 	grid: Grid;
 	fleetSize: number;
@@ -103,6 +111,9 @@ export type DispatchState = {
 	trips: Map<TripId, Trip>;
 	endedTrips: Map<TripId, EndedTrip>;
 	drivers: IdleDrivers;
+	pooledOpen: number;
+	holdingTwo: Set<DriverId>;
+	pickedUpAt: Map<TripId, Tick>;
 };
 
 // ADR 0030: batched matches only on ticks that are multiples of windowTicks.
@@ -193,6 +204,9 @@ export function startDispatch(config: {
 			config.fleetSize,
 			regionBounds(config.regions ?? oneRegion, config.grid, region),
 		),
+		pooledOpen: 0,
+		holdingTwo: new Set(),
+		pickedUpAt: new Map(),
 	};
 }
 
@@ -239,31 +253,67 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 				driverId,
 				pickup: trip.pickup,
 				dropoff: trip.dropoff,
+				...(trip.pooled ? { pooled: true as const } : {}),
 			},
 			{ type: "trip.offered", tick: ticked.tick, tripId: trip.id, driverId },
 		);
 	};
 	const queued = queuedTrips(state);
+	// Joins only while a pooled trip is open, on a tick that matches.
+	const pool =
+		state.pooledOpen > 0 &&
+		queued.length > 0 &&
+		(state.matching.type === "greedy" ||
+			ticked.tick % state.matching.windowTicks === 0)
+			? openPool(state)
+			: undefined;
+	// A pooled trip offered to its best partner's driver; false if none fits.
+	const join = (trip: QueuedTrip): boolean => {
+		if (pool === undefined || !trip.pooled) return false;
+		const partner = takeBestPartner(pool, trip);
+		if (partner === undefined) return false;
+		offer(trip, partner.driverId);
+		return true;
+	};
+	// A pooled trip offered to an idle driver is a partner from here on.
+	const offerIdle = (trip: QueuedTrip, driverId: DriverId) => {
+		offer(trip, driverId);
+		if (pool !== undefined && trip.pooled) {
+			addPartner(state, pool, trip, driverId);
+		}
+	};
 	switch (state.matching.type) {
 		case "greedy":
-			// Each trip in turn takes the nearest idle driver, ties to the lowest
-			// ID; the offer makes that driver busy for the next trip.
+			// Each trip in turn joins a partner (pooled) or takes the nearest idle
+			// driver, ties to the lowest ID; the offer makes that driver busy for
+			// the next trip.
 			for (const trip of queued) {
+				if (join(trip)) continue;
 				const driverId = nearestIdle(
 					state.drivers,
 					trip.pickup,
 					trip.excludedDrivers,
 				);
-				if (driverId !== undefined) offer(trip, driverId);
+				if (driverId !== undefined) offerIdle(trip, driverId);
 			}
 			break;
-		case "batched":
+		case "batched": {
 			if (queued.length === 0) break;
 			if (ticked.tick % state.matching.windowTicks !== 0) break;
-			for (const { trip, driverId } of batchedPairs(state, queued)) {
-				offer(trip, driverId);
+			// Joins first, then batched matching of the rest, then joins for
+			// the pooled trips it left without a driver (ADR 0056).
+			const rest =
+				pool === undefined ? queued : queued.filter((trip) => !join(trip));
+			for (const { trip, driverId } of batchedPairs(state, rest)) {
+				offerIdle(trip, driverId);
+			}
+			if (pool === undefined) break;
+			for (const trip of rest) {
+				// An offer stores a new trip: still this one means unoffered.
+				if (state.trips.get(trip.id) === trip) join(trip);
 			}
 			break;
+		}
 		default: {
 			const unhandled: never = state.matching;
 			throw new Error(`unhandled matching: ${unhandled}`);
@@ -311,6 +361,95 @@ function zonesPriced(state: DispatchState, tick: Tick): ZonesPriced {
 }
 
 type OfferPair = { trip: QueuedTrip; driverId: DriverId };
+
+// A pooled trip holding its driver alone, that driver online (ADR 0056), at
+// its cell in dispatch's view; order: the trip's place in request order.
+type OpenPartner = Partner & { driverId: DriverId; cell: Cell; order: number };
+
+// One tick's joins: the open partners, and each queued pooled trip's place in
+// request order, for the partners it becomes once offered an idle driver.
+type Pool = { partners: OpenPartner[]; queuedOrder: Map<TripId, number> };
+
+function openPool(state: DispatchState): Pool {
+	const pool: Pool = { partners: [], queuedOrder: new Map() };
+	let order = 0;
+	for (const trip of state.trips.values()) {
+		order++;
+		if (!trip.pooled) continue;
+		if (trip.state === "requested" && trip.offer === null) {
+			pool.queuedOrder.set(trip.id, order);
+			continue;
+		}
+		const driverId = busyDriver(trip);
+		if (driverId === undefined || state.holdingTwo.has(driverId)) continue;
+		const cell = busyDriverCell(state.drivers, driverId);
+		if (cell === undefined) continue;
+		pool.partners.push({
+			pickup: trip.pickup,
+			dropoff: trip.dropoff,
+			rideSoFar: rideSoFar(state, trip),
+			driverId,
+			cell,
+			order,
+		});
+	}
+	return pool;
+}
+
+// Ticks since a picked-up trip's trip.picked_up, as of dispatch's last tick
+// (its view of drivers is that tick's); null before pickup.
+function rideSoFar(state: DispatchState, trip: Trip): number | null {
+	if (trip.state !== "picked_up") return null;
+	const pickedUpAt = state.pickedUpAt.get(trip.id);
+	if (pickedUpAt === undefined)
+		throw new Error(`${trip.id} has no pickup tick`);
+	return state.tick - pickedUpAt;
+}
+
+function addPartner(
+	state: DispatchState,
+	pool: Pool,
+	trip: QueuedTrip,
+	driverId: DriverId,
+): void {
+	const order = pool.queuedOrder.get(trip.id);
+	const cell = busyDriverCell(state.drivers, driverId);
+	if (order === undefined || cell === undefined) {
+		throw new Error(`${trip.id} offered to ${driverId} is no partner`);
+	}
+	pool.partners.push({
+		pickup: trip.pickup,
+		dropoff: trip.dropoff,
+		rideSoFar: null,
+		driverId,
+		cell,
+		order,
+	});
+}
+
+// The partner with the least join ETA, ties to the earlier requested, never
+// one whose driver is excluded for the trip; taken out of the pool (its
+// driver will hold two trips).
+function takeBestPartner(
+	pool: Pool,
+	trip: QueuedTrip,
+): OpenPartner | undefined {
+	let best: { index: number; eta: number; order: number } | undefined;
+	for (const [index, partner] of pool.partners.entries()) {
+		if (trip.excludedDrivers.has(partner.driverId)) continue;
+		const eta = joinEtaOf(partner.cell, partner, trip);
+		if (eta === null) continue;
+		if (
+			best === undefined ||
+			eta < best.eta ||
+			(eta === best.eta && partner.order < best.order)
+		) {
+			best = { index, eta, order: partner.order };
+		}
+	}
+	if (best === undefined) return undefined;
+	return pool.partners.splice(best.index, 1)[0];
+}
 
 // Requested trips without an offer, in FIFO order.
 function queuedTrips(state: DispatchState): QueuedTrip[] {
@@ -399,6 +538,7 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 				pickup: request.pickup,
 				dropoff: request.dropoff,
 				...(state.surge ? price(request) : {}),
+				...(request.pooled ? { pooled: true as const } : {}),
 			},
 		],
 	};
@@ -575,6 +715,10 @@ function arrive(
 	// a rejected arrival may name an idle driver.
 	placeDriver(state.drivers, input.driverId, input.cell.x, input.cell.y);
 	storeTrip(state, next.value);
+	if (trip.pooled) {
+		if (atPickup) state.pickedUpAt.set(trip.id, state.tick);
+		else state.pickedUpAt.delete(trip.id);
+	}
 	return {
 		state,
 		outputs: [
@@ -645,20 +789,39 @@ function knownTrip(state: DispatchState, tripId: TripId): Trip | undefined {
 
 // An ended trip moves to endedTrips; a trip keeps its place in request order
 // until then. Every trip change goes through here, so drivers' busy marks
-// follow their trips: busy from the offer until the offer or trip is over.
+// follow their trips: busy from the first offer until its last offer or trip
+// is over.
 function storeTrip(state: DispatchState, trip: Trip): void {
-	const wasBusy = busyDriver(state.trips.get(trip.id));
+	const stored = state.trips.get(trip.id);
+	const wasBusy = busyDriver(stored);
 	const nowBusy = busyDriver(trip);
 	if (wasBusy !== nowBusy) {
-		if (wasBusy !== undefined) markFree(state.drivers, wasBusy);
-		if (nowBusy !== undefined) markBusy(state.drivers, nowBusy);
+		if (wasBusy !== undefined) release(state, trip, wasBusy);
+		if (nowBusy !== undefined) hold(state, trip, nowBusy);
 	}
 	if (trip.state !== "completed" && trip.state !== "cancelled") {
+		if (trip.pooled && stored === undefined) state.pooledOpen++;
 		state.trips.set(trip.id, trip);
 		return;
 	}
+	if (trip.pooled) state.pooledOpen--;
 	state.trips.delete(trip.id);
 	state.endedTrips.set(trip.id, trip);
+}
+
+// Only a pooled trip can be a busy driver's second (a join, ADR 0056), so
+// with pooling off these only mark busy and free.
+function hold(state: DispatchState, trip: Trip, driverId: DriverId): void {
+	if (trip.pooled && isBusy(state.drivers, driverId)) {
+		state.holdingTwo.add(driverId);
+		return;
+	}
+	markBusy(state.drivers, driverId);
+}
+
+function release(state: DispatchState, trip: Trip, driverId: DriverId): void {
+	if (trip.pooled && state.holdingTwo.delete(driverId)) return;
+	markFree(state.drivers, driverId);
 }
 
 // The driver a trip keeps from other trips: its offered or matched driver.

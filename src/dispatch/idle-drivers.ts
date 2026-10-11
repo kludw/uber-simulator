@@ -187,8 +187,9 @@ export function removeDriver(idle: IdleDrivers, driverId: DriverId): void {
 	else forget(drivers, driver);
 }
 
-// A driver was offered a trip. Dispatch offers only idle drivers, and a
-// driver is busy for one trip at a time, so marking any other is a bug.
+// A driver was offered a trip while idle. One mark covers a driver's trips:
+// a second (a pooled join, ADR 0056) is the caller's to count, so marking a
+// driver that is not idle is a bug.
 export function markBusy(idle: IdleDrivers, driverId: DriverId): void {
 	const drivers = idle[internals];
 	const driver = drivers.byId.get(driverId);
@@ -211,6 +212,21 @@ export function markFree(idle: IdleDrivers, driverId: DriverId): void {
 	if (driver.online && inRegion(drivers, driver.x, driver.y)) {
 		addToBucket(drivers, driver);
 	} else forget(drivers, driver);
+}
+
+export function isBusy(idle: IdleDrivers, driverId: DriverId): boolean {
+	return idle[internals].byId.get(driverId)?.busy === true;
+}
+
+// A busy driver's last reported cell while it is online (a partner's driver,
+// ADR 0056); undefined when offline (a busy record is kept until freed).
+export function busyDriverCell(
+	idle: IdleDrivers,
+	driverId: DriverId,
+): Cell | undefined {
+	const driver = idle[internals].byId.get(driverId);
+	if (driver === undefined || !driver.busy || !driver.online) return undefined;
+	return cellAt(driver.x, driver.y);
 }
 
 function forget(drivers: Drivers, driver: Driver): void {

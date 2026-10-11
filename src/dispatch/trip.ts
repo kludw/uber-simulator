@@ -14,6 +14,8 @@ type TripDetails = {
 	pickup: Cell;
 	dropoff: Cell;
 	requestedAt: Tick;
+	// The rider opted in to pooling (ADR 0056).
+	pooled: boolean;
 	// Drivers whose offer for this trip was declined or expired: never offered
 	// it again, and their late replies are stale.
 	excludedDrivers: ReadonlySet<DriverId>;
@@ -68,6 +70,7 @@ export function requestedTrip(request: RequestTrip): Trip {
 		pickup: request.pickup,
 		dropoff: request.dropoff,
 		requestedAt: request.tick,
+		pooled: request.pooled === true,
 		excludedDrivers: new Set(),
 		offer: null,
 	};
