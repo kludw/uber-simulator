@@ -91,6 +91,8 @@ function print(runId: RunId, report: RunReport): void {
 	console.log(`trips requested: ${report.trips.requested}`);
 	// Surge runs only (ADR 0054): surge-off runs print as before.
 	if (report.surge) console.log(`riders declined: ${report.surge.declined}`);
+	// Pooling runs only (ADR 0056): pooling-off runs print as before.
+	if (report.pooled > 0) console.log(`trips pooled: ${report.pooled}`);
 	console.log(`trips completed: ${report.trips.completed}`);
 	console.log(`trips cancelled: ${report.trips.cancelled}`);
 	console.log(

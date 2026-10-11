@@ -47,6 +47,9 @@ export type SimConfig = {
 	// Dispatch prices zones and trips, riders decline above their max surge
 	// (ADR 0054); off when unset.
 	surge?: boolean | undefined;
+	// Riders opt in to pooling (ADR 0056); off when unset. Dispatch and
+	// drivers act on pooled trips, so they need no switch.
+	pooling?: boolean | undefined;
 };
 
 export type Rejected = InputRejected<Message, string>;
@@ -212,6 +215,7 @@ export function ridersService(config: SimConfig): SimService {
 						demand: config.demand,
 						regions: config.regions,
 						surge: config.surge,
+						pooling: config.pooling,
 					}),
 					outputs: [],
 				},

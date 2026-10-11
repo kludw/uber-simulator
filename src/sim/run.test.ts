@@ -5,7 +5,7 @@ import type { Matching } from "../dispatch/brain.ts";
 import { cityDemand } from "../rider/demand.ts";
 import { driverIdAt } from "../shared/fleet.ts";
 import { Cell, cellAt, distance } from "../shared/grid.ts";
-import type { Message } from "../shared/messages.ts";
+import type { DriverId, Message, Tick, TripId } from "../shared/messages.ts";
 import {
 	forEachDriverAt,
 	forEachMove,
@@ -89,6 +89,82 @@ function surgeSeen(eventLog: readonly Message[]): {
 				message.type === "trip.requested" && message.fare !== undefined,
 		),
 	};
+}
+
+// ADR 0056: eight drivers on a small grid, far more requests than they serve,
+// so pooled riders join partners' drivers.
+const poolingConfig = {
+	seed: 1,
+	ticks: 1200,
+	grid: { width: 100, height: 100 },
+	driverShards: { count: 1, driversPerShard: 8 },
+	requestsPerMinute: 30,
+	pooling: true,
+};
+
+// Shared trips (completed with another trip on their driver while active),
+// and those whose ride, pickup to completion, exceeds the detour limit:
+// 1.5 × direct distance, plus 2 ticks per join for dispatch's view a tick
+// old (ADR 0056).
+function detours(eventLog: readonly Message[]): {
+	shared: number;
+	over: TripId[];
+} {
+	const trips = new Map<
+		TripId,
+		{ pickup: Cell; dropoff: Cell; pickedUpAt?: Tick; shared: boolean }
+	>();
+	const onDriver = new Map<DriverId, TripId[]>();
+	const end = (driverId: DriverId | null, tripId: TripId) => {
+		trips.delete(tripId);
+		if (driverId === null) return;
+		onDriver.set(
+			driverId,
+			(onDriver.get(driverId) ?? []).filter((id) => id !== tripId),
+		);
+	};
+	let shared = 0;
+	const over: TripId[] = [];
+	for (const message of eventLog) {
+		switch (message.type) {
+			case "trip.requested":
+				trips.set(message.tripId, {
+					pickup: message.pickup,
+					dropoff: message.dropoff,
+					shared: false,
+				});
+				break;
+			case "trip.matched": {
+				const others = onDriver.get(message.driverId) ?? [];
+				for (const tripId of [...others, message.tripId]) {
+					const trip = trips.get(tripId);
+					if (trip !== undefined && others.length > 0) trip.shared = true;
+				}
+				onDriver.set(message.driverId, [...others, message.tripId]);
+				break;
+			}
+			case "trip.picked_up": {
+				const trip = trips.get(message.tripId);
+				if (trip !== undefined) trip.pickedUpAt = message.tick;
+				break;
+			}
+			case "trip.completed": {
+				const trip = trips.get(message.tripId);
+				end(message.driverId, message.tripId);
+				if (!trip?.shared || trip.pickedUpAt === undefined) break;
+				shared++;
+				const ride = message.tick - trip.pickedUpAt;
+				if (ride > 1.5 * distance(trip.pickup, trip.dropoff) + 2) {
+					over.push(message.tripId);
+				}
+				break;
+			}
+			case "trip.cancelled":
+				end(message.driverId, message.tripId);
+				break;
+		}
+	}
+	return { shared, over };
 }
 
 const regionOfCell = (cell: Cell): number =>
@@ -357,6 +433,81 @@ describe("runInProcess", () => {
 			declined: false,
 			priced: false,
 		});
+	});
+
+	test("a pooling run breaks no invariant and shares trips", () => {
+		const result = runInProcess({ ...poolingConfig, keepEventLog: true });
+		const summary = summarize(poolingConfig, result);
+
+		expect({
+			violations: summary.violations,
+			shares: summary.shared > 0,
+		}).toEqual({ violations: [], shares: true });
+	});
+
+	test("a pooling run on the same seed gives an identical event log", () => {
+		expect(
+			runInProcess({ ...poolingConfig, keepEventLog: true }).eventLog,
+		).toEqual(runInProcess({ ...poolingConfig, keepEventLog: true }).eventLog);
+	});
+
+	// Pooling off: every message as before pooling existed.
+	test("a pooling-off run pools no trip", () => {
+		const { eventLog } = runInProcess({
+			...poolingConfig,
+			pooling: false,
+			keepEventLog: true,
+		});
+
+		expect(eventLog.some((message) => "pooled" in message)).toBe(false);
+	});
+
+	// ADR 0056: dispatch keeps the limit on its view of the driver, a tick
+	// old, so 2 ticks per join. Without message loss the view is never older.
+	test.each([
+		["greedy", { type: "greedy" }],
+		["batched", { type: "batched", windowTicks: 5 }],
+	] as const)(
+		"every shared trip of a %s pooling run rides within its detour limit",
+		(_, matching) => {
+			const { eventLog } = runInProcess({
+				...poolingConfig,
+				matching,
+				keepEventLog: true,
+			});
+
+			const { shared, over } = detours(eventLog);
+			expect({ shares: shared > 0, over }).toEqual({ shares: true, over: [] });
+		},
+	);
+
+	// Each region's dispatch joins only its own trips (ADR 0050).
+	test("a pooling run at 2x2 regions breaks no invariant and keeps every detour limit", () => {
+		const config = { ...poolingConfig, regions: { columns: 2, rows: 2 } };
+		const result = runInProcess({ ...config, keepEventLog: true });
+		const { shared, over } = detours(result.eventLog);
+
+		expect({
+			violations: summarize(config, result).violations,
+			shares: shared > 0,
+			over,
+		}).toEqual({ violations: [], shares: true, over: [] });
+	});
+
+	// A lost move or join reply leaves dispatch's view staler, so the detour
+	// limit may slip; the invariants may not.
+	test("with 1% of messages lost and pooling on, no invariant breaks", () => {
+		const result = runInProcess({
+			...poolingConfig,
+			lossShare: 0.01,
+			keepEventLog: true,
+		});
+		const summary = summarize(poolingConfig, result);
+
+		expect({
+			violations: summary.violations,
+			shares: summary.shared > 0,
+		}).toEqual({ violations: [], shares: true });
 	});
 
 	// ADR 0054: a lost zones.priced leaves a rider on a stale quote until the
@@ -838,6 +989,19 @@ describe.skipIf(!natsUrl)("runOverNats", () => {
 			declined: true,
 			priced: true,
 		});
+	}, 60_000);
+
+	// ADR 0056: which partner a join finds depends on arrival order over
+	// NATS; the invariants don't.
+	test("a pooling run breaks no invariant and pools trips", async () => {
+		const { eventLog } = await runOnServer({ ...poolingConfig, ticks: 600 });
+
+		expect({
+			violations: checkInvariants(eventLog, poolingConfig.grid),
+			pooled: eventLog.some(
+				(message) => message.type === "trip.requested" && message.pooled,
+			),
+		}).toEqual({ violations: [], pooled: true });
 	}, 60_000);
 
 	test("a scarce-supply run breaks no invariant, completes and cancels trips", async () => {

@@ -222,6 +222,107 @@ describe("summarize surge", () => {
 	});
 });
 
+// ADR 0056: trips pooled, trips shared (completed trips that had another
+// trip on their driver while active), ticks from pickup to completion.
+describe("summarize pooling", () => {
+	const t4 = TripId.parse("t-4");
+
+	function pooled(tripId: TripId, at: number): Message {
+		return {
+			type: "trip.requested",
+			tick: tick(at),
+			tripId,
+			riderId: r1,
+			pickup: cell(1, 0),
+			dropoff: cell(2, 0),
+			pooled: true,
+		};
+	}
+
+	function onDriver(
+		type: "trip.matched" | "trip.picked_up" | "trip.completed",
+		tripId: TripId,
+		at: number,
+		driverIndex = i1,
+	): Message {
+		return {
+			type,
+			tick: tick(at),
+			tripId,
+			driverId: driverIdAt(fleetSize, driverIndex),
+		};
+	}
+
+	const i2 = DriverIndex.parse(2);
+
+	// t1 and t2 share d1 (t2 joins while t1 rides); t3 rides d1 after both
+	// ended, alone; t4 rides d2 alongside t1's time on d1, alone.
+	const log: Message[] = [
+		pooled(t1, 1),
+		pooled(t2, 1),
+		requested(t3, 1),
+		pooled(t4, 1),
+		onDriver("trip.matched", t1, 1),
+		onDriver("trip.matched", t4, 1, i2),
+		onDriver("trip.picked_up", t1, 2),
+		onDriver("trip.matched", t2, 3),
+		onDriver("trip.picked_up", t2, 4),
+		onDriver("trip.picked_up", t4, 4, i2),
+		onDriver("trip.completed", t1, 6),
+		onDriver("trip.completed", t2, 10),
+		onDriver("trip.completed", t4, 10, i2),
+		onDriver("trip.matched", t3, 11),
+		onDriver("trip.picked_up", t3, 12),
+		onDriver("trip.completed", t3, 14),
+	];
+
+	test("counts trips pooled", () => {
+		expect(summarize(config, { eventLog: log, rejected: [] }).pooled).toBe(3);
+	});
+
+	test("counts completed trips that had another trip on their driver as shared", () => {
+		expect(summarize(config, { eventLog: log, rejected: [] }).shared).toBe(2);
+	});
+
+	// A trip cancelled while t1 rides makes t1 shared, but is not completed.
+	test("a cancelled trip is never shared", () => {
+		const cancelledJoin: Message[] = [
+			pooled(t1, 1),
+			pooled(t2, 1),
+			onDriver("trip.matched", t1, 1),
+			onDriver("trip.matched", t2, 2),
+			{ type: "trip.cancelled", tick: tick(3), tripId: t2, driverId: d1 },
+			onDriver("trip.picked_up", t1, 4),
+			onDriver("trip.completed", t1, 6),
+		];
+
+		expect(
+			summarize(config, { eventLog: cancelledJoin, rejected: [] }).shared,
+		).toBe(1);
+	});
+
+	// Rides of 4 (t1), 6 (t2), 6 (t4), 2 (t3).
+	test("averages ticks from pickup to completion over completed trips", () => {
+		expect(
+			summarize(config, { eventLog: log, rejected: [] }).meanTicksToComplete,
+		).toBe(4.5);
+	});
+
+	test("has no mean ticks to completion when no trip was completed", () => {
+		expect(
+			summarize(config, { eventLog: [pooled(t1, 1)], rejected: [] })
+				.meanTicksToComplete,
+		).toBeNull();
+	});
+
+	// pickup (1,0) to dropoff (2,0): round((250 + 2 x 1) x 0.75) cents.
+	test("a completed pooled trip without a fare counts at the pooled base fare", () => {
+		expect(
+			summarize(config, { eventLog: log.slice(0, 11), rejected: [] }).revenue,
+		).toBe(189);
+	});
+});
+
 describe("createSummary", () => {
 	test("summarizes the messages observed as they come", () => {
 		const summary = createSummary(config);
@@ -236,6 +337,9 @@ describe("createSummary", () => {
 			declined: 0,
 			// t1 at base fare: 250 + 2 x 1 cell.
 			revenue: 252,
+			pooled: 0,
+			shared: 0,
+			meanTicksToComplete: 1,
 			rejectedInputs: 2,
 			violations: [],
 		});
@@ -263,6 +367,9 @@ describe("compareSummaries", () => {
 		meanTicksToPickup: 101.25,
 		declined: 0,
 		revenue: 432_150,
+		pooled: 0,
+		shared: 0,
+		meanTicksToComplete: 300.04,
 		rejectedInputs: 0,
 		violations: [],
 	};
@@ -272,6 +379,9 @@ describe("compareSummaries", () => {
 		meanTicksToPickup: null,
 		declined: 25,
 		revenue: 1_234_567,
+		pooled: 290,
+		shared: 180,
+		meanTicksToComplete: null,
 		violations: [
 			{
 				type: "illegal_trip_transition",
@@ -284,7 +394,9 @@ describe("compareSummaries", () => {
 	};
 
 	test("lines up each headline number of both runs", () => {
-		expect(compareSummaries(greedy, batched, { surge: false })).toEqual([
+		expect(
+			compareSummaries(greedy, batched, { surge: false, pooling: false }),
+		).toEqual([
 			{ metric: "trips requested", first: "600", second: "600" },
 			{ metric: "trips completed", first: "550", second: "548" },
 			{ metric: "trips cancelled", first: "20", second: "25" },
@@ -299,7 +411,9 @@ describe("compareSummaries", () => {
 
 	// ADR 0054: --compare-surge's rows.
 	test("with surge adds riders declined and revenue in dollars", () => {
-		expect(compareSummaries(greedy, batched, { surge: true })).toEqual([
+		expect(
+			compareSummaries(greedy, batched, { surge: true, pooling: false }),
+		).toEqual([
 			{ metric: "trips requested", first: "600", second: "600" },
 			{ metric: "riders declined", first: "0", second: "25" },
 			{ metric: "trips completed", first: "550", second: "548" },
@@ -311,6 +425,50 @@ describe("compareSummaries", () => {
 			},
 			{ metric: "revenue", first: "$4,321.50", second: "$12,345.67" },
 			{ metric: "invariant violations", first: "0", second: "1" },
+		]);
+	});
+
+	// ADR 0056: --compare-pooling's rows.
+	test("with pooling adds trips pooled and shared, ride ticks and revenue", () => {
+		expect(
+			compareSummaries(greedy, batched, { surge: false, pooling: true }),
+		).toEqual([
+			{ metric: "trips requested", first: "600", second: "600" },
+			{ metric: "trips pooled", first: "0", second: "290" },
+			{ metric: "trips completed", first: "550", second: "548" },
+			{ metric: "trips shared", first: "0", second: "180" },
+			{ metric: "trips cancelled", first: "20", second: "25" },
+			{
+				metric: "mean ticks from request to pickup",
+				first: "101.3",
+				second: "n/a",
+			},
+			{
+				metric: "mean ticks from pickup to completion",
+				first: "300.0",
+				second: "n/a",
+			},
+			{ metric: "revenue", first: "$4,321.50", second: "$12,345.67" },
+			{ metric: "invariant violations", first: "0", second: "1" },
+		]);
+	});
+
+	test("with surge and pooling adds both sets of rows, revenue once", () => {
+		expect(
+			compareSummaries(greedy, batched, { surge: true, pooling: true }).map(
+				(row) => row.metric,
+			),
+		).toEqual([
+			"trips requested",
+			"riders declined",
+			"trips pooled",
+			"trips completed",
+			"trips shared",
+			"trips cancelled",
+			"mean ticks from request to pickup",
+			"mean ticks from pickup to completion",
+			"revenue",
+			"invariant violations",
 		]);
 	});
 });

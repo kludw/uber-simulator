@@ -35,7 +35,32 @@ describe("parseServiceConfig", () => {
 				preferences: { type: "accept_all" },
 				regions: { columns: 1, rows: 1 },
 				surge: false,
+				pooling: false,
 			},
+		});
+	});
+
+	// ADR 0056: riders opt in to pooling.
+	test("POOLING=on lets riders opt in to pooling", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			POOLING: "on",
+		});
+
+		expect(parsed).toMatchObject({ ok: true, value: { pooling: true } });
+	});
+
+	test("names an unknown POOLING", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			POOLING: "yes",
+		});
+
+		expect(parsed).toMatchObject({
+			ok: false,
+			error: { type: "invalid_config", issues: [{ variable: "POOLING" }] },
 		});
 	});
 

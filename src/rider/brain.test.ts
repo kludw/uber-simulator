@@ -839,6 +839,153 @@ describe("decideRiders with surge off", () => {
 	});
 });
 
+// ADR 0056: pool share 0.5, one draw per spawned rider from pool:<tick>.
+describe("decideRiders with pooling on", () => {
+	// Spawns r-1 at tick 1, pickup (2, 3), dropoff (7, 8).
+	function spawn(poolDraw: number) {
+		return decideRiders(
+			startRiders({ grid, requestsPerMinute: 10, pooling: true }),
+			{ type: "clock.ticked", tick: tick(1) },
+			scriptedRandom({
+				"demand:1": { floats: [0.9, 0.5], ints: [2, 3, 7, 8] },
+				"patience:1": { ints: [150] },
+				"pool:1": { floats: [poolDraw] },
+			}),
+		);
+	}
+
+	test("a rider drawing below the pool share requests a pooled trip", () => {
+		expect(spawn(0.49).outputs).toEqual([
+			{
+				type: "request_trip",
+				tick: tick(1),
+				tripId: TripId.parse("t-1"),
+				riderId: RiderId.parse("r-1"),
+				pickup: cell(2, 3),
+				dropoff: cell(7, 8),
+				region: Region.parse(0),
+				pooled: true,
+			},
+		]);
+	});
+
+	test("a rider drawing the pool share or above requests an unpooled trip", () => {
+		expect(spawn(0.5).outputs).toEqual([
+			{
+				type: "request_trip",
+				tick: tick(1),
+				tripId: TripId.parse("t-1"),
+				riderId: RiderId.parse("r-1"),
+				pickup: cell(2, 3),
+				dropoff: cell(7, 8),
+				region: Region.parse(0),
+			},
+		]);
+	});
+
+	function run(ticks: number, seed: number, pooling: boolean) {
+		const random = createRandom(seed);
+		let state = startRiders({ grid, requestsPerMinute: 60, pooling });
+		const outputs: Decision["outputs"] = [];
+		for (let n = 1; n <= ticks; n++) {
+			const decision = decideRiders(
+				state,
+				{ type: "clock.ticked", tick: tick(n) },
+				random,
+			);
+			state = decision.state;
+			outputs.push(...decision.outputs);
+		}
+		return outputs;
+	}
+
+	// About 600 riders, half opting in (sd ~ 12).
+	test("about half the riders opt in", () => {
+		const pooled = run(600, 42, true).filter(
+			(output) => output.type === "request_trip" && output.pooled === true,
+		);
+		expect(Math.abs(pooled.length - 300)).toBeLessThanOrEqual(60);
+	});
+
+	test("same seed gives identical requests", () => {
+		expect(run(600, 7, true)).toEqual(run(600, 7, true));
+	});
+
+	test("opting in never shifts riders' requests or patience", () => {
+		const unpooled = run(600, 7, true).map((output) => {
+			if (output.type !== "request_trip") return output;
+			const { pooled: _pooled, ...request } = output;
+			return request;
+		});
+		expect(unpooled).toEqual(run(600, 7, false));
+	});
+
+	// Max surge 1 + 2 x 0.1 = 1.2, below the quote 1.5: the rider declines
+	// whatever its pool draw.
+	test("a rider whose quote exceeds its max surge declines", () => {
+		const zonedGrid: Grid = { width: 50, height: 50 };
+		const state = decideRiders(
+			startRiders({
+				grid: zonedGrid,
+				requestsPerMinute: 10,
+				surge: true,
+				pooling: true,
+			}),
+			{
+				type: "zones.priced",
+				tick: tick(30),
+				region: Region.parse(0),
+				zones: [{ zone: Zone.parse(0), surge: Surge.parse(1.5) }],
+			},
+			scriptedRandom({}),
+		).state;
+		const { outputs } = decideRiders(
+			state,
+			{ type: "clock.ticked", tick: tick(31) },
+			scriptedRandom({
+				"demand:31": { floats: [0.9, 0.5], ints: [30, 3, 2, 8] },
+				"patience:31": { ints: [150] },
+				"willingness:31": { floats: [0.1] },
+				"pool:31": { floats: [0] },
+			}),
+		);
+		expect(outputs).toEqual([
+			{
+				type: "rider.declined_surge",
+				tick: tick(31),
+				riderId: RiderId.parse("r-1"),
+				pickup: cellAt(Coordinate.parse(30), Coordinate.parse(3)),
+				surge: Surge.parse(1.5),
+			},
+		]);
+	});
+});
+
+describe("decideRiders with pooling off", () => {
+	// scriptedRandom throws on the pool stream: off draws nothing from it.
+	test("a rider requests an unpooled trip without a draw", () => {
+		const { outputs } = decideRiders(
+			startRiders({ grid, requestsPerMinute: 10, pooling: false }),
+			{ type: "clock.ticked", tick: tick(1) },
+			scriptedRandom({
+				"demand:1": { floats: [0.9, 0.5], ints: [2, 3, 7, 8] },
+				"patience:1": { ints: [150] },
+			}),
+		);
+		expect(outputs).toEqual([
+			{
+				type: "request_trip",
+				tick: tick(1),
+				tripId: TripId.parse("t-1"),
+				riderId: RiderId.parse("r-1"),
+				pickup: cell(2, 3),
+				dropoff: cell(7, 8),
+				region: Region.parse(0),
+			},
+		]);
+	});
+});
+
 const d1 = DriverId.parse("d-1");
 
 function pickedUp(state: RidersState, n: number) {

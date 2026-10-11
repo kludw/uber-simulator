@@ -10,6 +10,7 @@ describe("parseSimArgs", () => {
 				bus: "in-memory",
 				compare: false,
 				compareSurge: false,
+				comparePooling: false,
 				matching: "greedy",
 				windowTicks: 5,
 				demandName: "uniform",
@@ -26,6 +27,7 @@ describe("parseSimArgs", () => {
 					preferences: { type: "accept_all" },
 					regions: { columns: 1, rows: 1 },
 					surge: false,
+					pooling: false,
 				},
 			},
 		});
@@ -51,6 +53,21 @@ describe("parseSimArgs", () => {
 		expect(parseSimArgs(["--compare-surge"])).toMatchObject({
 			ok: true,
 			value: { compareSurge: true },
+		});
+	});
+
+	// ADR 0056.
+	test("--pooling on lets riders opt in to pooling", () => {
+		expect(parseSimArgs(["--pooling", "on"])).toMatchObject({
+			ok: true,
+			value: { config: { pooling: true } },
+		});
+	});
+
+	test("--compare-pooling runs pooling off and on side by side", () => {
+		expect(parseSimArgs(["--compare-pooling"])).toMatchObject({
+			ok: true,
+			value: { comparePooling: true },
 		});
 	});
 
@@ -124,6 +141,10 @@ describe("parseSimArgs", () => {
 		[["--compare-surge", "--bus", "nats"]],
 		[["--compare", "--compare-surge"]],
 		[["--surge", "yes"]],
+		[["--compare-pooling", "--bus", "nats"]],
+		[["--compare", "--compare-pooling"]],
+		[["--compare-surge", "--compare-pooling"]],
+		[["--pooling", "yes"]],
 		[["--regions", "2"]],
 		// The spec grid is 500 cells wide and high.
 		[["--regions", "501x1"]],

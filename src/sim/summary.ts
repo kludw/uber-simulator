@@ -1,4 +1,4 @@
-import type { Message, Tick, TripId } from "../shared/messages.ts";
+import type { DriverId, Message, Tick, TripId } from "../shared/messages.ts";
 import { baseSurge, dollars, type Fare, fareOf } from "../shared/surge.ts";
 import { createInvariantChecker, type Violation } from "./invariants.ts";
 import type { RunConfig, RunResult } from "./run.ts";
@@ -15,6 +15,12 @@ export type Summary = {
 	// Cents: the fares of completed trips, base fare for a trip without one
 	// (surge off), so surge off and on compare on the same trips.
 	revenue: number;
+	// Trips whose rider opted in to pooling (ADR 0056); 0 with pooling off.
+	pooled: number;
+	// Completed trips that had another trip on their driver while active.
+	shared: number;
+	// Over completed trips seen picked up; null when none.
+	meanTicksToComplete: number | null;
 	rejectedInputs: number;
 	violations: Violation[];
 };
@@ -39,6 +45,7 @@ export type RunSummary = {
 export function createSummary(config: RunConfig): RunSummary {
 	const tripSummary = createTripSummary();
 	const surgeSummary = createSurgeSummary();
+	const poolingSummary = createPoolingSummary();
 	const checker = createInvariantChecker(config.grid);
 	const { count, driversPerShard } = config.driverShards;
 	return {
@@ -46,6 +53,7 @@ export function createSummary(config: RunConfig): RunSummary {
 			checker.observe(message);
 			tripSummary.observe(message);
 			surgeSummary.observe(message);
+			poolingSummary.observe(message);
 		},
 		result: (rejectedInputs) => ({
 			seed: config.seed,
@@ -53,6 +61,7 @@ export function createSummary(config: RunConfig): RunSummary {
 			drivers: count * driversPerShard,
 			...tripSummary.result(),
 			...surgeSummary.result(),
+			...poolingSummary.result(),
 			rejectedInputs,
 			violations: checker.violations(),
 		}),
@@ -131,15 +140,79 @@ function createSurgeSummary(): {
 	};
 }
 
+// The summary's trips pooled, trips shared and ticks from pickup to
+// completion (ADR 0056). Memory grows with active trips, not with messages.
+function createPoolingSummary(): {
+	observe(message: Message): void;
+	result(): Pick<Summary, "pooled" | "shared" | "meanTicksToComplete">;
+} {
+	// Active trips (matched, not ended) by driver, and whether each has had
+	// another trip on its driver.
+	const onDriver = new Map<DriverId, TripId[]>();
+	const sharedTrips = new Set<TripId>();
+	const pickedUpAt = new Map<TripId, Tick>();
+	let pooled = 0;
+	let shared = 0;
+	let rides = 0;
+	let rideTicks = 0;
+	const end = (driverId: DriverId | null, tripId: TripId) => {
+		sharedTrips.delete(tripId);
+		pickedUpAt.delete(tripId);
+		if (driverId === null) return;
+		const left = (onDriver.get(driverId) ?? []).filter((id) => id !== tripId);
+		if (left.length === 0) onDriver.delete(driverId);
+		else onDriver.set(driverId, left);
+	};
+	return {
+		observe: (message) => {
+			switch (message.type) {
+				case "trip.requested":
+					if (message.pooled) pooled++;
+					break;
+				case "trip.matched": {
+					const others = onDriver.get(message.driverId) ?? [];
+					for (const other of others) sharedTrips.add(other);
+					if (others.length > 0) sharedTrips.add(message.tripId);
+					onDriver.set(message.driverId, [...others, message.tripId]);
+					break;
+				}
+				case "trip.picked_up":
+					pickedUpAt.set(message.tripId, message.tick);
+					break;
+				case "trip.completed": {
+					if (sharedTrips.has(message.tripId)) shared++;
+					const at = pickedUpAt.get(message.tripId);
+					if (at !== undefined) {
+						rides++;
+						rideTicks += message.tick - at;
+					}
+					end(message.driverId, message.tripId);
+					break;
+				}
+				case "trip.cancelled":
+					end(message.driverId, message.tripId);
+					break;
+			}
+		},
+		result: () => ({
+			pooled,
+			shared,
+			meanTicksToComplete: rides === 0 ? null : rideTicks / rides,
+		}),
+	};
+}
+
 // One headline number of two runs on the same seed, formatted: greedy and
-// batched (ADR 0030), or surge off and on (ADR 0054).
+// batched (ADR 0030), surge off and on (ADR 0054), or pooling off and on
+// (ADR 0056).
 export type ComparisonRow = { metric: string; first: string; second: string };
 
-// surge: add riders declined and revenue.
+// surge: add riders declined and revenue. pooling: add trips pooled and
+// shared, ticks from pickup to completion, and revenue.
 export function compareSummaries(
 	first: Summary,
 	second: Summary,
-	{ surge }: { surge: boolean },
+	{ surge, pooling }: { surge: boolean; pooling: boolean },
 ): ComparisonRow[] {
 	type Metric = [string, (summary: Summary) => string];
 	const metrics: Metric[] = [
@@ -147,13 +220,27 @@ export function compareSummaries(
 		...(surge
 			? [["riders declined", (summary) => String(summary.declined)] as Metric]
 			: []),
+		...(pooling
+			? [["trips pooled", (summary) => String(summary.pooled)] as Metric]
+			: []),
 		["trips completed", (summary) => String(summary.trips.completed)],
+		...(pooling
+			? [["trips shared", (summary) => String(summary.shared)] as Metric]
+			: []),
 		["trips cancelled", (summary) => String(summary.trips.cancelled)],
 		[
 			"mean ticks from request to pickup",
 			(summary) => summary.meanTicksToPickup?.toFixed(1) ?? "n/a",
 		],
-		...(surge
+		...(pooling
+			? [
+					[
+						"mean ticks from pickup to completion",
+						(summary) => summary.meanTicksToComplete?.toFixed(1) ?? "n/a",
+					] as Metric,
+				]
+			: []),
+		...(surge || pooling
 			? [["revenue", (summary) => dollars(summary.revenue)] as Metric]
 			: []),
 		["invariant violations", (summary) => String(summary.violations.length)],

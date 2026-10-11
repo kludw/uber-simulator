@@ -219,6 +219,52 @@ describe.skipIf(!config)("run report", () => {
 		});
 	});
 
+	// ADR 0056: pooled lives in trip.requested's payload.
+	test("runReport counts trips pooled", async () => {
+		const run = "pooled";
+		await succeeded(
+			clickhouse.insertEvents([
+				row(run, "trip.requested", 1, 1, "t-1", { pooled: true }),
+				row(run, "trip.requested", 1, 2, "t-2"),
+				row(run, "trip.requested", 2, 3, "t-3", { pooled: true }),
+				row(run, "trip.cancelled", 4, 4, "t-3"),
+			]),
+		);
+
+		const report = await succeeded(runReport(clickhouse, RunId.parse(run)));
+
+		expect(report.pooled).toBe(2);
+	});
+
+	// Oracle: summarize over the same pooling run's event log.
+	test("runReport of a pooling run agrees with the in-memory summary", async () => {
+		const runConfig = {
+			seed: 1,
+			ticks: 1200,
+			grid: { width: 100, height: 100 },
+			driverShards: { count: 1, driversPerShard: 4 },
+			requestsPerMinute: 20,
+			pooling: true,
+		};
+		const result = runInProcess({ ...runConfig, keepEventLog: true });
+		const runId = RunId.parse("pooling-cross-check");
+		const ingestedAt = new Date("2026-10-03T12:00:00Z");
+		await succeeded(
+			clickhouse.insertEvents(
+				result.eventLog
+					.filter(isSimEvent)
+					.map((event, index) =>
+						toRow(event, { runId, streamSeq: index + 1, ingestedAt }),
+					),
+			),
+		);
+		const summary = summarize(runConfig, result);
+
+		const report = await succeeded(runReport(clickhouse, runId));
+
+		expect(report.pooled).toBe(summary.pooled);
+	});
+
 	test("runReport of a run with no events is an unknown run", async () => {
 		const runId = RunId.parse("no-such-run");
 

@@ -28,6 +28,7 @@ const ReportRow = z.object({
 	pricings: count,
 	declined: count,
 	revenue: count,
+	pooled: count,
 });
 
 export type RunReport = {
@@ -42,6 +43,8 @@ export type RunReport = {
 	// Surge runs only (any zones.priced, ADR 0054): riders declined, and
 	// revenue in cents, the fares of completed trips; null with surge off.
 	surge: { declined: number; revenue: number } | null;
+	// Trips whose rider opted in to pooling (ADR 0056); 0 with pooling off.
+	pooled: number;
 };
 
 export type RunReportError =
@@ -87,7 +90,8 @@ export async function runReport(
 				AS tripTicks,
 			toUInt32(sum(pricings)) AS pricings,
 			toUInt32(sum(declines)) AS declined,
-			toFloat64(sumIf(fare, requests > 0 AND completions > 0)) AS revenue
+			toFloat64(sumIf(fare, requests > 0 AND completions > 0)) AS revenue,
+			toUInt32(sum(pooledRequests)) AS pooled
 		FROM (
 			SELECT
 				count() AS events,
@@ -103,7 +107,9 @@ export async function runReport(
 				countIf(type = 'zones.priced') AS pricings,
 				countIf(type = 'rider.declined_surge') AS declines,
 				sumIf(JSONExtractUInt(payload, 'fare'), type = 'trip.requested')
-					AS fare
+					AS fare,
+				countIf(type = 'trip.requested' AND JSONExtractBool(payload, 'pooled'))
+					AS pooledRequests
 			FROM events FINAL
 			WHERE run_id = {runId:String}
 			GROUP BY trip_id
@@ -133,6 +139,7 @@ export async function runReport(
 				row.pricings === 0
 					? null
 					: { declined: row.declined, revenue: row.revenue },
+			pooled: row.pooled,
 		},
 	};
 }
