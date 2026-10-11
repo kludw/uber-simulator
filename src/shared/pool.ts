@@ -14,13 +14,14 @@ export function joinEtaOf(
 	driverAt: Cell,
 	partner: Partner,
 	joining: PooledTrip,
+	reach: number = maxJoinEta,
 ): number | null {
 	const eta =
 		partner.rideSoFar === null
 			? distance(driverAt, partner.pickup) +
 				distance(partner.pickup, joining.pickup)
 			: distance(driverAt, joining.pickup);
-	if (eta > maxJoinEta) return null;
+	if (eta > reach) return null;
 	const rides = ridesOf(driverAt, partner, joining);
 	if (!withinDetourLimit(rides.partner, partner)) return null;
 	if (!withinDetourLimit(rides.joining, joining)) return null;
@@ -76,3 +77,12 @@ function withinDetourLimit(ride: number, trip: PooledTrip): boolean {
 
 // The least patience: a joining rider never waits out its driver.
 const maxJoinEta = 120;
+
+// SPIKE (#361): how far a join may be, given the nearest idle driver's
+// distance to the joining pickup (null: none). SPIKE_JOIN_MARGIN unset = the
+// 0056 rule (cap only).
+const spikeMargin = process.env.SPIKE_JOIN_MARGIN;
+export function joinReach(idleEta: number | null): number {
+	if (spikeMargin === undefined || idleEta === null) return maxJoinEta;
+	return Math.min(maxJoinEta, idleEta + Number(spikeMargin));
+}
