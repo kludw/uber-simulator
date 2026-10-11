@@ -1,6 +1,6 @@
 # 0056. Pool two riders going the same way
 
-- Status: Accepted
+- Status: Accepted (joins before a nearer idle driver, the open pooled trip count and partner ties superseded by 0058)
 - Date: 2026-10-11
 
 ## Context
