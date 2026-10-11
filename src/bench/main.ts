@@ -3,6 +3,7 @@
 // own flags (README). Exit codes: 0 ok, 2 invalid args, 3 stopped at
 // --max-minutes (partial report printed).
 import { heapStats } from "bun:jsc";
+import { spikeCounts } from "../shared/roads.ts";
 import { type RunResult, runInProcess } from "../sim/run.ts";
 import { parseBenchArgs } from "./args.ts";
 import { type BenchMeasurement, benchReport } from "./report.ts";
@@ -20,6 +21,20 @@ const runStart = performance.now();
 let tickStart = runStart;
 const result = runInProcess(config, {
 	onTickDone: (_tick, soFar) => {
+		if (process.env.SPIKE_COUNT && _tick % 25 === 0) {
+			console.error(
+				_tick,
+				JSON.stringify(spikeCounts),
+				(performance.now() - tickStart).toFixed(0),
+			);
+			spikeCounts.calls = 0;
+			spikeCounts.cross = 0;
+			spikeCounts.recompute = 0;
+			spikeCounts.searches = 0;
+			spikeCounts.maxCalls = 0;
+			spikeCounts.wide = 0;
+			spikeCounts.wideDistance = 0;
+		}
 		const now = performance.now();
 		tickMs.push(now - tickStart);
 		tickStart = now;

@@ -8,6 +8,10 @@ import {
 } from "../shared/grid.ts";
 import type { DriverId } from "../shared/messages.ts";
 import { ratingPenaltyOf, type Stars } from "../shared/rating.ts";
+import { roadBoundToBox, spikeCounts, spikeRoads } from "../shared/roads.ts";
+
+const spikeNoBound = process.env.SPIKE_NOBOUND === "1";
+
 import { type Zone, zoneOf } from "../shared/surge.ts";
 
 // ratingPenalty: 0 unrated (ADR 0057).
@@ -538,9 +542,19 @@ function search(
 	// off the grid is bad input, so take the scan, exact by construction.
 	const pickupOffGrid =
 		pickup.x >= drivers.grid.width || pickup.y >= drivers.grid.height;
-	return pickupOffGrid || drivers.idleCount < drivers.search.linearScanBelow
-		? scanAll(drivers, pickup, skip)
-		: searchRings(drivers, pickup, skip);
+	const before = spikeCounts.calls;
+	const found =
+		pickupOffGrid || drivers.idleCount < drivers.search.linearScanBelow
+			? scanAll(drivers, pickup, skip)
+			: searchRings(drivers, pickup, skip);
+	const used = spikeCounts.calls - before;
+	spikeCounts.searches++;
+	spikeCounts.idle = drivers.idleCount;
+	if (used > spikeCounts.maxCalls) spikeCounts.maxCalls = used;
+	if (used > 5000) spikeCounts.wide++;
+	if (used > 5000 && found !== undefined)
+		spikeCounts.wideDistance += distanceToCoordinates(pickup, found.x, found.y);
+	return found;
 }
 
 type Nearest = { driver: Driver; distance: number } | undefined;
@@ -605,6 +619,22 @@ function searchRings(
 			const step = edgeRow ? 1 : 2 * ring;
 			for (let x = column - ring; x <= column + ring; x += step) {
 				if (x < 0 || x >= drivers.columns) continue;
+				if (
+					spikeRoads !== null &&
+					!spikeNoBound &&
+					nearest !== undefined &&
+					roadBoundToBox(
+						spikeRoads,
+						pickup.x,
+						pickup.y,
+						x * size,
+						y * size,
+						Math.min(x * size + size - 1, drivers.grid.width - 1),
+						Math.min(y * size + size - 1, drivers.grid.height - 1),
+					) > nearest.distance
+				) {
+					continue;
+				}
 				for (const driver of drivers.buckets[y * drivers.columns + x] ?? []) {
 					if (skip(driver.driverId)) continue;
 					nearest = closer(nearest, driver, pickup);

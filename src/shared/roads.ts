@@ -325,17 +325,13 @@ export function roadDistanceFrom(
 	x: number,
 	y: number,
 ): number {
+	spikeCounts.calls++;
 	const df = districtOf(net, fx, fy);
 	const d = districtOf(net, x, y);
 	if (df < 0 || d < 0) return roadDistance(net, fx, fy, x, y);
 	if (df === d) return Math.abs(fx - x) + Math.abs(fy - y);
-	if (net.cacheX !== fx || net.cacheY !== fy) {
-		for (let p = 0; p < net.landings; p++) {
-			net.exitCost[p] = exitCostOf(net, p, fx, fy, df);
-		}
-		net.cacheX = fx;
-		net.cacheY = fy;
-	}
+	spikeCounts.cross++;
+	fillExitCosts(net, fx, fy, df);
 	let best = Number.POSITIVE_INFINITY;
 	const listp = net.landingsOf[d] as Int32Array;
 	for (let ip = 0; ip < listp.length; ip++) {
@@ -469,3 +465,111 @@ export const spikeRoads: RoadNetwork | null =
 	process.env.SPIKE_ROADS && process.env.SPIKE_ROADS !== "off"
 		? roadNetworkNamed(process.env.SPIKE_ROADS, { width: 500, height: 500 })
 		: null;
+
+export const spikeCounts = {
+	calls: 0,
+	cross: 0,
+	recompute: 0,
+	searches: 0,
+	idle: 0,
+	maxCalls: 0,
+	wide: 0,
+	wideDistance: 0,
+};
+
+function fillExitCosts(net: RoadNetwork, fx: number, fy: number, df: number) {
+	if (net.cacheX === fx && net.cacheY === fy) return;
+	spikeCounts.recompute++;
+	for (let p = 0; p < net.landings; p++) {
+		net.exitCost[p] = exitCostOf(net, p, fx, fy, df);
+	}
+	net.cacheX = fx;
+	net.cacheY = fy;
+}
+
+function boxGap(
+	x: number,
+	y: number,
+	x0: number,
+	y0: number,
+	x1: number,
+	y1: number,
+) {
+	const dx = x < x0 ? x0 - x : x > x1 ? x - x1 : 0;
+	const dy = y < y0 ? y0 - y : y > y1 ? y - y1 : 0;
+	return dx + dy;
+}
+
+// SPIKE: a lower bound on the road distance from (fx, fy) to any drivable
+// cell of the box [x0, x1] x [y0, y1] (a search bucket): per district the
+// box touches, Manhattan if it is the fixed cell's own, else the least box
+// gap to a landing plus that landing's exit cost; bridges in the box exactly.
+export function roadBoundToBox(
+	net: RoadNetwork,
+	fx: number,
+	fy: number,
+	x0: number,
+	y0: number,
+	x1: number,
+	y1: number,
+): number {
+	const df = districtOf(net, fx, fy);
+	const manhattanGap = boxGap(fx, fy, x0, y0, x1, y1);
+	if (df < 0) return manhattanGap;
+	fillExitCosts(net, fx, fy, df);
+	let best = Number.POSITIVE_INFINITY;
+	let c0 = -1;
+	let c1 = -1;
+	let crossesRiver = false;
+	for (let x = x0; x <= x1; x++) {
+		const c = net.columnOf[x] as number;
+		if (c < 0) crossesRiver = true;
+		else {
+			if (c0 < 0) c0 = c;
+			c1 = c;
+		}
+	}
+	let r0 = -1;
+	let r1 = -1;
+	for (let y = y0; y <= y1; y++) {
+		const r = net.rowOf[y] as number;
+		if (r < 0) crossesRiver = true;
+		else {
+			if (r0 < 0) r0 = r;
+			r1 = r;
+		}
+	}
+	for (let r = r0; r >= 0 && r <= r1; r++) {
+		for (let c = c0; c >= 0 && c <= c1; c++) {
+			const d = r * net.districtColumns + c;
+			if (d === df) {
+				if (manhattanGap < best) best = manhattanGap;
+				continue;
+			}
+			const list = net.landingsOf[d] as Int32Array;
+			for (let i = 0; i < list.length; i++) {
+				const p = list[i] as number;
+				const bound =
+					boxGap(
+						net.landingX[p] as number,
+						net.landingY[p] as number,
+						x0,
+						y0,
+						x1,
+						y1,
+					) + (net.exitCost[p] as number);
+				if (bound < best) best = bound;
+			}
+		}
+	}
+	if (crossesRiver) {
+		for (let b = 0; b < net.bridgeX.length; b++) {
+			const bx = net.bridgeX[b] as number;
+			const by = net.bridgeY[b] as number;
+			if (bx < x0 || bx > x1 || by < y0 || by > y1) continue;
+			const d = roadDistance(net, fx, fy, bx, by);
+			if (d < best) best = d;
+		}
+	}
+	return Math.max(best, manhattanGap);
+}
