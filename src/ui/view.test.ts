@@ -11,6 +11,7 @@ import {
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
+import { Stars } from "../shared/rating.ts";
 import { Region } from "../shared/regions.ts";
 import { Fare, Surge, Zone } from "../shared/surge.ts";
 import { runInProcess } from "../sim/run.ts";
@@ -885,5 +886,46 @@ describe("pooling", () => {
 			shared: summary.shared,
 			revenue: summary.revenue,
 		});
+	});
+});
+
+// ADR 0057: riders rate their drivers; the page counts ratings and stars.
+describe("ratings", () => {
+	function rated(trip: string, stars: number): SimEvent {
+		return {
+			type: "rider.rated_driver",
+			tick: tick(10),
+			riderId: r1,
+			tripId: TripId.parse(trip),
+			driverId: d1,
+			stars: Stars.parse(stars),
+		};
+	}
+
+	test("ratings are counted with their stars", () => {
+		const view = viewOf([rated("t-1", 5), rated("t-2", 2), rated("t-3", 4)]);
+		expect({ ratings: view.ratings, stars: view.stars }).toEqual({
+			ratings: 3,
+			stars: 11,
+		});
+	});
+
+	// A page watching from the first event sees what the summary counts.
+	test("a page watching a ratings run from its start agrees with its summary", () => {
+		const config = {
+			seed: 1,
+			ticks: 1200,
+			grid: { width: 100, height: 100 },
+			driverShards: { count: 1, driversPerShard: 8 },
+			requestsPerMinute: 30,
+			ratings: true,
+		};
+		const run = runInProcess({ ...config, keepEventLog: true });
+		const view = viewOf(run.eventLog.filter(isSimEvent));
+		const summary = summarize(config, run);
+		expect({
+			ratings: view.ratings,
+			meanStars: view.stars / view.ratings,
+		}).toEqual({ ratings: summary.ratings, meanStars: summary.meanStars });
 	});
 });

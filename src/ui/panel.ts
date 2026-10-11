@@ -127,6 +127,21 @@ export function panelRows(view: View): PanelRow[] {
 		...(view.zonesPriced.size > 0 || view.tripsPooled > 0
 			? [{ label: "Revenue", value: dollars(view.revenue), swatch: null }]
 			: []),
+		...ratingRows(view),
+	];
+}
+
+// Only once a rider rated its driver: ratings are on (ADR 0057). Mean stars
+// to two decimals, as the summary prints them.
+function ratingRows(view: View): PanelRow[] {
+	if (view.ratings === 0) return [];
+	return [
+		{ label: "Ratings", value: String(view.ratings), swatch: null },
+		{
+			label: "Mean stars",
+			value: (view.stars / view.ratings).toFixed(2),
+			swatch: null,
+		},
 	];
 }
 

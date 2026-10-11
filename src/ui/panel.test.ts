@@ -243,4 +243,25 @@ describe("panelRows", () => {
 			expect(shared?.swatch).toEqual({ shape: "ring", color: pooledRingColor });
 		});
 	});
+
+	// ADR 0057. With ratings off no rider rates: no rating rows (above).
+	describe("once a driver is rated", () => {
+		const ratedView: View = { ...emptyView(), ratings: 3, stars: 11 };
+
+		test("adds ratings and mean stars to two decimals, as the summary prints them", () => {
+			expect(labelsAndValues(panelRows(ratedView)).slice(-2)).toEqual([
+				["Ratings", "3"],
+				["Mean stars", "3.67"],
+			]);
+		});
+
+		test("with pooling on too, shows ratings after revenue", () => {
+			const view: View = { ...ratedView, tripsPooled: 7 };
+			expect(
+				labelsAndValues(panelRows(view))
+					.slice(-3)
+					.map(([label]) => label),
+			).toEqual(["Revenue", "Ratings", "Mean stars"]);
+		});
+	});
 });

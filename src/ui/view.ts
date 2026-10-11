@@ -97,6 +97,9 @@ export type View = {
 	// had another trip on their driver while it was shown.
 	tripsPooled: number;
 	tripsShared: number;
+	// Ratings (ADR 0057): rider.rated_driver seen, and the sum of their stars.
+	ratings: number;
+	stars: number;
 };
 
 export function emptyView(): View {
@@ -121,6 +124,8 @@ export function emptyView(): View {
 		revenue: 0,
 		tripsPooled: 0,
 		tripsShared: 0,
+		ratings: 0,
+		stars: 0,
 	};
 }
 
@@ -260,8 +265,9 @@ export function applyEvent(view: View, event: SimEvent): void {
 		case "rider.declined_surge":
 			view.ridersDeclined++;
 			return;
-		// Shown once the panel counts ratings (ADR 0057, #333).
 		case "rider.rated_driver":
+			view.ratings++;
+			view.stars += event.stars;
 			return;
 		default: {
 			const unhandled: never = event;
