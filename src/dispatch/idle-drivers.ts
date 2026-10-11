@@ -7,6 +7,7 @@ import {
 	type Grid,
 } from "../shared/grid.ts";
 import type { DriverId } from "../shared/messages.ts";
+import { ratingPenaltyOf, type Stars } from "../shared/rating.ts";
 import { type Zone, zoneOf } from "../shared/surge.ts";
 
 export type IdleDriver = { driverId: DriverId; cell: Cell };
@@ -63,7 +64,13 @@ type Drivers = {
 	idleCount: number;
 	// Row-major by bucket, unordered within a bucket.
 	buckets: Driver[][];
+	// The fleet's ratings by driver index, any region's drivers (ADR 0057):
+	// null until the first rating, so nothing is allocated with ratings off.
+	ratings: Ratings | null;
 };
+
+// Fleet-sized: stars sum, ratings count and the rating penalty they give.
+type Ratings = { sum: Int32Array; count: Int32Array; penalty: Int32Array };
 
 const notIdle = -1;
 
@@ -99,8 +106,38 @@ export function startIdleDrivers(
 			byId: new Map(),
 			idleCount: 0,
 			buckets: Array.from({ length: columns * rows }, (): Driver[] => []),
+			ratings: null,
 		},
 	};
+}
+
+// A rider rated a driver of the fleet, in this region or not: a driver
+// crossing into the region brings its rating (ADR 0057). Callers check the
+// index is the fleet's.
+export function rateDriver(
+	idle: IdleDrivers,
+	index: DriverIndex,
+	stars: Stars,
+): void {
+	const drivers = idle[internals];
+	const size = drivers.byIndex.length;
+	if (index >= size) throw new Error(`driver index ${index} outside the fleet`);
+	drivers.ratings ??= {
+		sum: new Int32Array(size),
+		count: new Int32Array(size),
+		penalty: new Int32Array(size),
+	};
+	const { sum, count, penalty } = drivers.ratings;
+	const newSum = (sum[index] ?? 0) + stars;
+	const newCount = (count[index] ?? 0) + 1;
+	sum[index] = newSum;
+	count[index] = newCount;
+	penalty[index] = ratingPenaltyOf(newSum, newCount);
+}
+
+// Whether any driver of the fleet is rated; its arrays exist only then.
+export function anyDriverRated(idle: IdleDrivers): boolean {
+	return idle[internals].ratings !== null;
 }
 
 // A driver went online or moved; a driver first seen moving in the region is
@@ -331,6 +368,123 @@ export function nearestIdleSkipping(
 	const nearest = search(idle[internals], pickup, skip);
 	if (nearest === undefined) return undefined;
 	return { driverId: nearest.driverId, cell: cellAt(nearest.x, nearest.y) };
+}
+
+// The idle driver of least match cost (pickup distance + rating penalty) to
+// the pickup, ties to the lowest ID, never one excluded; exactly what a
+// linear scan returns (greedy matching, ADR 0057). Before any rating, the
+// nearest idle driver by today's search.
+export function leastMatchCostIdle(
+	idle: IdleDrivers,
+	pickup: Cell,
+	excluded: ReadonlySet<DriverId>,
+): DriverId | undefined {
+	const drivers = idle[internals];
+	if (drivers.ratings === null) return nearestIdle(idle, pickup, excluded);
+	const { penalty } = drivers.ratings;
+	// As search: the ring bound holds for in-grid pickups only.
+	const pickupOffGrid =
+		pickup.x >= drivers.grid.width || pickup.y >= drivers.grid.height;
+	const best =
+		pickupOffGrid || drivers.idleCount < drivers.search.linearScanBelow
+			? scanAllRated(drivers, penalty, pickup, excluded)
+			: searchRingsRated(drivers, penalty, pickup, excluded);
+	return best?.driverId;
+}
+
+// As searchRings, by match cost. Penalties are never negative, so a ring,
+// bucket or driver farther than the best match cost found can't hold a
+// better one: each is skipped before reading a penalty. The best is kept in
+// locals, nothing allocated per candidate (ADR 0057's bench).
+function searchRingsRated(
+	drivers: Drivers,
+	penalty: Int32Array,
+	pickup: Cell,
+	excluded: ReadonlySet<DriverId>,
+): Driver | undefined {
+	const size = drivers.search.cellsPerBucket;
+	const column = Math.floor(pickup.x / size);
+	const row = Math.floor(pickup.y / size);
+	const lastRing = Math.max(
+		column,
+		row,
+		drivers.columns - 1 - column,
+		drivers.rows - 1 - row,
+	);
+	let best: Driver | undefined;
+	let bestCost = Number.POSITIVE_INFINITY;
+	for (let ring = 0; ring <= lastRing; ring++) {
+		if (nearestBeyond(pickup, size, ring) > bestCost) break;
+		for (let y = row - ring; y <= row + ring; y++) {
+			if (y < 0 || y >= drivers.rows) continue;
+			const edgeRow = y === row - ring || y === row + ring;
+			const step = edgeRow ? 1 : 2 * ring;
+			// Least distance from the pickup to this row of buckets. A driver
+			// off the grid sits in an edge bucket but is no nearer than it.
+			const dy =
+				y < row
+					? pickup.y - (y * size + size - 1)
+					: y > row
+						? y * size - pickup.y
+						: 0;
+			for (let x = column - ring; x <= column + ring; x += step) {
+				if (x < 0 || x >= drivers.columns) continue;
+				const dx =
+					x < column
+						? pickup.x - (x * size + size - 1)
+						: x > column
+							? x * size - pickup.x
+							: 0;
+				if (dx + dy > bestCost) continue;
+				for (const driver of drivers.buckets[y * drivers.columns + x] ?? []) {
+					const distance = distanceToCoordinates(pickup, driver.x, driver.y);
+					if (distance > bestCost) continue;
+					const cost = distance + (penalty[driver.index] ?? 0);
+					if (cost > bestCost) continue;
+					if (
+						cost === bestCost &&
+						best !== undefined &&
+						driver.driverId > best.driverId
+					) {
+						continue;
+					}
+					if (excluded.has(driver.driverId)) continue;
+					best = driver;
+					bestCost = cost;
+				}
+			}
+		}
+	}
+	return best;
+}
+
+function scanAllRated(
+	drivers: Drivers,
+	penalty: Int32Array,
+	pickup: Cell,
+	excluded: ReadonlySet<DriverId>,
+): Driver | undefined {
+	let best: Driver | undefined;
+	let bestCost = Number.POSITIVE_INFINITY;
+	for (const bucket of drivers.buckets) {
+		for (const driver of bucket) {
+			if (excluded.has(driver.driverId)) continue;
+			const cost =
+				distanceToCoordinates(pickup, driver.x, driver.y) +
+				(penalty[driver.index] ?? 0);
+			if (cost > bestCost) continue;
+			if (
+				cost === bestCost &&
+				best !== undefined &&
+				driver.driverId > best.driverId
+			) {
+				continue;
+			}
+			best = driver;
+			bestCost = cost;
+		}
+	}
+	return best;
 }
 
 function search(

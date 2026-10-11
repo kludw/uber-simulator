@@ -8,15 +8,17 @@ import {
 	type Grid,
 } from "../shared/grid.ts";
 import {
-	type DriverId,
+	DriverId,
 	driversMoved,
 	driversWentOnline,
 	type RequestTrip,
 	RiderId,
+	type RiderRatedDriver,
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
+import { Stars } from "../shared/rating.ts";
 import { Region, RegionLayout } from "../shared/regions.ts";
 import { Surge } from "../shared/surge.ts";
 import {
@@ -1969,6 +1971,100 @@ describe.each<Matching>([
 				dropoff: cell(7, 8),
 			},
 			{ type: "trip.offered", tick: tick(4), tripId: t2, driverId: d1 },
+		]);
+	});
+});
+
+function rated(driverId: DriverId, stars: number): RiderRatedDriver {
+	return {
+		type: "rider.rated_driver",
+		tick: tick(1),
+		riderId: RiderId.parse("r-9"),
+		tripId: TripId.parse("t-9"),
+		driverId,
+		stars: Stars.parse(stars),
+	};
+}
+
+// ADR 0057: greedy takes the idle driver of least match cost, pickup
+// distance + 10 cells per star of average rating below 5. Trips' pickup is
+// (1, 2).
+describe("decideDispatch ratings (greedy)", () => {
+	function offeredTo(driverId: DriverId) {
+		return [
+			{
+				type: "offer",
+				tripId: t1,
+				driverId,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId },
+		];
+	}
+
+	test("offers a trip to a driver rated one star better 9 cells farther", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(i1, cell(1, 3)),
+			wentOnline(i2, cell(9, 4)),
+			rated(d1, 4),
+			rated(d2, 5),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual(offeredTo(d2));
+	});
+
+	test("offers a trip to the nearer driver when one rated one star better is 11 cells farther", () => {
+		const { outputs } = run([
+			requestTrip(t1, 1),
+			wentOnline(i1, cell(1, 3)),
+			wentOnline(i2, cell(9, 6)),
+			rated(d1, 4),
+			rated(d2, 5),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual(offeredTo(d1));
+	});
+
+	// Region 0 of 2x1 is x 0-4: d2 is rated before this dispatch knows it.
+	test("uses the rating of a driver from another region once it crosses in", () => {
+		let state = startDispatch({
+			grid,
+			fleetSize,
+			tick: tick(0),
+			regions: RegionLayout.parse("2x1"),
+			region: Region.parse(0),
+		});
+		let outputs: unknown[] = [];
+		for (const input of [
+			requestTrip(t1, 1),
+			wentOnline(i1, cell(1, 5)),
+			rated(d2, 4),
+			driversMoved(tick(1), Region.parse(0), fleetSize, [
+				{ driverIndex: i2, cell: cell(1, 3) },
+			]),
+			ticked(2),
+		]) {
+			({ state, outputs } = decideDispatch(state, input, random));
+		}
+
+		expect(outputs).toEqual(offeredTo(d1));
+	});
+
+	test.each([
+		DriverId.parse("d-12"),
+		DriverId.parse("d-2"),
+		DriverId.parse("x-01"),
+	])("rejects a rating of %s, no driver of the fleet", (driverId) => {
+		const rating = rated(driverId, 4);
+
+		const { outputs } = run([rating]);
+
+		expect(outputs).toEqual([
+			{ type: "input_rejected", reason: "driver_not_in_fleet", input: rating },
 		]);
 	});
 });
