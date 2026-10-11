@@ -7,9 +7,11 @@ import {
 	type Grid,
 } from "../shared/grid.ts";
 import type { DriverId } from "../shared/messages.ts";
+import { maxPenalty, penaltyOf } from "../shared/rating.ts";
 import { type Zone, zoneOf } from "../shared/surge.ts";
 
-export type IdleDriver = { driverId: DriverId; cell: Cell };
+// penalty: SPIKE (#331) rating penalty in cells, 0 without ratings.
+export type IdleDriver = { driverId: DriverId; cell: Cell; penalty: number };
 
 // Square buckets of cellsPerBucket x cellsPerBucket cells. Below
 // linearScanBelow idle drivers, a linear scan beats searching mostly empty
@@ -63,7 +65,44 @@ type Drivers = {
 	idleCount: number;
 	// Row-major by bucket, unordered within a bucket.
 	buckets: Driver[][];
+	// SPIKE (#331): per driver index, from the first rating seen; null before.
+	ratings: { sum: Int32Array; count: Int32Array; penalty: Int32Array } | null;
 };
+
+// SPIKE (#331): a rider rated a driver of the fleet (any region's).
+export function rateDriver(
+	idle: IdleDrivers,
+	index: DriverIndex,
+	stars: number,
+): void {
+	const drivers = idle[internals];
+	if (drivers.ratings === null) {
+		const size = drivers.byIndex.length;
+		const penalty = new Int32Array(size).fill(penaltyOf(0, 0));
+		drivers.ratings = {
+			sum: new Int32Array(size),
+			count: new Int32Array(size),
+			penalty,
+		};
+	}
+	const { sum, count, penalty } = drivers.ratings;
+	sum[index] = (sum[index] ?? 0) + stars;
+	count[index] = (count[index] ?? 0) + 1;
+	penalty[index] = penaltyOf(sum[index] ?? 0, count[index] ?? 0);
+}
+
+// SPIKE: most a penalty adds, 0 before any rating.
+export function penaltyBound(idle: IdleDrivers): number {
+	return idle[internals].ratings === null ? 0 : maxPenalty();
+}
+
+export function penaltyOfDriver(idle: IdleDrivers, driverId: DriverId): number {
+	const drivers = idle[internals];
+	if (drivers.ratings === null) return 0;
+	const driver = drivers.byId.get(driverId);
+	if (driver === undefined) return 0;
+	return drivers.ratings.penalty[driver.index] ?? 0;
+}
 
 const notIdle = -1;
 
@@ -99,6 +138,7 @@ export function startIdleDrivers(
 			byId: new Map(),
 			idleCount: 0,
 			buckets: Array.from({ length: columns * rows }, (): Driver[] => []),
+			ratings: null,
 		},
 	};
 }
@@ -257,8 +297,12 @@ export function idleDriversById(idle: IdleDrivers): IdleDriver[] {
 	const drivers = idle[internals];
 	const idleDrivers: IdleDriver[] = [];
 	for (const bucket of drivers.buckets) {
-		for (const { driverId, x, y } of bucket) {
-			idleDrivers.push({ driverId, cell: cellAt(x, y) });
+		for (const { driverId, x, y, index } of bucket) {
+			idleDrivers.push({
+				driverId,
+				cell: cellAt(x, y),
+				penalty: drivers.ratings?.penalty[index] ?? 0,
+			});
 		}
 	}
 	return idleDrivers.sort((a, b) => (a.driverId < b.driverId ? -1 : 1));
@@ -328,9 +372,14 @@ export function nearestIdleSkipping(
 	pickup: Cell,
 	skip: (driverId: DriverId) => boolean,
 ): IdleDriver | undefined {
-	const nearest = search(idle[internals], pickup, skip);
+	const drivers = idle[internals];
+	const nearest = search(drivers, pickup, skip);
 	if (nearest === undefined) return undefined;
-	return { driverId: nearest.driverId, cell: cellAt(nearest.x, nearest.y) };
+	return {
+		driverId: nearest.driverId,
+		cell: cellAt(nearest.x, nearest.y),
+		penalty: drivers.ratings?.penalty[nearest.index] ?? 0,
+	};
 }
 
 function search(
@@ -342,6 +391,11 @@ function search(
 	// off the grid is bad input, so take the scan, exact by construction.
 	const pickupOffGrid =
 		pickup.x >= drivers.grid.width || pickup.y >= drivers.grid.height;
+	if (drivers.ratings !== null) {
+		return pickupOffGrid || drivers.idleCount < drivers.search.linearScanBelow
+			? scanAllRated(drivers, drivers.ratings.penalty, pickup, skip)
+			: searchRingsRated(drivers, drivers.ratings.penalty, pickup, skip);
+	}
 	return pickupOffGrid || drivers.idleCount < drivers.search.linearScanBelow
 		? scanAll(drivers, pickup, skip)
 		: searchRings(drivers, pickup, skip);
@@ -417,6 +471,82 @@ function searchRings(
 		}
 	}
 	return nearest?.driver;
+}
+
+// SPIKE (#331): score = pickup distance + rating penalty, ties to lowest ID.
+type Scored = { driver: Driver; score: number } | undefined;
+
+function better(
+	best: Scored,
+	driver: Driver,
+	penalty: Int32Array,
+	pickup: Cell,
+): Scored {
+	const score =
+		distanceToCoordinates(pickup, driver.x, driver.y) +
+		(penalty[driver.index] ?? 0);
+	if (
+		best === undefined ||
+		score < best.score ||
+		(score === best.score && driver.driverId < best.driver.driverId)
+	) {
+		return { driver, score };
+	}
+	return best;
+}
+
+function scanAllRated(
+	drivers: Drivers,
+	penalty: Int32Array,
+	pickup: Cell,
+	skip: (driverId: DriverId) => boolean,
+): Driver | undefined {
+	let best: Scored;
+	for (const bucket of drivers.buckets) {
+		for (const driver of bucket) {
+			if (skip(driver.driverId)) continue;
+			best = better(best, driver, penalty, pickup);
+		}
+	}
+	return best?.driver;
+}
+
+// As searchRings; penalties are >= 0, so a ring whose nearest cell is farther
+// than the best score can't hold a better one.
+function searchRingsRated(
+	drivers: Drivers,
+	penalty: Int32Array,
+	pickup: Cell,
+	skip: (driverId: DriverId) => boolean,
+): Driver | undefined {
+	const size = drivers.search.cellsPerBucket;
+	const column = Math.floor(pickup.x / size);
+	const row = Math.floor(pickup.y / size);
+	const lastRing = Math.max(
+		column,
+		row,
+		drivers.columns - 1 - column,
+		drivers.rows - 1 - row,
+	);
+	let best: Scored;
+	for (let ring = 0; ring <= lastRing; ring++) {
+		if (best !== undefined && nearestBeyond(pickup, size, ring) > best.score) {
+			break;
+		}
+		for (let y = row - ring; y <= row + ring; y++) {
+			if (y < 0 || y >= drivers.rows) continue;
+			const edgeRow = y === row - ring || y === row + ring;
+			const step = edgeRow ? 1 : 2 * ring;
+			for (let x = column - ring; x <= column + ring; x += step) {
+				if (x < 0 || x >= drivers.columns) continue;
+				for (const driver of drivers.buckets[y * drivers.columns + x] ?? []) {
+					if (skip(driver.driverId)) continue;
+					best = better(best, driver, penalty, pickup);
+				}
+			}
+		}
+	}
+	return best?.driver;
 }
 
 // Least distance from the pickup to any cell in ring `ring` or beyond, i.e.

@@ -8,6 +8,7 @@ import type {
 	RequestTripRejected,
 	RiderDeclinedSurge,
 	RiderId,
+	RiderRatedDriver,
 	Tick,
 	TripCancelled,
 	TripCompleted,
@@ -23,6 +24,7 @@ import {
 	regionOf,
 } from "../shared/regions.ts";
 import { baseSurge, type Surge, type Zone, zoneOf } from "../shared/surge.ts";
+import { driverQuality, spikeRatings, starsOf } from "../shared/rating.ts";
 import { assertValidDemand, type Demand, pickupsForTick } from "./demand.ts";
 
 // region: the trip's, where its cancel goes (ADR 0050).
@@ -34,10 +36,24 @@ type Rider =
 			region: Region;
 			requestedAt: Tick;
 			patience: number;
+			direct: number;
 	  }
 	// Sent cancel_trip, waiting for dispatch's outcome.
-	| { state: "cancelling"; id: RiderId; tripId: TripId }
-	| { state: "riding"; id: RiderId; tripId: TripId };
+	| {
+			state: "cancelling";
+			id: RiderId;
+			tripId: TripId;
+			requestedAt: Tick;
+			direct: number;
+	  }
+	| {
+			state: "riding";
+			id: RiderId;
+			tripId: TripId;
+			requestedAt: Tick;
+			pickedUpAt: Tick;
+			direct: number;
+	  };
 
 // spawned: riders spawned so far; numbers both rider and trip IDs.
 // riders: by trip ID (how inputs address them), updated in place (ADR 0033,
@@ -66,7 +82,12 @@ export type RidersInput =
 	| RequestTripRejected
 	| ZonesPriced;
 
-type RidersOutput = RequestTrip | CancelTrip | RiderDeclinedSurge | Rejected;
+type RidersOutput =
+	| RequestTrip
+	| CancelTrip
+	| RiderDeclinedSurge
+	| RiderRatedDriver
+	| Rejected;
 
 type Rejected = InputRejected<
 	| TripPickedUp
@@ -115,7 +136,7 @@ export function decideRiders(
 		case "trip.picked_up":
 			return onPickedUp(state, input);
 		case "trip.completed":
-			return onCompleted(state, input);
+			return onCompleted(state, input, random);
 		case "trip.cancelled":
 			return onCancelled(state, input);
 		case "cancel_trip_rejected":
@@ -142,6 +163,9 @@ function onPickedUp(state: RidersState, pickedUp: TripPickedUp): Decision {
 		state: "riding",
 		id: addressed.id,
 		tripId: addressed.tripId,
+		requestedAt: addressed.requestedAt,
+		pickedUpAt: pickedUp.tick,
+		direct: addressed.direct,
 	});
 	return { state, outputs: [] };
 }
@@ -154,13 +178,35 @@ function reject(
 	return { state, outputs: [{ type: "input_rejected", reason, input }] };
 }
 
-function onCompleted(state: RidersState, completed: TripCompleted): Decision {
+function onCompleted(
+	state: RidersState,
+	completed: TripCompleted,
+	random: Random,
+): Decision {
 	const addressed = state.riders.get(completed.tripId);
 	if (addressed === undefined) return { state, outputs: [] };
 	if (addressed.state !== "riding") {
 		return reject(state, completed, "rider_not_riding");
 	}
-	return removeRider(state, addressed.tripId);
+	state.riders.delete(addressed.tripId);
+	if (!spikeRatings.on) return { state, outputs: [] };
+	const rated: RiderRatedDriver = {
+		type: "rider.rated_driver",
+		tick: completed.tick,
+		riderId: addressed.id,
+		tripId: addressed.tripId,
+		driverId: completed.driverId,
+		stars: starsOf(
+			driverQuality(random, completed.driverId),
+			{
+				waitTicks: addressed.pickedUpAt - addressed.requestedAt,
+				rideTicks: completed.tick - addressed.pickedUpAt,
+				direct: addressed.direct,
+			},
+			random.child(`rating:${addressed.tripId}`),
+		),
+	};
+	return { state, outputs: [rated] };
 }
 
 function onCancelled(state: RidersState, cancelled: TripCancelled): Decision {
@@ -262,6 +308,8 @@ function onTick(
 			state: "cancelling",
 			id: rider.id,
 			tripId: rider.tripId,
+			requestedAt: rider.requestedAt,
+			direct: rider.direct,
 		});
 	}
 	for (let i = 0; i < spawnCount; i++) {
@@ -278,6 +326,7 @@ function onTick(
 			region: regionOf(state.regions, state.grid, pickup),
 			requestedAt: input.tick,
 			patience: patience.int(120, 300),
+			direct: distance(pickup, dropoff),
 		};
 		// One draw per spawned rider, declined or not, so a decline never
 		// shifts later draws.

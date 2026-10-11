@@ -18,6 +18,7 @@ import type {
 	RequestTrip,
 	RequestTripAccepted,
 	RequestTripRejected,
+	RiderRatedDriver,
 	Tick,
 	TripCancelled,
 	TripCompleted,
@@ -31,6 +32,7 @@ import type {
 	TripStatus,
 	ZonesPriced,
 } from "../shared/messages.ts";
+import { driverIndexOf } from "../shared/fleet.ts";
 import { forEachDriverAt } from "../shared/messages.ts";
 import { joinEtaOf, type Partner } from "../shared/pool.ts";
 import type { Random } from "../shared/random.ts";
@@ -56,6 +58,8 @@ import {
 	idleCount,
 	idleCountsByZone,
 	idleDriversById,
+	penaltyBound,
+	rateDriver,
 	isBusy,
 	markBusy,
 	markFree,
@@ -132,7 +136,8 @@ export type DispatchInput =
 	| OfferDeclined
 	| DriverArrivedAtPickup
 	| DriverArrivedAtDropoff
-	| ConfirmTrip;
+	| ConfirmTrip
+	| RiderRatedDriver;
 
 type DispatchOutput =
 	| RequestTripAccepted
@@ -235,6 +240,13 @@ export function decideDispatch(
 			return onArrival(state, input);
 		case "confirm_trip":
 			return onConfirmTrip(state, input);
+		case "rider.rated_driver": {
+			const index = driverIndexOf(input.driverId);
+			if (index !== null && index < state.fleetSize) {
+				rateDriver(state.drivers, index, input.stars);
+			}
+			return { state, outputs: [] };
+		}
 		default: {
 			const unhandled: never = input;
 			throw new Error(`unhandled dispatch input: ${unhandled}`);
@@ -475,6 +487,7 @@ function batchedPairs(
 		queued,
 		(pickup, skip) => nearestIdleSkipping(state.drivers, pickup, skip),
 		state.grid,
+		penaltyBound(state.drivers),
 	).map(({ row, driverId }) => {
 		const trip = queued[row];
 		if (trip === undefined) throw new Error(`matching row ${row} out of range`);
@@ -497,7 +510,7 @@ function densePairs(
 		for (const [row, trip] of queued.entries()) {
 			out[row] = trip.excludedDrivers.has(driver.driverId)
 				? Number.POSITIVE_INFINITY
-				: distance(driver.cell, trip.pickup);
+				: distance(driver.cell, trip.pickup) + driver.penalty;
 		}
 	};
 	return minCostMatching(queued.length, idle.length, { ofRow, ofColumn }).map(

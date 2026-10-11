@@ -346,6 +346,17 @@ export const RiderDeclinedSurge = z.object({
 });
 export type RiderDeclinedSurge = z.infer<typeof RiderDeclinedSurge>;
 
+// SPIKE (#331): a rider's rating of its driver after a completed trip.
+export const RiderRatedDriver = z.object({
+	type: z.literal("rider.rated_driver"),
+	tick: Tick,
+	riderId: RiderId,
+	tripId: TripId,
+	driverId: DriverId,
+	stars: z.int().min(1).max(5),
+});
+export type RiderRatedDriver = z.infer<typeof RiderRatedDriver>;
+
 export const RequestTripAccepted = z.object({
 	type: z.literal("request_trip_accepted"),
 	tripId: TripId,
@@ -461,6 +472,7 @@ const Message = z.discriminatedUnion("type", [
 	TripStatus,
 	ZonesPriced,
 	RiderDeclinedSurge,
+	RiderRatedDriver,
 ]);
 export type Message = z.infer<typeof Message>;
 

@@ -150,7 +150,7 @@ export type MatchTrip = {
 export type NearestDriver = (
 	pickup: Cell,
 	skip: (driverId: DriverId) => boolean,
-) => { driverId: DriverId; cell: Cell } | undefined;
+) => { driverId: DriverId; cell: Cell; penalty: number } | undefined;
 
 export type TripPair = { row: number; driverId: DriverId };
 
@@ -166,6 +166,7 @@ export function minCostMatchingByNearest(
 	trips: readonly MatchTrip[],
 	nearest: NearestDriver,
 	grid: Grid,
+	maxPenalty = 0,
 ): TripPair[] {
 	const rows = trips.length;
 	// A disallowed pair costs more than any whole set of allowed pairs, so the
@@ -173,7 +174,8 @@ export function minCostMatchingByNearest(
 	// driver cell is on the grid, so no distance exceeds width + height - 2
 	// (ADR 0051). An off-grid cell is bad input from another service; with
 	// one, a batch may get fewer pairs than the dense solver's.
-	const sentinel = rows * (grid.width + grid.height - 2) + 1;
+	const sentinel = rows * (grid.width + grid.height - 2 + maxPenalty) + 1;
+	const touchedPenalty = new Int32Array(rows);
 	const rowPotential = new Float64Array(rows);
 	const columnOfRow = new Int32Array(rows).fill(unmatched);
 	// Touched drivers (columns), in the order paths reached them. Each path
@@ -220,7 +222,8 @@ export function minCostMatchingByNearest(
 			const found = {
 				driverId: allowed.driverId,
 				cell: allowed.cell,
-				cost: distance(trip.pickup, allowed.cell),
+				penalty: allowed.penalty,
+				cost: distance(trip.pickup, allowed.cell) + allowed.penalty,
 				allowed: true,
 			};
 			cached[row] = found;
@@ -258,7 +261,7 @@ export function minCostMatchingByNearest(
 							trip.pickup,
 							at(touchedXs, column),
 							at(touchedYs, column),
-						)
+						) + at(touchedPenalty, column)
 					: sentinel;
 				const reduced = base + cost - at(columnPotential, column);
 				if (reduced < at(key, column)) {
@@ -306,6 +309,7 @@ export function minCostMatchingByNearest(
 		columnOf.set(end.driverId, column);
 		touchedXs[column] = end.cell.x;
 		touchedYs[column] = end.cell.y;
+		touchedPenalty[column] = end.penalty;
 		columnPotential[column] = 0;
 		let previous = end.from;
 		let allowed = end.allowed;
@@ -333,6 +337,7 @@ export function minCostMatchingByNearest(
 type Untouched = {
 	driverId: DriverId;
 	cell: Cell;
+	penalty: number;
 	cost: number;
 	allowed: boolean;
 };

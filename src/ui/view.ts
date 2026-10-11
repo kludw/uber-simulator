@@ -260,6 +260,8 @@ export function applyEvent(view: View, event: SimEvent): void {
 		case "rider.declined_surge":
 			view.ridersDeclined++;
 			return;
+		case "rider.rated_driver":
+			return;
 		default: {
 			const unhandled: never = event;
 			throw new Error(`unhandled event: ${JSON.stringify(unhandled)}`);
