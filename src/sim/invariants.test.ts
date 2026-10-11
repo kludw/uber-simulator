@@ -713,6 +713,21 @@ describe("checkInvariants ratings", () => {
 			{ type: "duplicate_rating", tick: tick(4), tripId: t1 },
 		]);
 	});
+
+	test("an invalid rating still counts as the trip's one rating", () => {
+		const log = [...cleanTrip, rated(3, { driverId: d2 }), rated(4)];
+
+		expect(checkInvariants(log, grid)).toEqual([
+			{
+				type: "invalid_rating",
+				tick: tick(3),
+				tripId: t1,
+				riderId: r1,
+				driverId: d2,
+			},
+			{ type: "duplicate_rating", tick: tick(4), tripId: t1 },
+		]);
+	});
 });
 
 describe("createInvariantChecker", () => {
