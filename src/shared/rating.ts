@@ -48,6 +48,9 @@ function noiseOf(noise: Random): number {
 // better wins against one up to this much nearer. A constant, not a flag.
 export const ratingWeight = 10;
 
+// The most a rating penalty can be: a driver averaging 1 star.
+export const maxRatingPenalty = 4 * ratingWeight;
+
 // The rating penalty of a driver from its stars sum and ratings count, in
 // cells: 0 to 4 × ratingWeight, 0 unrated.
 export function ratingPenaltyOf(sum: number, count: number): number {

@@ -166,6 +166,45 @@ describe("minCostMatching", () => {
 		}
 	});
 
+	// ADR 0057, heavy batched: with more trips than drivers and no exclusions,
+	// every driver is matched, so its penalty is in every optimal total alike.
+	// Which of several optimal matchings comes back may differ: count and
+	// total pickup distance only.
+	test("with every driver matched, rating penalties leave the pair count and total pickup distance unchanged", () => {
+		const random = createRandom(366);
+		for (let sample = 0; sample < 300; sample++) {
+			const columns = random.int(1, 8);
+			const rows = columns + random.int(1, 6);
+			const distances = Array.from({ length: rows }, () =>
+				Array.from({ length: columns }, () => random.int(0, 30)),
+			);
+			const penalties = Array.from({ length: columns }, () =>
+				random.int(0, 40),
+			);
+			const rated = distances.map((row) =>
+				row.map((cost, column) => cost + (penalties[column] ?? 0)),
+			);
+			const pickupDistance = (pairs: Pair[]) =>
+				pairs.reduce(
+					(total, { row, column }) =>
+						total + (distances[row]?.[column] ?? Number.NaN),
+					0,
+				);
+			const unratedPairs = matchMatrix(distances);
+			const ratedPairs = matchMatrix(rated);
+
+			expect({
+				sample,
+				pairs: ratedPairs.length,
+				pickupDistance: pickupDistance(ratedPairs),
+			}).toEqual({
+				sample,
+				pairs: unratedPairs.length,
+				pickupDistance: pickupDistance(unratedPairs),
+			});
+		}
+	});
+
 	test("50 x 10,000 matrix: every row matched", () => {
 		// Was padded to 10,000 x 10,000 (ADR 0033); now about 50^2 x 10,000 steps.
 		const random = createRandom(5);
@@ -182,10 +221,15 @@ function cell(x: number, y: number): Cell {
 	return result.value;
 }
 
-type TestDriver = { driverId: DriverId; cell: Cell };
+type TestDriver = { driverId: DriverId; cell: Cell; ratingPenalty: number };
 
-function driver(id: string, x: number, y: number): TestDriver {
-	return { driverId: DriverId.parse(id), cell: cell(x, y) };
+function driver(
+	id: string,
+	x: number,
+	y: number,
+	ratingPenalty = 0,
+): TestDriver {
+	return { driverId: DriverId.parse(id), cell: cell(x, y), ratingPenalty };
 }
 
 function trip(x: number, y: number, ...excluded: string[]): MatchTrip {
@@ -195,32 +239,39 @@ function trip(x: number, y: number, ...excluded: string[]): MatchTrip {
 	};
 }
 
-// The nearest-driver query as a linear scan: nearest not skipped, ties to the
-// lowest ID.
+// Pickup distance + rating penalty (ADR 0057).
+function matchCost(pickup: Cell, candidate: TestDriver): number {
+	return distance(pickup, candidate.cell) + candidate.ratingPenalty;
+}
+
+// The index's query as a linear scan: least match cost not skipped, ties to
+// the lowest ID. maxRatingPenalty: the most any driver's penalty can be.
 function matchByNearest(
 	trips: readonly MatchTrip[],
 	drivers: readonly TestDriver[],
 	onGrid: Grid = grid,
+	maxRatingPenalty = 0,
 ) {
 	return minCostMatchingByNearest(
 		trips,
 		(pickup, skip) => {
-			let nearest: TestDriver | undefined;
+			let best: TestDriver | undefined;
 			for (const candidate of drivers) {
 				if (skip(candidate.driverId)) continue;
-				const toPickup = distance(pickup, candidate.cell);
+				const cost = matchCost(pickup, candidate);
 				if (
-					nearest === undefined ||
-					toPickup < distance(pickup, nearest.cell) ||
-					(toPickup === distance(pickup, nearest.cell) &&
-						candidate.driverId < nearest.driverId)
+					best === undefined ||
+					cost < matchCost(pickup, best) ||
+					(cost === matchCost(pickup, best) &&
+						candidate.driverId < best.driverId)
 				) {
-					nearest = candidate;
+					best = candidate;
 				}
 			}
-			return nearest;
+			return best;
 		},
 		onGrid,
+		maxRatingPenalty,
 	);
 }
 
@@ -301,18 +352,47 @@ describe("minCostMatchingByNearest", () => {
 			});
 		}
 	});
+
+	test("a trip takes a better-rated driver while its match cost is lower", () => {
+		// d-1: 1 + 10 = 11; d-2: 9 + 0 = 9.
+		expect(
+			matchByNearest(
+				[trip(5, 5)],
+				[driver("d-1", 5, 6, 10), driver("d-2", 9, 0)],
+				grid,
+				maxRatingPenalty,
+			),
+		).toEqual([{ row: 0, driverId: DriverId.parse("d-2") }]);
+	});
+
+	test("same pair count and total match cost as the dense solver on seeded random batches with rating penalties", () => {
+		const random = createRandom(332);
+		for (let sample = 0; sample < 1000; sample++) {
+			const batch = randomBatch(random, true);
+			expect({ sample, ...nearestOutcome(batch) }).toEqual({
+				sample,
+				...denseOutcome(batch),
+			});
+		}
+	});
 });
+
+// ADR 0057: 10 cells per star below 5, at most 4 stars.
+const maxRatingPenalty = 40;
 
 type Batch = {
 	grid: Grid;
 	trips: MatchTrip[];
 	drivers: TestDriver[];
+	rated: boolean;
 };
 
 // Up to 12 trips on small grids, so pickups and drivers share cells and tie
 // often; at least as many drivers as trips; each driver excluded for a trip
-// with probability 0 to 1/2 (some trips lose every driver).
-function randomBatch(random: Random): Batch {
+// with probability 0 to 1/2 (some trips lose every driver). rated: each
+// driver unrated or with a rating penalty from 0 to the most there is, so
+// penalties outweigh distances often.
+function randomBatch(random: Random, rated = false): Batch {
 	const batchGrid = { width: random.int(1, 12), height: random.int(1, 12) };
 	const at = (): Cell =>
 		({
@@ -322,7 +402,12 @@ function randomBatch(random: Random): Batch {
 	const tripCount = random.int(0, 12);
 	const drivers = Array.from(
 		{ length: tripCount + random.int(0, 8) },
-		(_, index) => ({ driverId: DriverId.parse(`d-${index}`), cell: at() }),
+		(_, index) => ({
+			driverId: DriverId.parse(`d-${index}`),
+			cell: at(),
+			ratingPenalty:
+				rated && random.int(0, 3) > 0 ? random.int(0, maxRatingPenalty) : 0,
+		}),
 	);
 	const excludedOneIn = random.int(0, 2);
 	const trips = Array.from({ length: tripCount }, () => ({
@@ -335,40 +420,49 @@ function randomBatch(random: Random): Batch {
 				.map(({ driverId }) => driverId),
 		),
 	}));
-	return { grid: batchGrid, trips, drivers };
+	return { grid: batchGrid, trips, drivers, rated };
 }
 
 // Throws if not a valid matching (trip or driver used twice, excluded pair).
-function nearestOutcome({ grid: batchGrid, trips, drivers }: Batch) {
-	const pairs = matchByNearest(trips, drivers, batchGrid);
-	const cellOf = new Map(drivers.map((each) => [each.driverId, each.cell]));
+function nearestOutcome({ grid: batchGrid, trips, drivers, rated }: Batch) {
+	const pairs = matchByNearest(
+		trips,
+		drivers,
+		batchGrid,
+		rated ? maxRatingPenalty : 0,
+	);
+	const driverOf = new Map(drivers.map((each) => [each.driverId, each]));
 	if (
 		new Set(pairs.map(({ row }) => row)).size !== pairs.length ||
 		new Set(pairs.map(({ driverId }) => driverId)).size !== pairs.length
 	) {
 		throw new Error(`trip or driver used twice: ${JSON.stringify(pairs)}`);
 	}
-	let pickupDistance = 0;
+	let totalMatchCost = 0;
 	for (const { row, driverId } of pairs) {
 		const paired = trips[row];
-		const at = cellOf.get(driverId);
-		if (paired === undefined || at === undefined) throw new Error("no pair");
+		const matched = driverOf.get(driverId);
+		if (paired === undefined || matched === undefined) {
+			throw new Error("no pair");
+		}
 		if (paired.excludedDrivers.has(driverId)) {
 			throw new Error(`excluded pair (${row}, ${driverId})`);
 		}
-		pickupDistance += distance(paired.pickup, at);
+		totalMatchCost += matchCost(paired.pickup, matched);
 	}
-	return { pairs: pairs.length, pickupDistance };
+	return { pairs: pairs.length, totalMatchCost };
 }
 
 function denseOutcome({ trips, drivers }: Batch) {
 	const costs = trips.map((paired) =>
-		drivers.map(({ driverId, cell: at }) =>
-			paired.excludedDrivers.has(driverId) ? null : distance(paired.pickup, at),
+		drivers.map((candidate) =>
+			paired.excludedDrivers.has(candidate.driverId)
+				? null
+				: matchCost(paired.pickup, candidate),
 		),
 	);
 	const { size, cost } = outcome(costs);
-	return { pairs: size, pickupDistance: cost };
+	return { pairs: size, totalMatchCost: cost };
 }
 
 // About a quarter of cells disallowed.

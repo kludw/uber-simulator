@@ -24,10 +24,10 @@ import {
 	idleCountsByZone,
 	idleDriversById,
 	leastMatchCostIdle,
+	leastMatchCostIdleSkipping,
 	markBusy,
 	markFree,
 	nearestIdle,
-	nearestIdleSkipping,
 	placeDriver,
 	placeDriverAt,
 	rateDriver,
@@ -59,8 +59,13 @@ function id(index: number): DriverId {
 	return driverIdAt(fleetSize, i(index));
 }
 
-function driver(index: number, x: number, y: number): IdleDriver {
-	return { driverId: id(index), cell: cell(x, y) };
+function driver(
+	index: number,
+	x: number,
+	y: number,
+	ratingPenalty = 0,
+): IdleDriver {
+	return { driverId: id(index), cell: cell(x, y), ratingPenalty };
 }
 
 function at(index: number, x: number, y: number) {
@@ -371,12 +376,16 @@ describe("idleCountsByZone", () => {
 	});
 });
 
-describe("nearestIdleSkipping", () => {
-	test("returns the nearest idle driver the predicate keeps, with its cell", () => {
+describe("leastMatchCostIdleSkipping", () => {
+	test("before any rating, returns the nearest idle driver the predicate keeps, with its cell", () => {
 		const index = placed([at(1, 15, 15), at(2, 6, 4), at(3, 4, 6)]);
 
 		expect(
-			nearestIdleSkipping(index, cell(5, 5), (driverId) => driverId === id(2)),
+			leastMatchCostIdleSkipping(
+				index,
+				cell(5, 5),
+				(driverId) => driverId === id(2),
+			),
 		).toEqual(driver(3, 4, 6));
 	});
 
@@ -384,14 +393,54 @@ describe("nearestIdleSkipping", () => {
 		const index = placed([at(1, 5, 6), at(2, 9, 9), at(3, 5, 2)], searchGrid);
 
 		expect(
-			nearestIdleSkipping(index, cell(5, 5), (driverId) => driverId === id(1)),
+			leastMatchCostIdleSkipping(
+				index,
+				cell(5, 5),
+				(driverId) => driverId === id(1),
+			),
 		).toEqual(driver(3, 5, 2));
 	});
 
 	test("returns no driver when the predicate skips every idle driver", () => {
 		const index = placed([at(1, 15, 15)]);
 
-		expect(nearestIdleSkipping(index, cell(5, 5), () => true)).toBeUndefined();
+		expect(
+			leastMatchCostIdleSkipping(index, cell(5, 5), () => true),
+		).toBeUndefined();
+	});
+
+	test("returns the driver of least match cost the predicate keeps, with its cell and rating penalty", () => {
+		// Match costs: d-01 1 + 10 = 11; d-02 9, skipped; d-03 12.
+		const index = placed([at(1, 5, 6), at(2, 5, 14), at(3, 5, 17)]);
+		rateDriver(index, i(1), stars(4));
+
+		expect(
+			leastMatchCostIdleSkipping(
+				index,
+				cell(5, 5),
+				(driverId) => driverId === id(2),
+			),
+		).toEqual(driver(1, 5, 6, 10));
+	});
+
+	test("returns exactly what a linear scan by match cost returns", () => {
+		expectLinearScanPicks(
+			157,
+			{ drivers: true, pickups: true },
+			false,
+			true,
+			true,
+		);
+	});
+
+	test("returns exactly what a linear scan by match cost of the region's drivers returns", () => {
+		expectLinearScanPicks(
+			158,
+			{ drivers: true, pickups: false },
+			true,
+			true,
+			true,
+		);
 	});
 });
 
@@ -405,6 +454,16 @@ describe("idleDriversById", () => {
 			driver(2, 3, 3),
 			driver(3, 1, 2),
 			driver(10, 2, 2),
+		]);
+	});
+
+	test("lists each idle driver's rating penalty", () => {
+		const index = placed([at(1, 1, 1), at(2, 2, 2)]);
+		rateDriver(index, i(2), stars(3));
+
+		expect(idleDriversById(index)).toEqual([
+			driver(1, 1, 1),
+			driver(2, 2, 2, 20),
 		]);
 	});
 });
@@ -484,12 +543,14 @@ type OffGrid = { drivers: boolean; pickups: boolean };
 // regions, the index covers one random region of a random layout: the model
 // drops a driver placed outside it unless busy, and one freed outside it.
 // rated: also rates random drivers of the fleet (known, in the region or
-// not) and searches by match cost.
+// not) and searches by match cost; skipping: through batched matching's
+// query, skipping the excluded drivers.
 function expectLinearScanPicks(
 	seed: number,
 	offGrid: OffGrid,
 	regions = false,
 	rated = false,
+	skipping = false,
 ): void {
 	const random = createRandom(seed);
 	for (let run = 0; run < 1000; run++) {
@@ -572,9 +633,13 @@ function expectLinearScanPicks(
 				const excluded = new Set(
 					[...model.cells.keys()].filter(() => random.int(0, 9) === 0),
 				);
-				const nearest = rated
-					? leastMatchCostIdle(index, pickup, excluded)
-					: nearestIdle(index, pickup, excluded);
+				const nearest = !rated
+					? nearestIdle(index, pickup, excluded)
+					: skipping
+						? leastMatchCostIdleSkipping(index, pickup, (driverId) =>
+								excluded.has(driverId),
+							)?.driverId
+						: leastMatchCostIdle(index, pickup, excluded);
 				found.push(nearest);
 				expected.push(linearScan(model, pickup, excluded));
 				if (nearest !== undefined && !model.busy.has(nearest)) {

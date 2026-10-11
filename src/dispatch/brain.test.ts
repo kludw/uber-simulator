@@ -2069,6 +2069,112 @@ describe("decideDispatch ratings (greedy)", () => {
 	});
 });
 
+// ADR 0057: batched matching takes the least total match cost. Trips'
+// pickup is (1, 2).
+describe("decideDispatch ratings (batched)", () => {
+	const batched: Matching = { type: "batched", windowTicks: 1 };
+
+	test("batched offers a trip to a driver rated one star better 9 cells farther", () => {
+		const { outputs } = run(
+			[
+				requestTrip(t1, 1),
+				wentOnline(i1, cell(1, 3)),
+				wentOnline(i2, cell(9, 4)),
+				rated(d1, 4),
+				rated(d2, 5),
+				ticked(2),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d2,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d2 },
+		]);
+	});
+
+	// t-2 may only take d-01, so t-1 goes to d-02 at 18 cells + 40 (1 star):
+	// a pair beyond today's bound on a batch's distances, still a pair.
+	test("batched prefers more pairs over less total match cost with rated drivers", () => {
+		const { outputs } = run(
+			[
+				requestTripAt(t2, cell(0, 1)),
+				wentOnline(i2, cell(9, 9)),
+				ticked(1),
+				declined(t2, d2, cell(9, 9)),
+				requestTripAt(t1, cell(0, 0)),
+				wentOnline(i1, cell(0, 0)),
+				rated(d2, 1),
+				ticked(2),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t2,
+				driverId: d1,
+				pickup: cell(0, 1),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t2, driverId: d1 },
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d2,
+				pickup: cell(0, 0),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(2), tripId: t1, driverId: d2 },
+		]);
+	});
+
+	// More trips than idle drivers (the dense path): t-2 and t-3 have both
+	// drivers excluded, so only t-1 can be matched, to either driver. d-01 is
+	// 7 cells from it at 4 stars (17), d-02 10 at 5 stars (10).
+	test("with more trips than idle drivers, batched offers a trip to the better-rated driver", () => {
+		const t3 = TripId.parse("t-3");
+		const { outputs } = run(
+			[
+				requestTripAt(t2, cell(9, 9)),
+				requestTripAt(t3, cell(9, 8)),
+				wentOnline(i1, cell(1, 9)),
+				wentOnline(i2, cell(9, 4)),
+				rated(d1, 4),
+				rated(d2, 5),
+				// Least total: t-2 to d-01 (8), t-3 to d-02 (4); then swapped.
+				ticked(1),
+				declined(t2, d1, cell(1, 9)),
+				declined(t3, d2, cell(9, 4)),
+				ticked(2),
+				declined(t2, d2, cell(9, 4)),
+				declined(t3, d1, cell(1, 9)),
+				requestTrip(t1, 3),
+				ticked(3),
+			],
+			batched,
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "offer",
+				tripId: t1,
+				driverId: d2,
+				pickup: cell(1, 2),
+				dropoff: cell(7, 8),
+			},
+			{ type: "trip.offered", tick: tick(3), tripId: t1, driverId: d2 },
+		]);
+	});
+});
+
 // ADR 0054: a 150 x 100 grid is 3 x 2 surge zones of 50 x 50 cells, zone 0
 // top left, zone 4 bottom middle.
 describe("decideDispatch pricing", () => {
