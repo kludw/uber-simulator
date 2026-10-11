@@ -659,10 +659,7 @@ function expectLinearPartnerPicks(seed: number): void {
 				}
 				markJoinable(index, driverId, true);
 				model.joinable.add(driverId);
-				extra.set(
-					driverId,
-					random.int(0, 3) === 0 ? null : random.int(0, 10),
-				);
+				extra.set(driverId, random.int(0, 3) === 0 ? null : random.int(0, 10));
 			} else if (action === 6 && model.joinable.has(driverId)) {
 				markJoinable(index, driverId, false);
 				model.joinable.delete(driverId);

@@ -232,21 +232,6 @@ export function markFree(idle: IdleDrivers, driverId: DriverId): void {
 	} else forget(drivers, driver);
 }
 
-export function isBusy(idle: IdleDrivers, driverId: DriverId): boolean {
-	return idle[internals].byId.get(driverId)?.busy === true;
-}
-
-// A busy driver's last reported cell while it is online (a partner's driver,
-// ADR 0056); undefined when offline (a busy record is kept until freed).
-export function busyDriverCell(
-	idle: IdleDrivers,
-	driverId: DriverId,
-): Cell | undefined {
-	const driver = idle[internals].byId.get(driverId);
-	if (driver === undefined || !driver.busy || !driver.online) return undefined;
-	return cellAt(driver.x, driver.y);
-}
-
 function forget(drivers: Drivers, driver: Driver): void {
 	drivers.byIndex[driver.index] = undefined;
 	drivers.byId.delete(driver.driverId);
@@ -507,8 +492,7 @@ export function bestPartner(
 	const drivers = idle[internals];
 	const size = drivers.search.cellsPerBucket;
 	// As search: the ring bound holds for in-grid pickups only.
-	const exact =
-		pickup.x < drivers.grid.width && pickup.y < drivers.grid.height;
+	const exact = pickup.x < drivers.grid.width && pickup.y < drivers.grid.height;
 	const column = Math.min(Math.floor(pickup.x / size), drivers.columns - 1);
 	const row = Math.min(Math.floor(pickup.y / size), drivers.rows - 1);
 	const lastRing = Math.max(
@@ -528,9 +512,8 @@ export function bestPartner(
 			const step = edgeRow ? 1 : 2 * ring;
 			for (let x = column - ring; x <= column + ring; x += step) {
 				if (x < 0 || x >= drivers.columns) continue;
-				for (const driver of drivers.partnerBuckets[
-					y * drivers.columns + x
-				] ?? []) {
+				for (const driver of drivers.partnerBuckets[y * drivers.columns + x] ??
+					[]) {
 					if (distanceToCoordinates(pickup, driver.x, driver.y) > within) {
 						continue;
 					}
