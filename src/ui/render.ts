@@ -7,6 +7,7 @@ import {
 	emptyView,
 	fleetSizeOf,
 	forEachDriver,
+	holdsTwoTrips,
 	type View,
 } from "./view.ts";
 
@@ -31,6 +32,9 @@ export const activeTripColor = "rgba(88, 166, 255, 0.35)";
 // Surging zones (ADR 0054): a hue no driver state or rider uses, so a tint
 // over dots or heatmap tiles stays readable as surge.
 export const surgeColor = "#d2a8ff";
+// Around a driver holding two trips (ADR 0056), outside its state's dot.
+export const pooledRingColor = "#ffffff";
+const pooledRingRadius = 5.5;
 const driverRadius = 3;
 const waitingRiderSize = 5;
 
@@ -335,12 +339,18 @@ function drawDots(
 		);
 	}
 
-	forEachDriver(view, (_index, driver) => {
+	context.strokeStyle = pooledRingColor;
+	context.lineWidth = 1.5;
+	forEachDriver(view, (index, driver) => {
 		const position = toPixel(driverPosition(driver, view.tick, fraction));
 		context.fillStyle = driverColors[driver.state];
 		context.beginPath();
 		context.arc(position.x, position.y, driverRadius, 0, 2 * Math.PI);
 		context.fill();
+		if (!holdsTwoTrips(view, index)) return;
+		context.beginPath();
+		context.arc(position.x, position.y, pooledRingRadius, 0, 2 * Math.PI);
+		context.stroke();
 	});
 }
 

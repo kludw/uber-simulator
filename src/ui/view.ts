@@ -45,6 +45,12 @@ type Drivers = {
 	previousYs: Uint16Array;
 	movedAt: Uint32Array;
 	states: Uint8Array;
+	// Pooling (ADR 0056), by the trip events seen: trips the driver holds
+	// (0-2), riders aboard, and 1 from a join until it holds no trip, so a
+	// trip completed then shared its driver. All 0 while idle or not shown.
+	trips: Uint8Array;
+	aboard: Uint8Array;
+	sharing: Uint8Array;
 };
 
 // One per trip from request until pickup or cancel. fare: the trip's, or its
@@ -54,6 +60,7 @@ export type WaitingRider = {
 	dropoff: Cell;
 	requestedAt: Tick;
 	fare: Fare;
+	pooled?: true;
 };
 
 // One per trip from match until completion or cancel.
@@ -86,6 +93,10 @@ export type View = {
 	ridersDeclined: number;
 	// Integer cents: fares of the trips seen from request to completion.
 	revenue: number;
+	// Pooling (ADR 0056): pooled trips seen requested; completed trips that
+	// had another trip on their driver while it was shown.
+	tripsPooled: number;
+	tripsShared: number;
 };
 
 export function emptyView(): View {
@@ -108,6 +119,8 @@ export function emptyView(): View {
 		zonesPriced: new Map(),
 		ridersDeclined: 0,
 		revenue: 0,
+		tripsPooled: 0,
+		tripsShared: 0,
 	};
 }
 
@@ -119,6 +132,9 @@ function driversOfFleet(fleetSize: number): Drivers {
 		previousYs: new Uint16Array(fleetSize),
 		movedAt: new Uint32Array(fleetSize),
 		states: new Uint8Array(fleetSize),
+		trips: new Uint8Array(fleetSize),
+		aboard: new Uint8Array(fleetSize),
+		sharing: new Uint8Array(fleetSize),
 	};
 }
 
@@ -148,6 +164,11 @@ export function forEachDriver(
 	}
 }
 
+// A pool: the shown driver holds two trips (ADR 0056).
+export function holdsTwoTrips(view: View, index: DriverIndex): boolean {
+	return view.drivers.trips[index] === 2;
+}
+
 export function applyEvent(view: View, event: SimEvent): void {
 	startOverOnNewRun(view, event);
 	switch (event.type) {
@@ -166,11 +187,13 @@ export function applyEvent(view: View, event: SimEvent): void {
 				dropoff: event.dropoff,
 				requestedAt: event.tick,
 				fare: event.fare ?? fareOf(event, baseSurge),
+				...(event.pooled && { pooled: true }),
 			});
+			if (event.pooled) view.tripsPooled++;
 			return;
 		case "trip.matched": {
-			setDriverState(view, event.driverId, "en_route");
 			const rider = view.waitingRiders.get(event.tripId);
+			applyMatch(view, event.driverId, rider?.pooled === true);
 			if (rider === undefined) return;
 			view.activeTrips.set(event.tripId, {
 				driverId: event.driverId,
@@ -184,7 +207,7 @@ export function applyEvent(view: View, event: SimEvent): void {
 			applyArrival(view, event, "at_pickup");
 			return;
 		case "trip.picked_up": {
-			setDriverState(view, event.driverId, "on_trip");
+			applyPickup(view, event.driverId);
 			const rider = view.waitingRiders.get(event.tripId);
 			if (rider === undefined) return;
 			view.waitingRiders.delete(event.tripId);
@@ -201,16 +224,22 @@ export function applyEvent(view: View, event: SimEvent): void {
 			view.revenue += view.activeTrips.get(event.tripId)?.fare ?? 0;
 			view.activeTrips.delete(event.tripId);
 			view.tripsCompleted++;
-			setDriverState(view, event.driverId, "idle");
+			endTrip(view, event.driverId, "completed");
 			return;
-		case "trip.cancelled":
+		case "trip.cancelled": {
+			// A pooled trip cancelled before its match names the driver of its
+			// pending offer: a join's leaves the driver's trip alone.
+			const offerOnly =
+				view.waitingRiders.get(event.tripId)?.pooled === true &&
+				!view.activeTrips.has(event.tripId);
 			view.waitingRiders.delete(event.tripId);
 			view.activeTrips.delete(event.tripId);
 			view.tripsCancelled++;
-			if (event.driverId !== null) {
-				setDriverState(view, event.driverId, "idle");
+			if (event.driverId !== null && !offerOnly) {
+				endTrip(view, event.driverId, "cancelled");
 			}
 			return;
+		}
 		// Offline drivers leave the view (ADR 0032): they emit nothing until
 		// back online, so a UI joining mid-run could not count them anyway.
 		// Later events naming one (cancel, decline, expiry) find no driver.
@@ -267,14 +296,62 @@ function shownIndexOf(view: View, driverId: DriverId): number | null {
 	return index;
 }
 
-function setDriverState(
+// A pooled trip matched to a driver holding one trip joins it (ADR 0056):
+// a driver waiting at a stop stays there, one on its way heads to a pickup
+// next (pickups come first in a pool's route). Any other match is the
+// driver's only trip, so a lost trip end can't leave a stale one.
+function applyMatch(view: View, driverId: DriverId, pooled: boolean): void {
+	const index = shownIndexOf(view, driverId);
+	if (index === null) return;
+	const drivers = view.drivers;
+	if (pooled && drivers.trips[index] === 1) {
+		drivers.trips[index] = 2;
+		drivers.sharing[index] = 1;
+		if (stateAt(view, index) === "on_trip") setState(view, index, "en_route");
+		return;
+	}
+	setState(view, index, "en_route");
+	drivers.trips[index] = 1;
+	drivers.aboard[index] = 0;
+	drivers.sharing[index] = 0;
+}
+
+function applyPickup(view: View, driverId: DriverId): void {
+	const index = shownIndexOf(view, driverId);
+	if (index === null) return;
+	view.drivers.aboard[index] = (view.drivers.aboard[index] ?? 0) + 1;
+	setState(view, index, movingState(view, index));
+}
+
+// The driver of a pool goes on with its other trip; any other driver is idle
+// (also when the view missed the trip's match: the UI joined mid-run).
+function endTrip(
 	view: View,
 	driverId: DriverId,
-	state: DriverState,
+	end: "completed" | "cancelled",
 ): void {
 	const index = shownIndexOf(view, driverId);
 	if (index === null) return;
-	setState(view, index, state);
+	const drivers = view.drivers;
+	if (end === "completed" && drivers.sharing[index] === 1) view.tripsShared++;
+	if (drivers.trips[index] !== 2) {
+		setState(view, index, "idle");
+		return;
+	}
+	drivers.trips[index] = 1;
+	// Only a picked-up trip completes; a cancelled one was never aboard.
+	if (end === "completed") {
+		drivers.aboard[index] = Math.max(0, (drivers.aboard[index] ?? 0) - 1);
+	}
+	setState(view, index, movingState(view, index));
+}
+
+// A driver between stops: heading to a pickup while a trip it holds has its
+// rider still waiting, else on trip to a dropoff. Without the match seen
+// (the UI joined mid-run), a pickup means on trip, as before pooling.
+function movingState(view: View, index: number): DriverState {
+	const { trips, aboard } = view.drivers;
+	return (trips[index] ?? 0) > (aboard[index] ?? 0) ? "en_route" : "on_trip";
 }
 
 // A known idle driver's arrival is late: over NATS it can follow dispatch's
@@ -303,6 +380,10 @@ function setState(view: View, index: number, state: DriverState | null): void {
 	if (state !== null) view.driversPerState[state]++;
 	view.drivers.states[index] =
 		state === null ? notShown : driverStates.indexOf(state) + 1;
+	if (state !== null && state !== "idle") return;
+	view.drivers.trips[index] = 0;
+	view.drivers.aboard[index] = 0;
+	view.drivers.sharing[index] = 0;
 }
 
 // A message of another fleet size is a new run (or a replay): nothing of the
