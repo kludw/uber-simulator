@@ -13,7 +13,8 @@ import { forEachMove, forEachWentOnline } from "../shared/messages.ts";
 
 // The checker's own trip model, rebuilt from trip.* events alone: importing
 // dispatch's Trip would make the check agree with the code it checks.
-type TripView = { pickup: Cell; dropoff: Cell } & (
+// pooled: from trip.requested (ADR 0056).
+type TripView = { pickup: Cell; dropoff: Cell; pooled: boolean } & (
 	| { state: "requested"; offeredTo: DriverId | null }
 	| { state: "matched" | "picked_up"; driverId: DriverId }
 	| { state: "completed" | "cancelled" }
@@ -49,6 +50,14 @@ export type Violation =
 			tick: Tick;
 			driverId: DriverId;
 			activeTripId: TripId;
+			tripId: TripId;
+	  }
+	// ADR 0056: a third trip; activeTripIds: the driver's trips before it.
+	| {
+			type: "driver_over_capacity";
+			tick: Tick;
+			driverId: DriverId;
+			activeTripIds: TripId[];
 			tripId: TripId;
 	  }
 	// cell: the driver's last reported cell, null if it never reported one.
@@ -90,8 +99,8 @@ export type Violation =
 type LogState = {
 	trips: Map<TripId, TripView>;
 	offeredDrivers: Map<TripId, Set<DriverId>>;
-	// Driver -> its matched or picked-up trip.
-	activeTrips: Map<DriverId, TripId>;
+	// Driver -> its matched or picked-up trips, in match order.
+	activeTrips: Map<DriverId, TripId[]>;
 	// Last reported position and the tick it was reported at.
 	driverPositions: Map<DriverId, { cell: Cell; tick: Tick }>;
 	// From driver.went_offline until drivers.went_online; no trip event changes it.
@@ -150,7 +159,7 @@ function observe(
 			});
 			break;
 		case "driver.went_offline": {
-			const tripId = log.activeTrips.get(message.driverId);
+			const tripId = log.activeTrips.get(message.driverId)?.[0];
 			if (tripId !== undefined) {
 				violations.push({
 					type: "driver_went_offline_with_active_trip",
@@ -322,27 +331,56 @@ function checkTripEvent(log: LogState, event: TripEvent): Violation[] {
 				driverId: next.driverId,
 			});
 		}
-		const activeTripId = log.activeTrips.get(next.driverId);
-		if (activeTripId !== undefined) {
-			violations.push({
-				type: "driver_has_two_active_trips",
-				tick: event.tick,
-				driverId: next.driverId,
-				activeTripId,
-				tripId: event.tripId,
-			});
-		}
-		log.activeTrips.set(next.driverId, event.tripId);
+		const activeTripIds = log.activeTrips.get(next.driverId) ?? [];
+		violations.push(...checkCapacity(log, event, next, activeTripIds));
+		log.activeTrips.set(next.driverId, [...activeTripIds, event.tripId]);
 	}
 	const ended = next.state === "completed" || next.state === "cancelled";
-	if (
-		ended &&
-		(trip?.state === "matched" || trip?.state === "picked_up") &&
-		log.activeTrips.get(trip.driverId) === event.tripId
-	) {
-		log.activeTrips.delete(trip.driverId);
+	if (ended && (trip?.state === "matched" || trip?.state === "picked_up")) {
+		endActiveTrip(log, trip.driverId, event.tripId);
 	}
 	return violations;
+}
+
+// At most two trips, two only when both are pooled (ADR 0056).
+function checkCapacity(
+	log: LogState,
+	event: TripEvent,
+	next: Extract<TripView, { driverId: DriverId }>,
+	activeTripIds: readonly TripId[],
+): Violation[] {
+	const [activeTripId] = activeTripIds;
+	if (activeTripId === undefined) return [];
+	if (activeTripIds.length >= 2) {
+		return [
+			{
+				type: "driver_over_capacity",
+				tick: event.tick,
+				driverId: next.driverId,
+				activeTripIds: [...activeTripIds],
+				tripId: event.tripId,
+			},
+		];
+	}
+	const pooledPair = next.pooled && log.trips.get(activeTripId)?.pooled;
+	if (pooledPair) return [];
+	return [
+		{
+			type: "driver_has_two_active_trips",
+			tick: event.tick,
+			driverId: next.driverId,
+			activeTripId,
+			tripId: event.tripId,
+		},
+	];
+}
+
+function endActiveTrip(log: LogState, driverId: DriverId, tripId: TripId) {
+	const left = (log.activeTrips.get(driverId) ?? []).filter(
+		(activeTripId) => activeTripId !== tripId,
+	);
+	if (left.length === 0) log.activeTrips.delete(driverId);
+	else log.activeTrips.set(driverId, left);
 }
 
 // The cell a trip event requires its driver to be at, if any.
@@ -375,10 +413,11 @@ function transition(
 	if (event.type === "trip.requested") {
 		if (trip !== undefined) return null;
 		const { pickup, dropoff } = event;
-		return { pickup, dropoff, state: "requested", offeredTo: null };
+		const pooled = event.pooled === true;
+		return { pickup, dropoff, pooled, state: "requested", offeredTo: null };
 	}
 	if (trip === undefined) return null;
-	const { pickup, dropoff } = trip;
+	const { pickup, dropoff, pooled } = trip;
 	switch (event.type) {
 		case "trip.offered":
 			if (trip.state !== "requested" || trip.offeredTo !== null) return null;
@@ -389,7 +428,13 @@ function transition(
 			return { ...trip, offeredTo: null };
 		case "trip.matched":
 			if (!isOfferedTo(trip, event.driverId)) return null;
-			return { pickup, dropoff, state: "matched", driverId: event.driverId };
+			return {
+				pickup,
+				dropoff,
+				pooled,
+				state: "matched",
+				driverId: event.driverId,
+			};
 		case "trip.picked_up":
 			if (trip.state !== "matched" || trip.driverId !== event.driverId) {
 				return null;
@@ -399,10 +444,10 @@ function transition(
 			if (trip.state !== "picked_up" || trip.driverId !== event.driverId) {
 				return null;
 			}
-			return { pickup, dropoff, state: "completed" };
+			return { pickup, dropoff, pooled, state: "completed" };
 		case "trip.cancelled":
 			if (trip.state !== "requested" && trip.state !== "matched") return null;
-			return { pickup, dropoff, state: "cancelled" };
+			return { pickup, dropoff, pooled, state: "cancelled" };
 		default: {
 			const unhandled: never = event;
 			throw new Error(`unhandled trip event: ${unhandled}`);
