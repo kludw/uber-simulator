@@ -77,6 +77,16 @@ const trip: SimEvent[] = [
 	{ type: "trip.completed", tick: tick(10), tripId: t1, driverId: d1 },
 ];
 
+// t1's rider rates d1 on completion (ADR 0057).
+const tripRated: SimEvent = {
+	type: "rider.rated_driver",
+	tick: tick(10),
+	riderId: r1,
+	tripId: t1,
+	driverId: d1,
+	stars: Stars.parse(4),
+};
+
 function viewOf(events: SimEvent[]): View {
 	const view = emptyView();
 	for (const event of events) applyEvent(view, event);
@@ -398,6 +408,7 @@ describe("fleet size", () => {
 		];
 		const view = viewOf([
 			...trip,
+			tripRated,
 			online(i2, 3, cell(5, 5)),
 			requested(TripId.parse("t-2"), 9, pickup, dropoff),
 			...newRun,
@@ -411,6 +422,7 @@ describe("fleet size", () => {
 describe("new run", () => {
 	const oldRun: SimEvent[] = [
 		...trip,
+		tripRated,
 		{ type: "clock.ticked", tick: tick(10) },
 		online(i2, 3, cell(5, 5)),
 		requested(TripId.parse("t-2"), 9, pickup, dropoff),
