@@ -339,8 +339,11 @@ function endTrip(
 		return;
 	}
 	drivers.trips[index] = 1;
-	// Only a picked-up trip completes; a cancelled one was never aboard.
-	if (end === "completed") {
+	// Only a picked-up trip completes; a cancelled one was never aboard, so a
+	// driver waiting at a dropoff waits at the other trip's and stays.
+	if (end === "cancelled") {
+		if (stateAt(view, index) === "at_dropoff") return;
+	} else {
 		drivers.aboard[index] = Math.max(0, (drivers.aboard[index] ?? 0) - 1);
 	}
 	setState(view, index, movingState(view, index));

@@ -805,6 +805,20 @@ describe("pooling", () => {
 		]).toEqual(["at_dropoff", "en_route"]);
 	});
 
+	test("a trip that joined a driver waiting at its dropoff, cancelled, leaves the driver at the dropoff", () => {
+		const waiting = [
+			online(i1, 0, cell(0, 0)),
+			pooledRequest(t1, 1, pickup, dropoff),
+			matched(t1, d1, 2),
+			pickedUp(t1, 5),
+			atDropoff(t1, 10, dropoff),
+			pooledRequest(t2, 10, pickup2, dropoff2),
+			matched(t2, d1, 10),
+			cancelled(t2, d1, 11),
+		];
+		expect(stateAfter(waiting)).toBe("at_dropoff");
+	});
+
 	test("a pool partner cancelled before pickup leaves its driver en route with the other", () => {
 		const view = viewOf([...joined, cancelled(t1, d1, 5)]);
 		expect([driversOf(view).get(i1)?.state, holdsTwoTrips(view, i1)]).toEqual([
