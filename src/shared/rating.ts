@@ -23,13 +23,19 @@ export function starsOf(
 }
 
 // 2 stars per 100% of ride ticks over direct distance (pooling's 50% limit
-// costs at most 1). A trip with pickup and dropoff on one cell has no
-// direct distance to detour from.
+// costs at most 1). Riders redraw a dropoff on their pickup, so a direct
+// distance of 0 is a caller bug. Clamped at 0: dispatch stamps pickup and
+// completion with the last tick it saw, and over NATS a driver can get its
+// trip.picked_up before a tick dispatch already saw (no order across
+// publishers), so a ride can measure a tick short of its direct distance;
+// that is not a better-than-direct ride.
 function detourPenaltyOf(ride: {
 	rideTicks: number;
 	directDistance: number;
 }): number {
-	if (ride.directDistance === 0) return 0;
+	if (ride.directDistance <= 0) {
+		throw new Error("direct distance must be positive");
+	}
 	return 2 * Math.max(0, ride.rideTicks / ride.directDistance - 1);
 }
 

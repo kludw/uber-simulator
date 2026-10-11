@@ -43,6 +43,11 @@ describe("starsOf", () => {
 		expect(starsOf(4, detoured, noNoise)).toBe(Stars.parse(3));
 	});
 
+	test("a ride measured shorter than its direct distance earns nothing", () => {
+		const short = { waitTicks: 0, rideTicks: 3, directDistance: 5 };
+		expect(starsOf(4.4, short, noNoise)).toBe(Stars.parse(4));
+	});
+
 	test("noise moves stars by up to a star either way", () => {
 		expect([
 			starsOf(3, ride(0), noiseOf(-1)),
@@ -65,9 +70,12 @@ describe("starsOf", () => {
 		expect(starsOf(4.9, ride(0), noiseOf(0.98))).toBe(Stars.parse(5));
 	});
 
-	test("a trip with pickup and dropoff on one cell has no detour", () => {
+	// Riders redraw a dropoff on their pickup: no trip has direct distance 0.
+	test("a ride without direct distance is a bug", () => {
 		const inPlace = { waitTicks: 0, rideTicks: 2, directDistance: 0 };
-		expect(starsOf(4, inPlace, noNoise)).toBe(Stars.parse(4));
+		expect(() => starsOf(4, inPlace, noNoise)).toThrow(
+			"direct distance must be positive",
+		);
 	});
 });
 
