@@ -187,7 +187,7 @@ export function applyEvent(view: View, event: SimEvent): void {
 				dropoff: event.dropoff,
 				requestedAt: event.tick,
 				fare: event.fare ?? fareOf(event, baseSurge),
-				...(event.pooled && { pooled: true }),
+				pooled: event.pooled,
 			});
 			if (event.pooled) view.tripsPooled++;
 			return;

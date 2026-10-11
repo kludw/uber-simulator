@@ -106,6 +106,22 @@ Checked 2026-10-08 on branch `297-surge-ui`, `bun run dev` with the demo's setti
 
   ![10k drivers, surge on: dots with the airport zone tinted and labeled](images/ui-surge-10k.jpg)
 
+## Pooling ([#351](https://github.com/kludw/uber-simulator/issues/351))
+
+[ADR 0056](adr/0056-pool-two-riders-going-the-same-way.md)'s UI: the view keeps, by driver index in typed arrays like the rest of a driver (ADR 0053), the trips it holds (0-2), its riders aboard, and whether a trip joined it since it last held none; updated in place per event, nothing rebuilt per tick. A pooled trip matched to a driver holding one trip joins it: a driver waiting at a stop stays there, one on its way heads to the new pickup (`en_route`). Between stops a driver is `en_route` while a rider it holds still waits (pickups come first in a pool's route), else `on_trip`; when one of two trips ends it goes on with the other, idle only after its last. Any other match makes the trip the driver's only one, so with pooling off driver states follow the same events as before. A pooled trip cancelled while only offered to a busy driver (a join's offer) leaves that driver's trip alone. Dots mode draws a white ring around each driver holding two trips; both trips' lines show. Once a pooled `trip.requested` arrives, the panel adds trips pooled, trips shared (completed trips whose driver took a join while they were held; marked with the ring) and revenue (pooled fares, 25% off, as the summary counts them); with surge on too, revenue shows once, last. Heatmap unchanged. Like revenue, the counts cover what the page saw: a page watching from the start agrees with `bun run sim`'s summary (test: `src/ui/view.test.ts`, and on the README's spec seed 42, pooling on: 278 pooled, 483 completed, 176 shared, $3,830.43 in both); a page joining mid-run shows less.
+
+Checked 2026-10-11 on branch `351-show-pooling-in-the-ui`, page in the built-in browser pane at 800 × 600:
+
+- `POOLING=on bun run demo` (100k, heatmap): panel rows at tick 59.
+
+  ![100k drivers, pooling on: heatmap with trips pooled, trips shared and revenue in the panel](images/ui-pooling-100k.jpg)
+
+- `POOLING=on DRIVERS_PER_SHARD=500 REQUESTS_PER_MINUTE=100 SHIFTS=off SPEED=4 bun run demo` (1,000 drivers, dots): at tick 286, ringed drivers carrying or heading to two riders.
+
+  ![1,000 drivers, pooling on: dots with ringed pooled drivers](images/ui-pooling-1k.jpg)
+
+Pooling off: the panel's rows every 60 ticks of in-process runs of the README's spec and heavy seeds (seed 42, 3,600 ticks) are identical to master's. Cost: applying a 100k run's first 120 ticks of events (101,164) takes 182-199 ms on master and on the branch alike (two runs each, median of 7 rounds), so the 400k decode + apply measured above stands; the heatmap and its frame are unchanged.
+
 ## Decision
 
 [ADR 0053](adr/0053-scale-the-ui-in-the-browser.md): keep the direct NATS subscription; the view keeps drivers by driver index in typed arrays and updates in place, so applying a message costs its own size; above 10,000 drivers (chosen: dots measured at 10k and 100k only) the canvas draws a tile heatmap once per tick instead of a dot per driver.
