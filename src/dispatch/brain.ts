@@ -407,7 +407,7 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 // The rider's quote is the trip's price, fixed from here (ADR 0054).
 function price(request: RequestTrip): { surge: Surge; fare: Fare } {
 	const surge = request.surge ?? baseSurge;
-	return { surge, fare: fareOf(request.pickup, request.dropoff, surge) };
+	return { surge, fare: fareOf(request, surge) };
 }
 
 function onCancelTrip(state: DispatchState, command: CancelTrip): Decision {

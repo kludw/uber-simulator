@@ -80,15 +80,15 @@ export function surgeOf(unmatched: number, idle: number): Surge {
 export const Fare = z.int().positive().brand<"Fare">();
 export type Fare = z.infer<typeof Fare>;
 
+// Takes the trip's message (request_trip, trip.requested), so its pooled
+// flag comes with it.
 export function fareOf(
-	pickup: Cell,
-	dropoff: Cell,
+	trip: { pickup: Cell; dropoff: Cell; pooled?: true },
 	surge: Surge,
-	pooled = false,
 ): Fare {
-	const discount = pooled ? 0.75 : 1;
+	const discount = trip.pooled ? 0.75 : 1;
 	return Math.round(
-		(250 + 2 * distance(pickup, dropoff)) * surge * discount,
+		(250 + 2 * distance(trip.pickup, trip.dropoff)) * surge * discount,
 	) as Fare;
 }
 
