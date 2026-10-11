@@ -8,6 +8,7 @@ import type {
 	RequestTripRejected,
 	RiderDeclinedSurge,
 	RiderId,
+	RiderRatedDriver,
 	Tick,
 	TripCancelled,
 	TripCompleted,
@@ -16,6 +17,7 @@ import type {
 	ZonesPriced,
 } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
+import { driverQuality, starsOf } from "../shared/rating.ts";
 import {
 	oneRegion,
 	type Region,
@@ -39,6 +41,14 @@ type Rider =
 	| { state: "cancelling"; id: RiderId; tripId: TripId }
 	| { state: "riding"; id: RiderId; tripId: TripId };
 
+// What a rider keeps to rate its driver (ADR 0057). pickedUpAt: null until
+// its trip.picked_up.
+type RideToRate = {
+	requestedAt: Tick;
+	directDistance: number;
+	pickedUpAt: Tick | null;
+};
+
 // spawned: riders spawned so far; numbers both rider and trip IDs.
 // riders: by trip ID (how inputs address them), updated in place (ADR 0033,
 // 0036). Kept in spawn order, so patience cancels sort by rider ID themselves.
@@ -55,6 +65,9 @@ export type RidersState = {
 	prices: Map<Region, Map<Zone, Surge>>;
 	// Whether riders opt in to pooling (ADR 0056).
 	pooling: boolean;
+	// Ratings on: each rider's ride to rate, by trip ID, updated in place;
+	// null off, so riders keep nothing more and draw nothing (ADR 0057).
+	ratings: Map<TripId, RideToRate> | null;
 };
 
 export type RidersInput =
@@ -66,7 +79,12 @@ export type RidersInput =
 	| RequestTripRejected
 	| ZonesPriced;
 
-type RidersOutput = RequestTrip | CancelTrip | RiderDeclinedSurge | Rejected;
+type RidersOutput =
+	| RequestTrip
+	| CancelTrip
+	| RiderDeclinedSurge
+	| RiderRatedDriver
+	| Rejected;
 
 type Rejected = InputRejected<
 	| TripPickedUp
@@ -80,7 +98,7 @@ type Rejected = InputRejected<
 type Decision = { state: RidersState; outputs: RidersOutput[] };
 
 // Missing demand = uniform; missing regions = one region; missing surge or
-// pooling = off.
+// pooling or ratings = off.
 export function startRiders(config: {
 	grid: Grid;
 	requestsPerMinute: number;
@@ -88,6 +106,7 @@ export function startRiders(config: {
 	regions?: RegionLayout;
 	surge?: boolean;
 	pooling?: boolean;
+	ratings?: boolean;
 }): RidersState {
 	const demand = config.demand ?? { type: "uniform" };
 	assertValidDemand(demand, config.grid);
@@ -101,6 +120,7 @@ export function startRiders(config: {
 		surge: config.surge ?? false,
 		prices: new Map(),
 		pooling: config.pooling ?? false,
+		ratings: config.ratings ? new Map() : null,
 	};
 }
 
@@ -115,7 +135,7 @@ export function decideRiders(
 		case "trip.picked_up":
 			return onPickedUp(state, input);
 		case "trip.completed":
-			return onCompleted(state, input);
+			return onCompleted(state, input, random);
 		case "trip.cancelled":
 			return onCancelled(state, input);
 		case "cancel_trip_rejected":
@@ -137,6 +157,8 @@ function onPickedUp(state: RidersState, pickedUp: TripPickedUp): Decision {
 	if (addressed.state === "riding") {
 		return reject(state, pickedUp, "rider_already_riding");
 	}
+	const ride = state.ratings?.get(addressed.tripId);
+	if (ride !== undefined) ride.pickedUpAt = pickedUp.tick;
 	// A cancelling rider rides too: pickup reached dispatch before the cancel.
 	state.riders.set(addressed.tripId, {
 		state: "riding",
@@ -154,13 +176,39 @@ function reject(
 	return { state, outputs: [{ type: "input_rejected", reason, input }] };
 }
 
-function onCompleted(state: RidersState, completed: TripCompleted): Decision {
+function onCompleted(
+	state: RidersState,
+	completed: TripCompleted,
+	random: Random,
+): Decision {
 	const addressed = state.riders.get(completed.tripId);
 	if (addressed === undefined) return { state, outputs: [] };
 	if (addressed.state !== "riding") {
 		return reject(state, completed, "rider_not_riding");
 	}
-	return removeRider(state, addressed.tripId);
+	const ride = state.ratings?.get(addressed.tripId);
+	removeRider(state, addressed.tripId);
+	if (state.ratings === null) return { state, outputs: [] };
+	if (ride?.pickedUpAt == null) {
+		throw new Error(`riding rider ${addressed.id} has no ride to rate`);
+	}
+	const rated: RiderRatedDriver = {
+		type: "rider.rated_driver",
+		tick: completed.tick,
+		riderId: addressed.id,
+		tripId: addressed.tripId,
+		driverId: completed.driverId,
+		stars: starsOf(
+			driverQuality(random, completed.driverId),
+			{
+				waitTicks: ride.pickedUpAt - ride.requestedAt,
+				rideTicks: completed.tick - ride.pickedUpAt,
+				directDistance: ride.directDistance,
+			},
+			random.child(`rating:${addressed.tripId}`),
+		),
+	};
+	return { state, outputs: [rated] };
 }
 
 function onCancelled(state: RidersState, cancelled: TripCancelled): Decision {
@@ -222,6 +270,7 @@ function onPriced(state: RidersState, priced: ZonesPriced): Decision {
 
 function removeRider(state: RidersState, tripId: TripId): Decision {
 	state.riders.delete(tripId);
+	state.ratings?.delete(tripId);
 	return { state, outputs: [] };
 }
 
@@ -302,6 +351,11 @@ function onTick(
 			}
 		}
 		state.riders.set(rider.tripId, rider);
+		state.ratings?.set(rider.tripId, {
+			requestedAt: input.tick,
+			directDistance: distance(pickup, dropoff),
+			pickedUpAt: null,
+		});
 		outputs.push({
 			type: "request_trip",
 			tick: input.tick,
