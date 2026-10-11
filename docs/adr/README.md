@@ -62,3 +62,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0056 | [Pool two riders going the same way](0056-pool-two-riders-going-the-same-way.md) | Accepted (joins before a nearer idle driver, the open pooled trip count and partner ties superseded by 0058) |
 | 0057 | [Weigh driver ratings into matching](0057-weigh-driver-ratings-into-matching.md) | Accepted |
 | 0058 | [Join a pool only when it beats the nearest idle driver](0058-join-a-pool-only-when-it-beats-the-nearest-idle-driver.md) | Accepted |
+| 0059 | [Drive on a network of rivers and bridges laid on the grid](0059-drive-on-a-network-of-rivers-and-bridges.md) | Accepted |
