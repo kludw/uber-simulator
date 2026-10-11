@@ -1,4 +1,4 @@
-// Ride pooling (ADR 0056): whether a pooled trip can join a partner's driver,
+// Ride pooling (ADR 0056, 0058): whether a pooled trip can join a partner's driver,
 // and the order of their dropoffs. Pure, shared by dispatch and drivers.
 import { type Cell, distance } from "./grid.ts";
 
@@ -76,3 +76,10 @@ function withinDetourLimit(ride: number, trip: PooledTrip): boolean {
 
 // The least patience: a joining rider never waits out its driver.
 const maxJoinEta = 120;
+
+// The greatest join ETA a pooled trip joins at (ADR 0058): no farther than
+// the nearest idle driver's pickup distance (undefined: none idle), and never
+// over the cap. Equal joins: a join saves a driver.
+export function joinReachOf(nearestIdleDistance: number | undefined): number {
+	return Math.min(maxJoinEta, nearestIdleDistance ?? maxJoinEta);
+}
