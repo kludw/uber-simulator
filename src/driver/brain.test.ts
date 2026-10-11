@@ -2445,3 +2445,148 @@ describe("decideDriverShard chasing surge", () => {
 		]);
 	});
 });
+
+// ADR 0056. d-1 starts at (0, 0) holding pooled trip t-1, (5, 5) to (8, 2).
+describe("decideDriverShard taking a second rider", () => {
+	function pooledOffer(tripId: TripId, pickup: Cell, dropoff: Cell): Offer {
+		return {
+			type: "offer",
+			tripId,
+			driverId: d1,
+			pickup,
+			dropoff,
+			pooled: true,
+		};
+	}
+	const firstOffer = pooledOffer(t1, cell(5, 5), cell(8, 2));
+
+	function holdingPooledTrip(random: Random) {
+		const { state } = startDriverShard(
+			{ grid, ...shard(i1, 1), tick: tick(0) },
+			random,
+		);
+		return decideDriverShard(state, firstOffer, random).state;
+	}
+
+	test("driver heading to a pooled trip's pickup accepts a pooled offer", () => {
+		const random = scriptedRandom([0, 0]);
+		const { outputs } = decideDriverShard(
+			holdingPooledTrip(random),
+			pooledOffer(t2, cell(6, 5), cell(9, 2)),
+			random,
+		);
+		expect(outputs).toEqual([
+			{
+				type: "offer_accepted",
+				tripId: t2,
+				driverId: d1,
+				region: Region.parse(0),
+			},
+		]);
+	});
+
+	const secondOffer = pooledOffer(t2, cell(6, 5), cell(9, 2));
+	const t3 = TripId.parse("t-3");
+	const declinedSecond = {
+		type: "offer_declined",
+		tripId: t2,
+		driverId: d1,
+		region: Region.parse(0),
+		idleAt: null,
+	};
+
+	test("driver holding a pooled trip declines an offer that is not pooled", () => {
+		const random = scriptedRandom([0, 0]);
+		const { pooled: _, ...notPooled } = secondOffer;
+		const { outputs } = decideDriverShard(
+			holdingPooledTrip(random),
+			notPooled,
+			random,
+		);
+		expect(outputs).toEqual([declinedSecond]);
+	});
+
+	test("driver holding a trip that is not pooled declines a pooled offer", () => {
+		const random = scriptedRandom([0, 0]);
+		const { state } = startDriverShard(
+			{ grid, ...shard(i1, 1), tick: tick(0) },
+			random,
+		);
+		const { pooled: _, ...notPooled } = firstOffer;
+		const holding = decideDriverShard(state, notPooled, random).state;
+		const { outputs } = decideDriverShard(holding, secondOffer, random);
+		expect(outputs).toEqual([declinedSecond]);
+	});
+
+	test("driver holding two pooled trips declines a third", () => {
+		const random = scriptedRandom([0, 0]);
+		const holdingTwo = decideDriverShard(
+			holdingPooledTrip(random),
+			secondOffer,
+			random,
+		).state;
+		const { outputs } = decideDriverShard(
+			holdingTwo,
+			pooledOffer(t3, cell(7, 5), cell(9, 3)),
+			random,
+		);
+		expect(outputs).toEqual([{ ...declinedSecond, tripId: t3 }]);
+	});
+
+	test("driver holding a pooled trip declines a pooled offer from another region", () => {
+		// 2x1: x 0-4 is region 0, x 5-9 region 1.
+		const random = scriptedRandom([0, 0]);
+		const { state } = startDriverShard(
+			{
+				grid,
+				...shard(i1, 1),
+				tick: tick(0),
+				regions: RegionLayout.parse("2x1"),
+			},
+			random,
+		);
+		const holding = decideDriverShard(
+			state,
+			pooledOffer(t1, cell(2, 2), cell(4, 4)),
+			random,
+		).state;
+		const { outputs } = decideDriverShard(holding, secondOffer, random);
+		expect(outputs).toEqual([{ ...declinedSecond, region: Region.parse(1) }]);
+	});
+
+	test("picky driver holding a pooled trip accepts a pooled offer beyond its max pickup distance, drawing nothing", () => {
+		// Max pickup distance 2; t-2's offer stream is not scripted, so a draw
+		// would throw.
+		const random = shiftRandom([0, 0], {
+			"preference:d-1": [2],
+			"offer:t-1:d-1": [0.5],
+		});
+		const { state } = startDriverShard(
+			{
+				grid,
+				...shard(i1, 1),
+				tick: tick(0),
+				preferences: {
+					type: "picky",
+					maxPickupDistance: { min: 2, max: 12 },
+					declineShare: 0.25,
+				},
+			},
+			random,
+		);
+		const holding = decideDriverShard(
+			state,
+			pooledOffer(t1, cell(1, 1), cell(8, 2)),
+			random,
+		).state;
+		const { outputs } = decideDriverShard(holding, secondOffer, random);
+		expect(outputs).toEqual([
+			{
+				type: "offer_accepted",
+				tripId: t2,
+				driverId: d1,
+				region: Region.parse(0),
+			},
+		]);
+	});
+});

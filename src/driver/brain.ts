@@ -424,13 +424,11 @@ function onOffer(
 		throw new Error(`offer for driver ${offer.driverId} outside this shard`);
 	}
 	const region = regionOf(state.regions, state.grid, offer.pickup);
-	// Out of region: the offering instance no longer owns the driver (it
-	// crossed), so accepting would leave two instances tracking it (ADR 0050).
-	if (
-		offered.state !== "idle" ||
-		regionOf(state.regions, state.grid, offered.cell) !== region ||
-		declines(state.picky, offered, offer, random)
-	) {
+	const taken =
+		offered.state === "idle"
+			? taking(state, offered, offer, region, random)
+			: joining(offered, offer, region);
+	if (taken === null) {
 		return {
 			state,
 			outputs: [
@@ -444,24 +442,7 @@ function onOffer(
 			],
 		};
 	}
-	state.drivers.set(offered.id, {
-		state: "en_route",
-		id: offered.id,
-		index: offered.index,
-		cell: offered.cell,
-		tripId: offer.tripId,
-		region,
-		pickup: offer.pickup,
-		trips: [
-			{
-				tripId: offer.tripId,
-				pickup: offer.pickup,
-				dropoff: offer.dropoff,
-				pooled: offer.pooled === true,
-			},
-		],
-		next: [{ kind: "dropoff", tripId: offer.tripId, cell: offer.dropoff }],
-	});
+	state.drivers.set(offered.id, taken);
 	return {
 		state,
 		outputs: [
@@ -472,6 +453,59 @@ function onOffer(
 				region,
 			},
 		],
+	};
+}
+
+// An idle driver heading to the offer's pickup; null if it declines.
+function taking(
+	state: DriverShardState,
+	driver: IdleDriver,
+	offer: Offer,
+	region: Region,
+	random: Random,
+): EnRouteDriver | null {
+	// Out of region: the offering instance no longer owns the driver (it
+	// crossed), so accepting would leave two instances tracking it (ADR 0050).
+	if (
+		regionOf(state.regions, state.grid, driver.cell) !== region ||
+		declines(state.picky, driver, offer, random)
+	) {
+		return null;
+	}
+	return {
+		state: "en_route",
+		id: driver.id,
+		index: driver.index,
+		cell: driver.cell,
+		tripId: offer.tripId,
+		region,
+		pickup: offer.pickup,
+		trips: [heldTripOf(offer)],
+		next: [{ kind: "dropoff", tripId: offer.tripId, cell: offer.dropoff }],
+	};
+}
+
+// A busy driver taking a second rider (ADR 0056): only a pooled offer in its
+// trip's region, while it holds one pooled trip; no preference draw. null if
+// it declines.
+function joining(
+	driver: Exclude<Driver, IdleDriver>,
+	offer: Offer,
+	region: Region,
+): Driver | null {
+	if (driver.state === "offline" || offer.pooled !== true) return null;
+	if (driver.trips.length !== 1 || driver.region !== region) return null;
+	const [partner] = driver.trips;
+	if (!partner.pooled) return null;
+	return { ...driver, trips: [partner, heldTripOf(offer)] };
+}
+
+function heldTripOf(offer: Offer): HeldTrip {
+	return {
+		tripId: offer.tripId,
+		pickup: offer.pickup,
+		dropoff: offer.dropoff,
+		pooled: offer.pooled === true,
 	};
 }
 
