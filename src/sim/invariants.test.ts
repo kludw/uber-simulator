@@ -540,6 +540,95 @@ describe("checkInvariants surge declines", () => {
 	});
 });
 
+// ADR 0056: a driver holds at most two trips, two only when both are pooled.
+describe("checkInvariants capacity", () => {
+	function pooledRequested(tripId: TripId, at: number): Message {
+		return {
+			type: "trip.requested",
+			tick: tick(at),
+			tripId,
+			riderId: r1,
+			pickup: cell(1, 0),
+			dropoff: cell(2, 0),
+			pooled: true,
+		};
+	}
+
+	function matched(tripId: TripId, at: number): Message[] {
+		return [
+			tripEvent("trip.offered", tripId, d1, at),
+			tripEvent("trip.matched", tripId, d1, at),
+		];
+	}
+
+	test("a driver holding two pooled trips is clean", () => {
+		const log = [
+			pooledRequested(t1, 1),
+			...matched(t1, 1),
+			pooledRequested(t2, 2),
+			...matched(t2, 2),
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([]);
+	});
+
+	test("a pooled trip and an unpooled trip on one driver are flagged", () => {
+		const log = [
+			pooledRequested(t1, 1),
+			...matched(t1, 1),
+			requested(t2, 2),
+			...matched(t2, 2),
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([
+			{
+				type: "driver_has_two_active_trips",
+				tick: tick(2),
+				driverId: d1,
+				activeTripId: t1,
+				tripId: t2,
+			},
+		]);
+	});
+
+	test("a third trip on a driver is flagged", () => {
+		const t3 = TripId.parse("t-3");
+		const log = [
+			pooledRequested(t1, 1),
+			...matched(t1, 1),
+			pooledRequested(t2, 2),
+			...matched(t2, 2),
+			pooledRequested(t3, 3),
+			...matched(t3, 3),
+		];
+
+		expect(checkInvariants(log, grid)).toEqual([
+			{
+				type: "driver_over_capacity",
+				tick: tick(3),
+				driverId: d1,
+				activeTripIds: [t1, t2],
+				tripId: t3,
+			},
+		]);
+	});
+
+	test("a driver may take another pooled trip once one of its two ends", () => {
+		const t3 = TripId.parse("t-3");
+		const log = [
+			pooledRequested(t1, 1),
+			...matched(t1, 1),
+			pooledRequested(t2, 2),
+			...matched(t2, 2),
+			{ type: "trip.cancelled", tick: tick(3), tripId: t1, driverId: d1 },
+			pooledRequested(t3, 4),
+			...matched(t3, 4),
+		] satisfies Message[];
+
+		expect(checkInvariants(log, grid)).toEqual([]);
+	});
+});
+
 describe("createInvariantChecker", () => {
 	// Completing t1 twice, then a 3-cell jump: one violation each.
 	test("reports the violations of the messages observed so far", () => {
