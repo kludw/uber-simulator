@@ -265,6 +265,68 @@ describe.skipIf(!config)("run report", () => {
 		expect(report.pooled).toBe(summary.pooled);
 	});
 
+	// ADR 0057: stars live in rider.rated_driver's payload.
+	test("runReport counts ratings and their mean stars", async () => {
+		const run = "rated";
+		await succeeded(
+			clickhouse.insertEvents([
+				row(run, "trip.requested", 1, 1, "t-1"),
+				row(run, "trip.completed", 9, 2, "t-1"),
+				row(run, "rider.rated_driver", 9, 3, "t-1", { stars: 5 }),
+				row(run, "trip.requested", 2, 4, "t-2"),
+				row(run, "trip.completed", 9, 5, "t-2"),
+				row(run, "rider.rated_driver", 9, 6, "t-2", { stars: 2 }),
+			]),
+		);
+
+		const report = await succeeded(runReport(clickhouse, RunId.parse(run)));
+
+		expect(report.ratings).toEqual({ count: 2, meanStars: 3.5 });
+	});
+
+	test("runReport of a run without ratings has none", async () => {
+		const run = "unrated";
+		await succeeded(
+			clickhouse.insertEvents([row(run, "trip.requested", 1, 1, "t-1")]),
+		);
+
+		const report = await succeeded(runReport(clickhouse, RunId.parse(run)));
+
+		expect(report.ratings).toBeNull();
+	});
+
+	// Oracle: summarize over the same ratings run's event log.
+	test("runReport of a ratings run agrees with the in-memory summary", async () => {
+		const runConfig = {
+			seed: 1,
+			ticks: 1200,
+			grid: { width: 100, height: 100 },
+			driverShards: { count: 1, driversPerShard: 4 },
+			requestsPerMinute: 20,
+			ratings: true,
+		};
+		const result = runInProcess({ ...runConfig, keepEventLog: true });
+		const runId = RunId.parse("ratings-cross-check");
+		const ingestedAt = new Date("2026-10-03T12:00:00Z");
+		await succeeded(
+			clickhouse.insertEvents(
+				result.eventLog
+					.filter(isSimEvent)
+					.map((event, index) =>
+						toRow(event, { runId, streamSeq: index + 1, ingestedAt }),
+					),
+			),
+		);
+		const summary = summarize(runConfig, result);
+
+		const report = await succeeded(runReport(clickhouse, runId));
+
+		expect(report.ratings).toEqual({
+			count: summary.ratings,
+			meanStars: summary.meanStars ?? Number.NaN,
+		});
+	});
+
 	test("runReport of a run with no events is an unknown run", async () => {
 		const runId = RunId.parse("no-such-run");
 
