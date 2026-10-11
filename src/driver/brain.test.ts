@@ -2682,6 +2682,79 @@ describe("decideDriverShard taking a second rider", () => {
 		]);
 	});
 
+	test("driver joined while waiting at its partner's pickup picks the joining rider up after its partner", () => {
+		// Waiting at (5, 5) from tick 10; joined, then t-1 picked up, before 11.
+		const random = scriptedRandom([0, 0, 0, 0]);
+		const waiting = serve(
+			holdingPooledTrip(random),
+			random,
+			{ from: 1, to: 10 },
+			{},
+			["pickup:t-1"],
+		).state;
+		const { arrivals } = serve(
+			waiting,
+			random,
+			{ from: 11, to: 20 },
+			{
+				11: [
+					secondOffer,
+					{ type: "trip.picked_up", tick: tick(10), tripId: t1, driverId: d1 },
+				],
+			},
+		);
+		expect(arrivals).toEqual([
+			{ stop: "pickup", tripId: t2, cell: cell(6, 5) },
+			{ stop: "dropoff", tripId: t1, cell: cell(8, 2) },
+			{ stop: "dropoff", tripId: t2, cell: cell(9, 2) },
+		]);
+	});
+
+	for (const ended of ["trip.cancelled", "trip.offer_expired"] as const) {
+		test(`driver waiting at its partner's dropoff keeps waiting there on ${ended} of the joined trip, then wanders once the partner is completed`, () => {
+			// Waiting at (8, 2) from tick 16; joined and ended before 17,
+			// t-1 completed before 18; wander target (0, 0).
+			const random = scriptedRandom([0, 0, 0, 0]);
+			const waiting = serve(
+				holdingPooledTrip(random),
+				random,
+				{ from: 1, to: 16 },
+				{},
+				["dropoff:t-1"],
+			).state;
+			const { outputs } = serve(
+				waiting,
+				random,
+				{ from: 17, to: 18 },
+				{
+					17: [
+						secondOffer,
+						{ type: ended, tick: tick(16), tripId: t2, driverId: d1 },
+					],
+					18: [
+						{
+							type: "trip.completed",
+							tick: tick(17),
+							tripId: t1,
+							driverId: d1,
+						},
+					],
+				},
+			);
+			expect(outputs).toEqual([
+				{
+					type: "offer_accepted",
+					tripId: t2,
+					driverId: d1,
+					region: Region.parse(0),
+				},
+				driversMoved(tick(18), Region.parse(0), fleetSize, [
+					{ driverIndex: i1, cell: cell(7, 2) },
+				]),
+			]);
+		});
+	}
+
 	function joinedBeforePickups(random: Random) {
 		return decideDriverShard(holdingPooledTrip(random), secondOffer, random)
 			.state;

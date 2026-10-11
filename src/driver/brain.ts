@@ -510,6 +510,10 @@ function joining(
 		tripId: joined.tripId,
 		cell: joined.dropoff,
 	};
+	// Already at the partner's dropoff: drops it there first.
+	if (driver.state === "at_dropoff") {
+		return { ...driver, trips, next: [pickup, joinedDropoff] };
+	}
 	const partnerDropoff: Stop = {
 		kind: "dropoff",
 		tripId: partner.tripId,
@@ -525,9 +529,6 @@ function joining(
 			return { ...driver, trips, next: [pickup, ...dropoffs] };
 		case "on_trip":
 			return toStop(driver, driver.cell, trips, [pickup, ...dropoffs]);
-		// Already at the partner's dropoff: drops it there first.
-		case "at_dropoff":
-			return { ...driver, trips, next: [pickup, joinedDropoff] };
 		default: {
 			const unhandled: never = driver;
 			throw new Error(`unhandled driver state: ${unhandled}`);
