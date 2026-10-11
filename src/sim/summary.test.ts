@@ -9,6 +9,7 @@ import {
 	Tick,
 	TripId,
 } from "../shared/messages.ts";
+import { Stars } from "../shared/rating.ts";
 import { Region } from "../shared/regions.ts";
 import { Fare, Surge } from "../shared/surge.ts";
 import {
@@ -323,6 +324,42 @@ describe("summarize pooling", () => {
 	});
 });
 
+// ADR 0057: ratings and their mean stars.
+describe("summarize ratings", () => {
+	function rated(tripId: TripId, stars: number): Message {
+		return {
+			type: "rider.rated_driver",
+			tick: tick(9),
+			riderId: r1,
+			tripId,
+			driverId: d1,
+			stars: Stars.parse(stars),
+		};
+	}
+
+	test("counts ratings", () => {
+		const log = [rated(t1, 5), rated(t2, 3), rated(t3, 4)];
+
+		expect(summarize(config, { eventLog: log, rejected: [] }).ratings).toBe(3);
+	});
+
+	// (5 + 3 + 3) / 3.
+	test("averages the stars of every rating", () => {
+		const log = [rated(t1, 5), rated(t2, 3), rated(t3, 3)];
+
+		expect(
+			summarize(config, { eventLog: log, rejected: [] }).meanStars,
+		).toBeCloseTo(3.6667, 4);
+	});
+
+	test("has no mean stars when no driver was rated", () => {
+		expect(
+			summarize(config, { eventLog: [requested(t1, 1)], rejected: [] })
+				.meanStars,
+		).toBeNull();
+	});
+});
+
 describe("createSummary", () => {
 	test("summarizes the messages observed as they come", () => {
 		const summary = createSummary(config);
@@ -340,6 +377,8 @@ describe("createSummary", () => {
 			pooled: 0,
 			shared: 0,
 			meanTicksToComplete: 1,
+			ratings: 0,
+			meanStars: null,
 			rejectedInputs: 2,
 			violations: [],
 		});
@@ -370,6 +409,8 @@ describe("compareSummaries", () => {
 		pooled: 0,
 		shared: 0,
 		meanTicksToComplete: 300.04,
+		ratings: 0,
+		meanStars: null,
 		rejectedInputs: 0,
 		violations: [],
 	};
@@ -382,6 +423,8 @@ describe("compareSummaries", () => {
 		pooled: 290,
 		shared: 180,
 		meanTicksToComplete: null,
+		ratings: 412,
+		meanStars: 4.2051,
 		violations: [
 			{
 				type: "illegal_trip_transition",
@@ -395,7 +438,11 @@ describe("compareSummaries", () => {
 
 	test("lines up each headline number of both runs", () => {
 		expect(
-			compareSummaries(greedy, batched, { surge: false, pooling: false }),
+			compareSummaries(greedy, batched, {
+				surge: false,
+				pooling: false,
+				ratings: false,
+			}),
 		).toEqual([
 			{ metric: "trips requested", first: "600", second: "600" },
 			{ metric: "trips completed", first: "550", second: "548" },
@@ -412,7 +459,11 @@ describe("compareSummaries", () => {
 	// ADR 0054: --compare-surge's rows.
 	test("with surge adds riders declined and revenue in dollars", () => {
 		expect(
-			compareSummaries(greedy, batched, { surge: true, pooling: false }),
+			compareSummaries(greedy, batched, {
+				surge: true,
+				pooling: false,
+				ratings: false,
+			}),
 		).toEqual([
 			{ metric: "trips requested", first: "600", second: "600" },
 			{ metric: "riders declined", first: "0", second: "25" },
@@ -431,7 +482,11 @@ describe("compareSummaries", () => {
 	// ADR 0056: --compare-pooling's rows.
 	test("with pooling adds trips pooled and shared, ride ticks and revenue", () => {
 		expect(
-			compareSummaries(greedy, batched, { surge: false, pooling: true }),
+			compareSummaries(greedy, batched, {
+				surge: false,
+				pooling: true,
+				ratings: false,
+			}),
 		).toEqual([
 			{ metric: "trips requested", first: "600", second: "600" },
 			{ metric: "trips pooled", first: "0", second: "290" },
@@ -455,9 +510,11 @@ describe("compareSummaries", () => {
 
 	test("with surge and pooling adds both sets of rows, revenue once", () => {
 		expect(
-			compareSummaries(greedy, batched, { surge: true, pooling: true }).map(
-				(row) => row.metric,
-			),
+			compareSummaries(greedy, batched, {
+				surge: true,
+				pooling: true,
+				ratings: false,
+			}).map((row) => row.metric),
 		).toEqual([
 			"trips requested",
 			"riders declined",
@@ -469,6 +526,29 @@ describe("compareSummaries", () => {
 			"mean ticks from pickup to completion",
 			"revenue",
 			"invariant violations",
+		]);
+	});
+
+	// ADR 0057: --compare-ratings' rows.
+	test("with ratings adds ratings and mean stars", () => {
+		expect(
+			compareSummaries(greedy, batched, {
+				surge: false,
+				pooling: false,
+				ratings: true,
+			}),
+		).toEqual([
+			{ metric: "trips requested", first: "600", second: "600" },
+			{ metric: "trips completed", first: "550", second: "548" },
+			{ metric: "trips cancelled", first: "20", second: "25" },
+			{
+				metric: "mean ticks from request to pickup",
+				first: "101.3",
+				second: "n/a",
+			},
+			{ metric: "ratings", first: "0", second: "412" },
+			{ metric: "mean stars", first: "n/a", second: "4.21" },
+			{ metric: "invariant violations", first: "0", second: "1" },
 		]);
 	});
 });

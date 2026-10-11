@@ -50,6 +50,9 @@ export type SimConfig = {
 	// Riders opt in to pooling (ADR 0056); off when unset. Dispatch and
 	// drivers act on pooled trips, so they need no switch.
 	pooling?: boolean | undefined;
+	// Riders rate drivers (ADR 0057); off when unset. Dispatch acts on the
+	// ratings it sees, so it needs no switch.
+	ratings?: boolean | undefined;
 };
 
 export type Rejected = InputRejected<Message, string>;
@@ -217,6 +220,7 @@ export function ridersService(config: SimConfig): SimService {
 						regions: config.regions,
 						surge: config.surge,
 						pooling: config.pooling,
+						ratings: config.ratings,
 					}),
 					outputs: [],
 				},

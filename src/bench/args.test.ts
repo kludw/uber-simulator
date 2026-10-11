@@ -28,6 +28,7 @@ describe("parseBenchArgs", () => {
 					regions: { columns: 1, rows: 1 },
 					surge: false,
 					pooling: false,
+					ratings: false,
 				},
 				maxMinutes: undefined,
 			},
@@ -48,6 +49,18 @@ describe("parseBenchArgs", () => {
 			ok: true,
 			value: { config: { pooling: true } },
 		});
+	});
+
+	// ADR 0057.
+	test("--ratings on lets riders rate drivers", () => {
+		expect(parseBenchArgs(["--ratings", "on"])).toMatchObject({
+			ok: true,
+			value: { config: { ratings: true } },
+		});
+	});
+
+	test("--ratings yes is rejected", () => {
+		expect(parseBenchArgs(["--ratings", "yes"])).toMatchObject({ ok: false });
 	});
 
 	test("batched matching and shard count are set per run", () => {

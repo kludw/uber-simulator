@@ -31,6 +31,7 @@ export function benchReport(
 		// Surge-off reports stay as before surge existed.
 		...(config.surge ? ["surge: on"] : []),
 		...(config.pooling ? ["pooling: on"] : []),
+		...(config.ratings ? ["ratings: on"] : []),
 		`wall ms per tick: mean ${mean(measurement.tickMs).toFixed(2)}, p95 ${p95(measurement.tickMs).toFixed(2)}`,
 		`total messages: ${measurement.messages}`,
 		`peak rss: ${mebibytes(measurement.peakRssBytes)} MiB`,
