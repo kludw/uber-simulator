@@ -13,6 +13,7 @@ describe("parseLoadtestArgs", () => {
 				matching: { type: "greedy" },
 				regions: { columns: 1, rows: 1 },
 				surge: false,
+				pooling: false,
 				drainBoundMs: 300_000,
 				natsMonitoringUrl: "http://localhost:8222",
 			},
@@ -60,6 +61,21 @@ describe("parseLoadtestArgs", () => {
 
 	test("--surge other than on or off is invalid", () => {
 		expect(parseLoadtestArgs(["--surge", "yes"])).toMatchObject({
+			ok: false,
+			error: { type: "invalid_args" },
+		});
+	});
+
+	// ADR 0056: the cost of pooling at scale.
+	test("--pooling on turns pooling on", () => {
+		expect(parseLoadtestArgs(["--pooling", "on"])).toMatchObject({
+			ok: true,
+			value: { pooling: true },
+		});
+	});
+
+	test("--pooling other than on or off is invalid", () => {
+		expect(parseLoadtestArgs(["--pooling", "yes"])).toMatchObject({
 			ok: false,
 			error: { type: "invalid_args" },
 		});

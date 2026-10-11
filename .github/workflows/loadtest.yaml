@@ -4,10 +4,11 @@ name: loadtest
 # loadtest` (ADR 0037) for 1k drivers, greedy, one region, 600 ticks; set the
 # cases with -f, e.g. `-f drivers="5000 10000" -f matching="greedy batched"
 # -f regions="1x1 2x1"`, surge pricing with -f surge=on (every case, ADR
-# 0054), and the runner label with -f runner (e.g. a larger
-# runner's label). One job (own runner, NATS, ClickHouse) per drivers x
-# matching x regions case. Each case's report, runner note, service logs, and
-# NATS log are uploaded as one artifact (`gh run download <run id>`).
+# 0054), pooling with -f pooling=on (every case, ADR 0056), and the runner
+# label with -f runner (e.g. a larger runner's label). One job (own runner,
+# NATS, ClickHouse) per drivers x matching x regions case. Each case's report,
+# run report (`bun run report`), runner note, service logs, and NATS log are
+# uploaded as one artifact (`gh run download <run id>`).
 on:
   workflow_dispatch:
     inputs:
@@ -25,6 +26,10 @@ on:
         default: "1x1"
       surge:
         description: Surge pricing for every case (off, on; ADR 0054)
+        type: string
+        default: "off"
+      pooling:
+        description: Pooling for every case (off, on; ADR 0056)
         type: string
         default: "off"
       ticks:
@@ -97,6 +102,7 @@ jobs:
       MATCHING: ${{ matrix.run.matching }}
       REGIONS: ${{ matrix.run.regions }}
       SURGE: ${{ inputs.surge }}
+      POOLING: ${{ inputs.pooling }}
       TICKS: ${{ inputs.ticks }}
       DRAIN_MINUTES: ${{ inputs.drain_minutes }}
     steps:
@@ -127,7 +133,7 @@ jobs:
           # load test, which then stops its services; SIGKILL 1 min later if
           # it hasn't exited.
           timeout -k 1m "${cap}m" bun src/loadtest/main.ts --drivers "$DRIVERS" --matching "$MATCHING" \
-            --regions "$REGIONS" --surge "$SURGE" --ticks "$TICKS" --drain-minutes "$DRAIN_MINUTES" \
+            --regions "$REGIONS" --surge "$SURGE" --pooling "$POOLING" --ticks "$TICKS" --drain-minutes "$DRAIN_MINUTES" \
             > out/report.txt 2> out/services.log
           code=$?
           set -e
@@ -146,6 +152,12 @@ jobs:
           cat out/machine.txt out/report.txt
           tail -n 20 out/services.log
           [ -z "$status" ]
+      # The persisted run's headline numbers (trips pooled with pooling on).
+      - name: Run report
+        if: always()
+        run: |
+          run_id=$(sed -n 's/^\[loadtest\] run id: //p' out/services.log 2>/dev/null | head -n 1)
+          if [ -n "$run_id" ]; then bun run report -- --run "$run_id" > out/run-report.txt 2>&1 || true; cat out/run-report.txt; fi
       - name: NATS log
         if: always()
         run: |
@@ -154,5 +166,5 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: loadtest-${{ matrix.run.drivers }}-${{ matrix.run.matching }}-${{ matrix.run.regions }}-surge-${{ inputs.surge }}
+          name: loadtest-${{ matrix.run.drivers }}-${{ matrix.run.matching }}-${{ matrix.run.regions }}-surge-${{ inputs.surge }}-pooling-${{ inputs.pooling }}
           path: out/
