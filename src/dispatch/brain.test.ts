@@ -2491,6 +2491,23 @@ describe("decideDispatch pooling", () => {
 		expect(outputs).toEqual([joinOffer(2, d1, at(20), at(100))]);
 	});
 
+	// ADR 0057, 0058: the reach comes from d-02, 5 away, so no join; d-02
+	// rated 4 costs 5 + 10, d-10 rated 5 costs 10.
+	test("offers a pooled trip that joins no partner to the idle driver of least match cost", () => {
+		const d10 = driverIdAt(fleetSize, i10);
+		const outputs = offers([
+			...partnerMatched,
+			online(i2, at(25)),
+			online(i10, at(30)),
+			rated(d2, 4),
+			rated(d10, 5),
+			pooled(2, at(20), at(100)),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([joinOffer(2, d10, at(20), at(100))]);
+	});
+
 	test("joins a partner's driver when the only nearer idle driver is excluded for the trip", () => {
 		const outputs = offers([
 			...partnerMatched,

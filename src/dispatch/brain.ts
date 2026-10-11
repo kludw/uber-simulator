@@ -52,6 +52,7 @@ import {
 	zoneOf,
 } from "../shared/surge.ts";
 import {
+	anyDriverRated,
 	bestPartner,
 	type IdleDriver,
 	type IdleDrivers,
@@ -267,12 +268,15 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 	};
 	const queued = queuedTrips(state);
 	// A pooled trip offered to its best partner's driver; false if none fits.
-	const join = (trip: QueuedTrip): boolean => {
-		if (!trip.pooled || state.partners.size === 0) return false;
-		const driverId = partnerFor(state, trip, nearestIdleTo(state, trip));
-		if (driverId === undefined) return false;
+	// A pooled trip offered to its best partner's driver, if one fits; when
+	// none does, the nearest idle driver its reach came from.
+	const join = (trip: QueuedTrip): JoinOutcome => {
+		if (!trip.pooled || state.partners.size === 0) return { type: "untried" };
+		const nearestIdle = nearestIdleTo(state, trip);
+		const driverId = partnerFor(state, trip, nearestIdle);
+		if (driverId === undefined) return { type: "no_partner", nearestIdle };
 		offer(trip, driverId);
-		return true;
+		return { type: "joined" };
 	};
 	switch (state.matching.type) {
 		case "greedy":
@@ -282,12 +286,17 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 			// ADR 0057), ties to the lowest ID; the offer makes that driver busy
 			// for the next trip.
 			for (const trip of queued) {
-				if (join(trip)) continue;
-				const driverId = leastMatchCostIdle(
-					state.drivers,
-					trip.pickup,
-					trip.excludedDrivers,
-				);
+				const joined = join(trip);
+				if (joined.type === "joined") continue;
+				// Unrated, the least match cost is the nearest the join looked up.
+				const driverId =
+					joined.type === "no_partner" && !anyDriverRated(state.drivers)
+						? joined.nearestIdle?.driverId
+						: leastMatchCostIdle(
+								state.drivers,
+								trip.pickup,
+								trip.excludedDrivers,
+							);
 				if (driverId !== undefined) offer(trip, driverId);
 			}
 			break;
@@ -300,7 +309,7 @@ function onTick(state: DispatchState, ticked: ClockTicked): Decision {
 			const rest =
 				state.partners.size === 0
 					? queued
-					: queued.filter((trip) => !join(trip));
+					: queued.filter((trip) => join(trip).type !== "joined");
 			for (const { trip, driverId } of batchedPairs(state, rest)) {
 				offer(trip, driverId);
 			}
@@ -357,6 +366,11 @@ function zonesPriced(state: DispatchState, tick: Tick): ZonesPriced {
 }
 
 type OfferPair = { trip: QueuedTrip; driverId: DriverId };
+
+type JoinOutcome =
+	| { type: "joined" }
+	| { type: "no_partner"; nearestIdle: IdleDriver | undefined }
+	| { type: "untried" };
 
 // The nearest idle driver not excluded for the trip, with its cell.
 function nearestIdleTo(

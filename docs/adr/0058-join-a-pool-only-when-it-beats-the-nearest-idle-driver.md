@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-11
-- Supersedes: [0056](0056-pool-two-riders-going-the-same-way.md) rule 4's "a pooled trip joins even when an idle driver is nearer" and its open pooled trip count, and rule 2's partner tie-break
+- Supersedes 0056 (rule 4's "a pooled trip joins even when an idle driver is nearer" and its open pooled trip count, and rule 2's partner tie-break)
 
 ## Context
 
@@ -74,4 +74,4 @@ We will join a pooled trip to a partner only when the join is no farther than th
 
 Domain terms (domain skill): **Join reach**; **Join** and **Join ETA** updated.
 
-Implementation: one PR ([#361](https://github.com/kludw/uber-simulator/issues/361)): `joinReachOf` and the reach in `joinEtaOf` (`src/shared/pool.ts`), joinable drivers and `bestPartner` in the idle driver index, dispatch's partners and joins. Tests: pool unit tests (reach with and without an idle driver, cap), the index's partner search against a linear scan on random sequences, dispatch brain (a nearer idle driver wins, an equally near join wins, no idle driver: cap 120, excluded idle drivers don't set the reach, ties to the lower driver ID, batched passes); event-log hashes and README outputs with pooling off identical to master; the 600k bench and dispatch timing above.
+Implementation: one PR ([#361](https://github.com/kludw/uber-simulator/issues/361)): `joinReachOf` (`src/shared/pool.ts`; `joinEtaOf` unchanged), joinable drivers and `bestPartner` in the idle driver index, which applies the reach as its `within`, dispatch's partners and joins. Tests: pool unit tests (reach with and without an idle driver, cap), the index's partner search against a linear scan on random sequences, dispatch brain (a nearer idle driver wins, an equally near join wins, no idle driver: cap 120, excluded idle drivers don't set the reach, ties to the lower driver ID, batched passes); event-log hashes and README outputs with pooling off identical to master; the 600k bench and dispatch timing above.
