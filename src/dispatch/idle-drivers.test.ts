@@ -16,6 +16,7 @@ import {
 } from "../shared/regions.ts";
 import { Zone } from "../shared/surge.ts";
 import {
+	bestPartner,
 	type IdleDriver,
 	type IdleDrivers,
 	idleCount,
@@ -23,6 +24,7 @@ import {
 	idleDriversById,
 	markBusy,
 	markFree,
+	markJoinable,
 	nearestIdle,
 	nearestIdleSkipping,
 	placeDriver,
@@ -214,6 +216,20 @@ describe("busy marks", () => {
 		expect(() => markBusy(index, id(1))).toThrow();
 	});
 
+	test("freeing a joinable driver is a bug", () => {
+		const index = placed([at(1, 0, 0)]);
+		markBusy(index, id(1));
+		markJoinable(index, id(1), true);
+
+		expect(() => markFree(index, id(1))).toThrow();
+	});
+
+	test("marking a driver joinable that isn't busy is a bug", () => {
+		const index = placed([at(1, 0, 0)]);
+
+		expect(() => markJoinable(index, id(1), true)).toThrow();
+	});
+
 	test("freeing a driver that isn't busy is a bug", () => {
 		const index = placed([at(1, 3, 3)]);
 
@@ -322,6 +338,105 @@ describe("placing a driver by ID", () => {
 		const index = placed([]);
 
 		expect(() => placeDriver(index, id(1), ...xy(5, 6))).toThrow();
+	});
+});
+
+// Busy drivers holding one pooled trip alone (ADR 0058).
+function joinable(drivers: readonly ReturnType<typeof at>[]): IdleDrivers {
+	const index = placed(drivers);
+	for (const { driverIndex } of drivers) {
+		markBusy(index, id(driverIndex));
+		markJoinable(index, id(driverIndex), true);
+	}
+	return index;
+}
+
+// A join ETA of the distance to the pickup, as for an aboard partner.
+function distanceTo(pickup: Cell) {
+	return (_driverId: DriverId, from: Cell) =>
+		Math.abs(from.x - pickup.x) + Math.abs(from.y - pickup.y);
+}
+
+describe("bestPartner", () => {
+	test("returns the joinable driver with the least join ETA", () => {
+		const index = joinable([at(1, 9, 9), at(2, 3, 3)]);
+
+		expect(bestPartner(index, cell(0, 0), 120, distanceTo(cell(0, 0)))).toBe(
+			id(2),
+		);
+	});
+
+	test("returns no driver whose join ETA is beyond the reach", () => {
+		const index = joinable([at(1, 3, 3)]);
+
+		expect(
+			bestPartner(index, cell(0, 0), 5, distanceTo(cell(0, 0))),
+		).toBeUndefined();
+	});
+
+	test("skips a driver the join ETA rules out", () => {
+		const index = joinable([at(1, 1, 1), at(2, 3, 3)]);
+
+		expect(
+			bestPartner(index, cell(0, 0), 120, (driverId, from) =>
+				driverId === id(1) ? null : distanceTo(cell(0, 0))(driverId, from),
+			),
+		).toBe(id(2));
+	});
+
+	test("ties go to the lowest driver ID", () => {
+		const index = joinable([at(10, 0, 2), at(2, 2, 0)]);
+
+		expect(bestPartner(index, cell(0, 0), 120, distanceTo(cell(0, 0)))).toBe(
+			id(2),
+		);
+	});
+
+	test("finds a joinable driver by the cell it moved to", () => {
+		const index = joinable([at(1, 9, 9), at(2, 5, 5)]);
+		placeDriverAt(index, i(1), ...xy(1, 1));
+
+		expect(bestPartner(index, cell(0, 0), 120, distanceTo(cell(0, 0)))).toBe(
+			id(1),
+		);
+	});
+
+	test("never returns a driver no longer joinable", () => {
+		const index = joinable([at(1, 1, 1)]);
+		markJoinable(index, id(1), false);
+
+		expect(
+			bestPartner(index, cell(0, 0), 120, distanceTo(cell(0, 0))),
+		).toBeUndefined();
+	});
+
+	test("never returns an offline driver", () => {
+		const index = joinable([at(1, 1, 1)]);
+		removeDriver(index, id(1));
+
+		expect(
+			bestPartner(index, cell(0, 0), 120, distanceTo(cell(0, 0))),
+		).toBeUndefined();
+	});
+
+	test("returns a driver back online by its next move", () => {
+		const index = joinable([at(1, 1, 1)]);
+		removeDriver(index, id(1));
+		placeDriverAt(index, i(1), ...xy(2, 2));
+
+		expect(bestPartner(index, cell(0, 0), 120, distanceTo(cell(0, 0)))).toBe(
+			id(1),
+		);
+	});
+
+	test("never returns a joinable driver as idle", () => {
+		const index = joinable([at(1, 1, 1)]);
+
+		expect(nearestIdle(index, cell(0, 0), none)).toBeUndefined();
+	});
+
+	test("returns exactly what a linear scan returns", () => {
+		expectLinearPartnerPicks(361);
 	});
 });
 
@@ -491,4 +606,101 @@ function linearScan(
 				(a.driverId < b.driverId ? -1 : a.driverId > b.driverId ? 1 : 0),
 		);
 	return nearest?.driverId;
+}
+
+// Random sequences of placements, removals, busy, joinable and free drivers
+// and partner searches, against a plain model searched linearly. The join ETA
+// is a driver's distance to the pickup plus a per-driver extra (or none for
+// some drivers), never below the distance, as the search requires.
+function expectLinearPartnerPicks(seed: number): void {
+	const random = createRandom(seed);
+	for (let run = 0; run < 500; run++) {
+		const scenarioGrid = {
+			width: random.int(1, 25),
+			height: random.int(1, 25),
+		};
+		const randomCell = (): Cell =>
+			({
+				x: random.int(0, scenarioGrid.width - 1),
+				y: random.int(0, scenarioGrid.height - 1),
+			}) as Cell;
+		const scenarioFleet = 60;
+		const index = startIdleDrivers(scenarioGrid, scenarioFleet, undefined, {
+			cellsPerBucket: random.int(1, 6),
+			linearScanBelow: 0,
+		});
+		const extra = new Map<DriverId, number | null>();
+		const model = {
+			cells: new Map<DriverId, Cell>(),
+			online: new Set<DriverId>(),
+			busy: new Set<DriverId>(),
+			joinable: new Set<DriverId>(),
+		};
+		const found: (DriverId | undefined)[] = [];
+		const expected: (DriverId | undefined)[] = [];
+		for (let step = 0; step < 200; step++) {
+			const action = random.int(0, 9);
+			const driverIndex = DriverIndex.parse(random.int(0, scenarioFleet - 1));
+			const driverId = driverIdAt(scenarioFleet, driverIndex);
+			const known = model.cells.has(driverId);
+			if (action <= 3) {
+				const at = randomCell();
+				placeDriverAt(index, driverIndex, at.x, at.y);
+				model.cells.set(driverId, at);
+				model.online.add(driverId);
+			} else if (action === 4 && known) {
+				removeDriver(index, driverId);
+				model.online.delete(driverId);
+				if (!model.busy.has(driverId)) model.cells.delete(driverId);
+			} else if (action === 5 && known && model.online.has(driverId)) {
+				if (!model.busy.has(driverId)) {
+					markBusy(index, driverId);
+					model.busy.add(driverId);
+				}
+				markJoinable(index, driverId, true);
+				model.joinable.add(driverId);
+				extra.set(
+					driverId,
+					random.int(0, 3) === 0 ? null : random.int(0, 10),
+				);
+			} else if (action === 6 && model.joinable.has(driverId)) {
+				markJoinable(index, driverId, false);
+				model.joinable.delete(driverId);
+			} else if (
+				action === 7 &&
+				model.busy.has(driverId) &&
+				!model.joinable.has(driverId)
+			) {
+				markFree(index, driverId);
+				model.busy.delete(driverId);
+				if (!model.online.has(driverId)) model.cells.delete(driverId);
+			} else if (action >= 8) {
+				const pickup = randomCell();
+				const within = random.int(0, 40);
+				const joinEta = (partner: DriverId, from: Cell) => {
+					const more = extra.get(partner);
+					if (more === null || more === undefined) return null;
+					return (
+						Math.abs(from.x - pickup.x) + Math.abs(from.y - pickup.y) + more
+					);
+				};
+				found.push(bestPartner(index, pickup, within, joinEta));
+				const [best] = [...model.joinable]
+					.filter((partner) => model.online.has(partner))
+					.flatMap((partner) => {
+						const from = model.cells.get(partner);
+						const eta = from === undefined ? null : joinEta(partner, from);
+						return eta === null || eta > within ? [] : [{ partner, eta }];
+					})
+					.toSorted(
+						(a, b) =>
+							a.eta - b.eta ||
+							(a.partner < b.partner ? -1 : a.partner > b.partner ? 1 : 0),
+					);
+				expected.push(best?.partner);
+			}
+		}
+
+		expect({ run, found }).toEqual({ run, found: expected });
+	}
 }

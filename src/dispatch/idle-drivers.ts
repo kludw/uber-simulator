@@ -28,9 +28,10 @@ const defaultSearch: IdleDriverSearch = {
 
 // Dispatch's drivers in its region across ticks (ADR 0048, 0050): each known
 // or busy driver's cell, whether it is online and busy, and the idle ones
-// (online, not busy) bucketed for the nearest search, updated in place as
-// drivers report and trips change (ADR 0033). Opaque: callers can't name
-// `internals`.
+// (online, not busy) bucketed for the nearest search, the joinable ones
+// (online, busy, marked by the brain) for the partner search (ADR 0058),
+// updated in place as drivers report and trips change (ADR 0033). Opaque:
+// callers can't name `internals`.
 const internals: unique symbol = Symbol("idle drivers");
 export type IdleDrivers = { readonly [internals]: Drivers };
 
@@ -38,7 +39,8 @@ export type IdleDrivers = { readonly [internals]: Drivers };
 // (ADR 0052). Its cell as x and y numbers, not a Cell, so a move allocates
 // nothing (docs/performance-history.md, Dispatch moves profile). bucket is -1 unless idle; slot is its place in the
 // bucket, so leaving is a swap with the bucket's last entry, not a search. A
-// driver offline and not busy has none.
+// driver offline and not busy has none. partnerBucket and partnerSlot are
+// the same for joinable drivers.
 type Driver = {
 	driverId: DriverId;
 	index: DriverIndex;
@@ -48,6 +50,9 @@ type Driver = {
 	busy: boolean;
 	bucket: number;
 	slot: number;
+	joinable: boolean;
+	partnerBucket: number;
+	partnerSlot: number;
 };
 
 type Drivers = {
@@ -63,6 +68,9 @@ type Drivers = {
 	idleCount: number;
 	// Row-major by bucket, unordered within a bucket.
 	buckets: Driver[][];
+	// Online joinable drivers (holding one pooled trip alone, ADR 0058), the
+	// same buckets.
+	partnerBuckets: Driver[][];
 };
 
 const notIdle = -1;
@@ -99,6 +107,10 @@ export function startIdleDrivers(
 			byId: new Map(),
 			idleCount: 0,
 			buckets: Array.from({ length: columns * rows }, (): Driver[] => []),
+			partnerBuckets: Array.from(
+				{ length: columns * rows },
+				(): Driver[] => [],
+			),
 		},
 	};
 }
@@ -132,6 +144,9 @@ export function placeDriverAt(
 		busy: false,
 		bucket: notIdle,
 		slot: 0,
+		joinable: false,
+		partnerBucket: notIdle,
+		partnerSlot: 0,
 	};
 	drivers.byIndex[index] = placed;
 	drivers.byId.set(placed.driverId, placed);
@@ -165,6 +180,7 @@ function place(
 	// is online, in the region, and bucketed.
 	if (driver.busy) {
 		driver.online = true;
+		if (driver.joinable) placePartner(drivers, driver);
 		return;
 	}
 	if (!inRegion(drivers, x, y)) {
@@ -183,6 +199,7 @@ export function removeDriver(idle: IdleDrivers, driverId: DriverId): void {
 	const driver = drivers.byId.get(driverId);
 	if (driver === undefined) return;
 	if (driver.bucket !== notIdle) removeFromBucket(drivers, driver);
+	if (driver.partnerBucket !== notIdle) removePartner(drivers, driver);
 	if (driver.busy) driver.online = false;
 	else forget(drivers, driver);
 }
@@ -208,6 +225,7 @@ export function markFree(idle: IdleDrivers, driverId: DriverId): void {
 	if (driver === undefined || !driver.busy) {
 		throw new Error(`${driverId} is not busy`);
 	}
+	if (driver.joinable) throw new Error(`${driverId} is joinable`);
 	driver.busy = false;
 	if (driver.online && inRegion(drivers, driver.x, driver.y)) {
 		addToBucket(drivers, driver);
@@ -431,4 +449,103 @@ function nearestBeyond(pickup: Cell, size: number, ring: number): number {
 		pickup.y - (row - ring + 1) * size + 1,
 		(row + ring) * size - pickup.y,
 	);
+}
+
+// A busy driver became joinable (holds one pooled trip alone) or stopped
+// being so (ADR 0058); searched by bestPartner while online.
+export function markJoinable(
+	idle: IdleDrivers,
+	driverId: DriverId,
+	joinable: boolean,
+): void {
+	const drivers = idle[internals];
+	const driver = drivers.byId.get(driverId);
+	if (driver === undefined || !driver.busy) {
+		throw new Error(`${driverId} is not busy`);
+	}
+	driver.joinable = joinable;
+	if (joinable && driver.online) placePartner(drivers, driver);
+	if (!joinable && driver.partnerBucket !== notIdle) {
+		removePartner(drivers, driver);
+	}
+}
+
+function placePartner(drivers: Drivers, driver: Driver): void {
+	const bucket = bucketOf(drivers, driver.x, driver.y);
+	if (bucket === driver.partnerBucket) return;
+	if (driver.partnerBucket !== notIdle) removePartner(drivers, driver);
+	const partners = drivers.partnerBuckets[bucket];
+	if (partners === undefined) throw new Error(`no bucket ${bucket}`);
+	driver.partnerBucket = bucket;
+	driver.partnerSlot = partners.length;
+	partners.push(driver);
+}
+
+function removePartner(drivers: Drivers, driver: Driver): void {
+	const partners = drivers.partnerBuckets[driver.partnerBucket];
+	const last = partners?.pop();
+	if (partners === undefined || last === undefined) {
+		throw new Error(`${driver.driverId} not in its partner bucket`);
+	}
+	if (last !== driver) {
+		partners[driver.partnerSlot] = last;
+		last.partnerSlot = driver.partnerSlot;
+	}
+	driver.partnerBucket = notIdle;
+}
+
+// The online joinable driver with the least join ETA to the pickup, at most
+// `within`, ties to the lowest ID; joinEta gives a driver's join ETA from its
+// cell (null: no join), never less than the cell's distance to the pickup, so
+// rings beyond the best (or `within`) are skipped.
+export function bestPartner(
+	idle: IdleDrivers,
+	pickup: Cell,
+	within: number,
+	joinEta: (driverId: DriverId, cell: Cell) => number | null,
+): DriverId | undefined {
+	const drivers = idle[internals];
+	const size = drivers.search.cellsPerBucket;
+	// As search: the ring bound holds for in-grid pickups only.
+	const exact =
+		pickup.x < drivers.grid.width && pickup.y < drivers.grid.height;
+	const column = Math.min(Math.floor(pickup.x / size), drivers.columns - 1);
+	const row = Math.min(Math.floor(pickup.y / size), drivers.rows - 1);
+	const lastRing = Math.max(
+		column,
+		row,
+		drivers.columns - 1 - column,
+		drivers.rows - 1 - row,
+	);
+	let best: { driverId: DriverId; eta: number } | undefined;
+	for (let ring = 0; ring <= lastRing; ring++) {
+		if (exact && nearestBeyond(pickup, size, ring) > (best?.eta ?? within)) {
+			break;
+		}
+		for (let y = row - ring; y <= row + ring; y++) {
+			if (y < 0 || y >= drivers.rows) continue;
+			const edgeRow = y === row - ring || y === row + ring;
+			const step = edgeRow ? 1 : 2 * ring;
+			for (let x = column - ring; x <= column + ring; x += step) {
+				if (x < 0 || x >= drivers.columns) continue;
+				for (const driver of drivers.partnerBuckets[
+					y * drivers.columns + x
+				] ?? []) {
+					if (distanceToCoordinates(pickup, driver.x, driver.y) > within) {
+						continue;
+					}
+					const eta = joinEta(driver.driverId, cellAt(driver.x, driver.y));
+					if (eta === null || eta > within) continue;
+					if (
+						best === undefined ||
+						eta < best.eta ||
+						(eta === best.eta && driver.driverId < best.driverId)
+					) {
+						best = { driverId: driver.driverId, eta };
+					}
+				}
+			}
+		}
+	}
+	return best?.driverId;
 }
