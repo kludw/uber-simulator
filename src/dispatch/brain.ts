@@ -36,6 +36,7 @@ import type {
 import { forEachDriverAt } from "../shared/messages.ts";
 import { joinEtaOf, joinReachOf } from "../shared/pool.ts";
 import type { Random } from "../shared/random.ts";
+import { maxRatingPenalty } from "../shared/rating.ts";
 import {
 	oneRegion,
 	Region,
@@ -60,6 +61,7 @@ import {
 	idleCountsByZone,
 	idleDriversById,
 	leastMatchCostIdle,
+	leastMatchCostIdleSkipping,
 	markBusy,
 	markFree,
 	markJoinable,
@@ -435,10 +437,10 @@ function queuedTrips(state: DispatchState): QueuedTrip[] {
 	return queued;
 }
 
-// ADR 0030: as many pairs as possible, least total pickup distance among
-// those. Idle drivers found by nearest queries, unless more trips are queued
-// than drivers are idle: then the dense solver over the few idle drivers
-// (ADR 0051).
+// ADR 0030: as many pairs as possible, least total match cost (pickup
+// distance until any driver is rated, ADR 0057) among those. Idle drivers
+// found by the index's query, unless more trips are queued than drivers are
+// idle: then the dense solver over the few idle drivers (ADR 0051).
 function batchedPairs(
 	state: DispatchState,
 	queued: readonly QueuedTrip[],
@@ -448,8 +450,9 @@ function batchedPairs(
 	}
 	return minCostMatchingByNearest(
 		queued,
-		(pickup, skip) => nearestIdleSkipping(state.drivers, pickup, skip),
+		(pickup, skip) => leastMatchCostIdleSkipping(state.drivers, pickup, skip),
 		state.grid,
+		anyDriverRated(state.drivers) ? maxRatingPenalty : 0,
 	).map(({ row, driverId }) => {
 		const trip = queued[row];
 		if (trip === undefined) throw new Error(`matching row ${row} out of range`);
@@ -472,7 +475,7 @@ function densePairs(
 		for (const [row, trip] of queued.entries()) {
 			out[row] = trip.excludedDrivers.has(driver.driverId)
 				? Number.POSITIVE_INFINITY
-				: distance(driver.cell, trip.pickup);
+				: distance(driver.cell, trip.pickup) + driver.ratingPenalty;
 		}
 	};
 	return minCostMatching(queued.length, idle.length, { ofRow, ofColumn }).map(

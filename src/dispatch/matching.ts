@@ -144,13 +144,14 @@ export type MatchTrip = {
 };
 
 /**
- * The idle driver nearest to the pickup that `skip` doesn't hold for, ties to
- * the lowest ID, with its cell; undefined when there is none.
+ * The idle driver of least match cost (pickup distance + rating penalty, ADR
+ * 0057) to the pickup that `skip` doesn't hold for, ties to the lowest ID,
+ * with its cell and rating penalty; undefined when there is none.
  */
 export type NearestDriver = (
 	pickup: Cell,
 	skip: (driverId: DriverId) => boolean,
-) => { driverId: DriverId; cell: Cell } | undefined;
+) => { driverId: DriverId; cell: Cell; ratingPenalty: number } | undefined;
 
 export type TripPair = { row: number; driverId: DriverId };
 
@@ -158,22 +159,25 @@ export type TripPair = { row: number; driverId: DriverId };
  * Batch assignment (ADR 0030) of queued trips to idle drivers found by
  * `nearest`, never listed (ADR 0051): same objective as minCostMatching, pairs
  * ordered by row (trip index). Needs at least as many idle drivers as trips;
- * throws otherwise (caller bug). Costs are pickup distances; drivers excluded
- * for a trip are not allowed. Pure function of the input; which of several
- * optimal matchings comes back is not specified.
+ * throws otherwise (caller bug). Costs are match costs (ADR 0057): pickup
+ * distance + the driver's rating penalty, at most `maxRatingPenalty`;
+ * drivers excluded for a trip are not allowed. Pure function of the input;
+ * which of several optimal matchings comes back is not specified.
  */
 export function minCostMatchingByNearest(
 	trips: readonly MatchTrip[],
 	nearest: NearestDriver,
 	grid: Grid,
+	maxRatingPenalty: number,
 ): TripPair[] {
 	const rows = trips.length;
 	// A disallowed pair costs more than any whole set of allowed pairs, so the
 	// optimum uses as many allowed pairs as possible. Assumes every pickup and
 	// driver cell is on the grid, so no distance exceeds width + height - 2
-	// (ADR 0051). An off-grid cell is bad input from another service; with
-	// one, a batch may get fewer pairs than the dense solver's.
-	const sentinel = rows * (grid.width + grid.height - 2) + 1;
+	// (ADR 0051), and no match cost exceeds that plus maxRatingPenalty (ADR
+	// 0057). An off-grid cell is bad input from another service; with one, a
+	// batch may get fewer pairs than the dense solver's.
+	const sentinel = rows * (grid.width + grid.height - 2 + maxRatingPenalty) + 1;
 	const rowPotential = new Float64Array(rows);
 	const columnOfRow = new Int32Array(rows).fill(unmatched);
 	// Touched drivers (columns), in the order paths reached them. Each path
@@ -183,6 +187,7 @@ export function minCostMatchingByNearest(
 	const columnOf = new Map<DriverId, number>();
 	const touchedXs = new Int32Array(rows);
 	const touchedYs = new Int32Array(rows);
+	const touchedPenalties = new Int32Array(rows);
 	const columnPotential = new Float64Array(rows);
 	const rowOfColumn = new Int32Array(rows);
 	const allowedOfColumn = new Uint8Array(rows);
@@ -197,14 +202,14 @@ export function minCostMatchingByNearest(
 	// Per path, by visited row: the row and when it was reached.
 	const pathRows: number[] = [];
 	const pathReachedAt: number[] = [];
-	// Each trip's nearest allowed untouched driver. Untouched drivers only
-	// shrink, so it stays the nearest until it is touched.
+	// Each trip's allowed untouched driver of least match cost. Untouched
+	// drivers only shrink, so it stays the cheapest until it is touched.
 	const cached: (Untouched | undefined)[] = new Array(rows);
 	// Trips with no allowed untouched driver left: stays so for the batch.
 	const noneAllowed = new Uint8Array(rows);
 
-	// The cheapest untouched driver for a row: its nearest allowed one, else
-	// any untouched one at the sentinel cost.
+	// The cheapest untouched driver for a row: its allowed one of least match
+	// cost, else any untouched one at the sentinel cost.
 	const untouched = (row: number, trip: MatchTrip): Untouched => {
 		const hit = cached[row];
 		if (hit !== undefined && !columnOf.has(hit.driverId)) return hit;
@@ -220,7 +225,8 @@ export function minCostMatchingByNearest(
 			const found = {
 				driverId: allowed.driverId,
 				cell: allowed.cell,
-				cost: distance(trip.pickup, allowed.cell),
+				ratingPenalty: allowed.ratingPenalty,
+				cost: distance(trip.pickup, allowed.cell) + allowed.ratingPenalty,
 				allowed: true,
 			};
 			cached[row] = found;
@@ -258,7 +264,7 @@ export function minCostMatchingByNearest(
 							trip.pickup,
 							at(touchedXs, column),
 							at(touchedYs, column),
-						)
+						) + at(touchedPenalties, column)
 					: sentinel;
 				const reduced = base + cost - at(columnPotential, column);
 				if (reduced < at(key, column)) {
@@ -306,6 +312,7 @@ export function minCostMatchingByNearest(
 		columnOf.set(end.driverId, column);
 		touchedXs[column] = end.cell.x;
 		touchedYs[column] = end.cell.y;
+		touchedPenalties[column] = end.ratingPenalty;
 		columnPotential[column] = 0;
 		let previous = end.from;
 		let allowed = end.allowed;
@@ -333,6 +340,7 @@ export function minCostMatchingByNearest(
 type Untouched = {
 	driverId: DriverId;
 	cell: Cell;
+	ratingPenalty: number;
 	cost: number;
 	allowed: boolean;
 };
