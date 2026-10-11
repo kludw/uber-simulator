@@ -122,6 +122,16 @@ Checked 2026-10-11 on branch `351-show-pooling-in-the-ui`, page in the built-in 
 
 Pooling off: the panel's rows every 60 ticks of in-process runs of the README's spec and heavy seeds (seed 42, 3,600 ticks) are identical to master's. Cost: applying a 100k run's first 120 ticks of events (101,164) takes 182-199 ms on master and on the branch alike (two runs each, median of 7 rounds), so the 400k decode + apply measured above stands; the heatmap and its frame are unchanged.
 
+## Ratings ([#369](https://github.com/kludw/uber-simulator/issues/369))
+
+[ADR 0057](adr/0057-weigh-driver-ratings-into-matching.md)'s UI: the view counts each `rider.rated_driver` and sums its stars (two numbers, no per-driver rating: out of scope in the ADR). Once any rating arrives, the panel adds ratings and mean stars (two decimals, as `bun run sim` prints them), last, after revenue when surge or pooling is on too. Dots and heatmap unchanged. Like the other counters they cover what the page saw: a page watching from the start agrees with the summary (test: `src/ui/view.test.ts`; on the README's spec seed 42, ratings on: 474 ratings, mean stars 4.22 in both); a page joining mid-run shows less. Ratings off: no `rider.rated_driver`, no rating rows.
+
+Checked 2026-10-11 on branch `369-show-ratings-in-the-ui`, `RATINGS=on bun run demo` (100k, heatmap), page in headless Chrome at 800 × 600: at tick 246, 1,723 ratings, mean stars 4.18.
+
+![100k drivers, ratings on: heatmap with ratings and mean stars in the panel](images/ui-ratings-100k.jpg)
+
+Ratings off: the panel's rows every 60 ticks of in-process runs of the README's seeds (seed 42, 3,600 ticks: spec greedy and batched, busy city, heavy greedy and batched, heavy with surge on, heavy and spec with pooling on) are identical to master's.
+
 ## Decision
 
 [ADR 0053](adr/0053-scale-the-ui-in-the-browser.md): keep the direct NATS subscription; the view keeps drivers by driver index in typed arrays and updates in place, so applying a message costs its own size; above 10,000 drivers (chosen: dots measured at 10k and 100k only) the canvas draws a tile heatmap once per tick instead of a dot per driver.

@@ -923,9 +923,13 @@ describe("ratings", () => {
 		const run = runInProcess({ ...config, keepEventLog: true });
 		const view = viewOf(run.eventLog.filter(isSimEvent));
 		const summary = summarize(config, run);
-		expect({
+		const page: { ratings: number; meanStars: number | null } = {
 			ratings: view.ratings,
 			meanStars: view.stars / view.ratings,
-		}).toEqual({ ratings: summary.ratings, meanStars: summary.meanStars });
+		};
+		expect(page).toEqual({
+			ratings: summary.ratings,
+			meanStars: summary.meanStars,
+		});
 	});
 });
