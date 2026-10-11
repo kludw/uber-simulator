@@ -60,3 +60,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0054 | [Price trips with zone surge](0054-price-trips-with-zone-surge.md) | Accepted |
 | 0055 | [Idle drivers chase the nearest surge area](0055-idle-drivers-chase-surge.md) | Accepted |
 | 0056 | [Pool two riders going the same way](0056-pool-two-riders-going-the-same-way.md) | Accepted |
+| 0057 | [Weigh driver ratings into matching](0057-weigh-driver-ratings-into-matching.md) | Accepted |

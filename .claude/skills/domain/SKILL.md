@@ -111,6 +111,17 @@ Decided; the rules are in `src/shared/pool.ts` (`joinEtaOf`, `partnerDropsFirst`
 - **Shared trip**: a completed trip that had another trip on its driver while it was active.
 - **Pooled fare**: a pooled trip's fare, `round((250 + 2 × distance) × surge × 0.75)`, fixed at request whether or not anyone joins.
 
+## Ratings (0057)
+
+Decided, not yet in code (lands with #332, #333). Off by default (`--ratings on|off` for `bun run sim` and `bun run bench`, `RATINGS` for `bun run dev`, `SimConfig.ratings`); with ratings off no rider rates and dispatch keeps no ratings. `bun run sim -- --compare-ratings`: the configured run with ratings off and on, side by side.
+
+- **Rating**: a rider's verdict on its driver when its trip completes, `rider.rated_driver`; one per completed trip whose rider saw its pickup, none for cancelled trips.
+- **Stars**: a rating's value, an integer 1-5: `clamp(round(driver quality − wait penalty − detour penalty + noise), 1, 5)`. Wait penalty: 1 star per 120 ticks from request to pickup beyond 60. Detour penalty: 2 stars per 100% of ride ticks (pickup to completion) over direct distance. Noise: uniform in [−1, 1), child stream `rating:<tripId>` (riders only).
+- **Driver quality**: how riders find a driver, uniform in [3.5, 5.0), from the riders' child stream `quality:<driverId>`, the same for every rider. Hidden: never in a message, unknown to dispatch and drivers.
+- **Average rating**: a driver's stars sum / ratings count, kept by every dispatch for the whole fleet by driver index (a view from `rider.rated_driver`); none until rated.
+- **Rating penalty**: `round(10 × (5 − average rating))` cells, 0 to 40; 0 when unrated.
+- **Match cost**: pickup distance + rating penalty. With ratings on, greedy matching takes the idle driver of least match cost (ties to the lowest ID) and batched the least total match cost; with no rating it equals pickup distance.
+
 ## Events
 
 1. Named `<entity>.<past-tense-verb>`:
@@ -121,10 +132,11 @@ Decided; the rules are in `src/shared/pool.ts` (`joinEtaOf`, `partnerDropsFirst`
    - `drivers.moved` (tick, `fleetSize`, `driverIndexes`, `xs`, `ys`: move i is the driver with index `driverIndexes[i]` to cell `(xs[i], ys[i])`, 0052): one shard's moves of one tick owned by one region (idle: cell before the move; busy: trip's, 0050), at most 5,000 per message, regions in index order, published before the shard's other events of that tick; none when no driver moved (0045, shape 0047). Built with `driversMoved`, read with `forEachMove` (`src/shared/messages.ts`), each visit one **move** (driver ID and cell); `forEachDriverAt` reads either message as driver index and coordinates without a Cell (dispatch, which keeps its drivers in an array by index and rejects a message whose `fleetSize` differs from its config, `fleet_size_mismatch`).
    - `zones.priced` (tick, `region`, `zones`: `{ zone, surge }` per zone of the region above 1.0, in zone order; zones not listed are 1.0): one region's prices every pricing tick, empty when nothing surges (0054). Carries a region but is not regioned: one subject for every subscriber.
    - `rider.declined_surge` (tick, `riderId`, `pickup`, `surge`): the first rider event (0054).
+   - `rider.rated_driver` (tick, `riderId`, `tripId`, `driverId`, `stars`): a rating, with ratings on (0057, decided, not yet in code). Not regioned: every dispatch takes every rating.
    - With surge on, `request_trip` carries the rider's quote as `surge`, and `trip.requested` the trip's `surge` and `fare` (both or neither).
 2. Same name used as event `type` in code, NATS subject suffix, ClickHouse event type value.
 3. Invalid state transition = domain error (see `errors` skill), never silently ignored.
 
 ## Not in scope yet
 
-Ratings, real roads/routing, more than two riders per driver. Don't model until asked.
+Real roads/routing, more than two riders per driver, drivers rating riders, deactivating drivers by rating. Don't model until asked.
