@@ -24,6 +24,7 @@ import {
 	Tick,
 	TripId,
 } from "./messages.ts";
+import { Stars } from "./rating.ts";
 import { Region } from "./regions.ts";
 import { Fare, Surge, Zone } from "./surge.ts";
 
@@ -234,6 +235,15 @@ const samples: Message[] = [
 		pooled: true,
 	},
 	{ type: "offer", tripId, driverId, pickup, dropoff, pooled: true },
+	// Ratings (ADR 0057).
+	{
+		type: "rider.rated_driver",
+		tick,
+		riderId,
+		tripId,
+		driverId,
+		stars: Stars.parse(4),
+	},
 ];
 
 test.each(samples.map((message) => [message.type, message]))(
@@ -274,6 +284,15 @@ const onePriced = {
 	tick: 1,
 	region: 0,
 	zones: [{ zone: 0, surge: 1.5 }],
+};
+
+const oneRating = {
+	type: "rider.rated_driver",
+	tick: 1,
+	riderId: "r-1",
+	tripId: "t-1",
+	driverId: "d-1",
+	stars: 4,
 };
 
 const invalidInputs: [string, unknown][] = [
@@ -469,6 +488,10 @@ const invalidInputs: [string, unknown][] = [
 			surge: 2.5,
 		},
 	],
+	// Ratings (ADR 0057): stars an integer 1-5.
+	["rating of 0 stars", { ...oneRating, stars: 0 }],
+	["rating of 6 stars", { ...oneRating, stars: 6 }],
+	["rating of 2.5 stars", { ...oneRating, stars: 2.5 }],
 ];
 
 test.each(invalidInputs)("rejects %s as invalid_message", (_case, input) => {

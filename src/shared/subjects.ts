@@ -76,6 +76,7 @@ function kindPrefix(type: Exclude<MessageType, "offer">): string {
 		case "trip.cancelled":
 		case "zones.priced":
 		case "rider.declined_surge":
+		case "rider.rated_driver":
 			return simEventsPrefix;
 		case "request_trip":
 		case "cancel_trip":
