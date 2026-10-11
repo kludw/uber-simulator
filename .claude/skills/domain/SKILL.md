@@ -114,13 +114,14 @@ Decided; the rules are in `src/shared/pool.ts` (`joinEtaOf`, `joinReachOf`, `par
 
 ## Ratings (0057)
 
-Decided; the rules are in `src/shared/rating.ts` (`driverQuality`, `starsOf`, `Stars`, `ratingPenaltyOf`, `ratingWeight`), `rider.rated_driver` in messages and subjects (#363); riders rate with the rider brain's `ratings` start config on (#364), which nothing turns on yet; every dispatch takes ratings and greedy (#365) and batched (#366) matching weigh them. Off by default (`--ratings on|off` for `bun run sim` and `bun run bench`, `RATINGS` for `bun run dev`, `SimConfig.ratings`); with ratings off no rider rates and dispatch keeps no ratings. `bun run sim -- --compare-ratings`: the configured run with ratings off and on, side by side.
+Decided; the rules are in `src/shared/rating.ts` (`driverQuality`, `starsOf`, `Stars`, `ratingPenaltyOf`, `ratingWeight`), `rider.rated_driver` in messages and subjects (#363); riders rate with the rider brain's `ratings` start config on (#364), which nothing turns on yet; every dispatch takes ratings and greedy (#365) and batched (#366) matching weigh them; the invariant checker checks them (#367). Off by default (`--ratings on|off` for `bun run sim` and `bun run bench`, `RATINGS` for `bun run dev`, `SimConfig.ratings`); with ratings off no rider rates and dispatch keeps no ratings. `bun run sim -- --compare-ratings`: the configured run with ratings off and on, side by side.
 
 - **Rating**: a rider's verdict on its driver when its trip completes, `rider.rated_driver`; one per completed trip whose rider saw its pickup, none for cancelled trips.
 - **Stars**: a rating's value, an integer 1-5: `clamp(round(driver quality − wait penalty − detour penalty + noise), 1, 5)`. Wait penalty: 1 star per 120 ticks from request to pickup beyond 60. Detour penalty: 2 stars per 100% of ride ticks (pickup to completion) over direct distance. Noise: uniform in [−1, 1), child stream `rating:<tripId>` (riders only).
 - **Driver quality**: how riders find a driver, uniform in [3.5, 5.0), from the riders' child stream `quality:<driverId>`, the same for every rider. Hidden: never in a message, unknown to dispatch and drivers.
 - **Average rating**: a driver's stars sum / ratings count, kept by every dispatch for the whole fleet by driver index (a view from `rider.rated_driver`); none until rated.
 - **Rating penalty**: `round(10 × (5 − average rating))` cells, 0 to 40; 0 when unrated.
+- **Invalid rating** (`invalid_rating`): the violation of a `rider.rated_driver` whose trip is unknown or not yet completed, or that names another rider or driver than the trip's. **Duplicate rating** (`duplicate_rating`): a completed trip's second rating.
 - **Match cost**: pickup distance + rating penalty. With ratings on, greedy matching takes the idle driver of least match cost (ties to the lowest ID) and batched the least total match cost; with no rating it equals pickup distance.
 
 ## Events
