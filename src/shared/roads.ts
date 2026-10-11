@@ -477,12 +477,23 @@ export const spikeCounts = {
 	wideDistance: 0,
 };
 
+// SPIKE: exit costs per fixed cell, kept for up to 4,096 cells (a batch's
+// pickups), then dropped; the last one also in net.exitCost.
+const exitCosts = new Map<number, Int32Array>();
 function fillExitCosts(net: RoadNetwork, fx: number, fy: number, df: number) {
 	if (net.cacheX === fx && net.cacheY === fy) return;
-	spikeCounts.recompute++;
-	for (let p = 0; p < net.landings; p++) {
-		net.exitCost[p] = exitCostOf(net, p, fx, fy, df);
+	const key = fy * net.width + fx;
+	let costs = exitCosts.get(key);
+	if (costs === undefined) {
+		spikeCounts.recompute++;
+		if (exitCosts.size >= 4096) exitCosts.clear();
+		costs = new Int32Array(net.landings);
+		for (let p = 0; p < net.landings; p++) {
+			costs[p] = exitCostOf(net, p, fx, fy, df);
+		}
+		exitCosts.set(key, costs);
 	}
+	net.exitCost = costs;
 	net.cacheX = fx;
 	net.cacheY = fy;
 }
@@ -516,6 +527,31 @@ export function roadBoundToBox(
 	const df = districtOf(net, fx, fy);
 	const manhattanGap = boxGap(fx, fy, x0, y0, x1, y1);
 	if (df < 0) return manhattanGap;
+	// Most boxes lie in one district (no river inside: band indexes at both
+	// ends equal).
+	const cs = net.columnOf[x0] as number;
+	const rs = net.rowOf[y0] as number;
+	if (cs >= 0 && rs >= 0 && cs === net.columnOf[x1] && rs === net.rowOf[y1]) {
+		const d = rs * net.districtColumns + cs;
+		if (d === df) return manhattanGap;
+		fillExitCosts(net, fx, fy, df);
+		let least = Number.POSITIVE_INFINITY;
+		const list = net.landingsOf[d] as Int32Array;
+		for (let i = 0; i < list.length; i++) {
+			const p = list[i] as number;
+			const bound =
+				boxGap(
+					net.landingX[p] as number,
+					net.landingY[p] as number,
+					x0,
+					y0,
+					x1,
+					y1,
+				) + (net.exitCost[p] as number);
+			if (bound < least) least = bound;
+		}
+		return Math.max(least, manhattanGap);
+	}
 	fillExitCosts(net, fx, fy, df);
 	let best = Number.POSITIVE_INFINITY;
 	let c0 = -1;

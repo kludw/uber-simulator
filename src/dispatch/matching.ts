@@ -6,6 +6,9 @@ import {
 	maxDistance,
 } from "../shared/grid.ts";
 import type { DriverId } from "../shared/messages.ts";
+import { spikeRoads } from "../shared/roads.ts";
+
+const spikeRoadsOn = spikeRoads !== null;
 
 export interface Pair {
 	row: number;
@@ -259,6 +262,19 @@ export function minCostMatchingByNearest(
 			const base = reached - at(rowPotential, row);
 			for (let column = 0; column < touched; column++) {
 				if (visited[column] === 1) continue;
+				// SPIKE (#335): road distance >= Manhattan, so a column Manhattan
+				// can't improve is skipped before the road distance.
+				if (
+					spikeRoadsOn &&
+					base +
+						Math.abs(trip.pickup.x - at(touchedXs, column)) +
+						Math.abs(trip.pickup.y - at(touchedYs, column)) +
+						at(touchedPenalties, column) -
+						at(columnPotential, column) >=
+						at(key, column)
+				) {
+					continue;
+				}
 				const allowed = !trip.excludedDrivers.has(at(touchedIds, column));
 				const cost = allowed
 					? distanceToCoordinates(

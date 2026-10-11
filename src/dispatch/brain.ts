@@ -1,5 +1,5 @@
 import { driverIdAt, driverIndexOf } from "../shared/fleet.ts";
-import { distance, type Grid } from "../shared/grid.ts";
+import { distance, distanceToCoordinates, type Grid } from "../shared/grid.ts";
 import type {
 	CancelTrip,
 	CancelTripAccepted,
@@ -475,7 +475,8 @@ function densePairs(
 		for (const [row, trip] of queued.entries()) {
 			out[row] = trip.excludedDrivers.has(driver.driverId)
 				? Number.POSITIVE_INFINITY
-				: distance(driver.cell, trip.pickup) + driver.ratingPenalty;
+				: distanceToCoordinates(driver.cell, trip.pickup.x, trip.pickup.y) +
+					driver.ratingPenalty;
 		}
 	};
 	return minCostMatching(queued.length, idle.length, { ofRow, ofColumn }).map(

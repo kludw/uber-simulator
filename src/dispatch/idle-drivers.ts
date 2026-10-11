@@ -619,6 +619,8 @@ function searchRings(
 			const step = edgeRow ? 1 : 2 * ring;
 			for (let x = column - ring; x <= column + ring; x += step) {
 				if (x < 0 || x >= drivers.columns) continue;
+				const bucket = drivers.buckets[y * drivers.columns + x] ?? [];
+				if (bucket.length === 0) continue;
 				if (
 					spikeRoads !== null &&
 					!spikeNoBound &&
@@ -635,7 +637,7 @@ function searchRings(
 				) {
 					continue;
 				}
-				for (const driver of drivers.buckets[y * drivers.columns + x] ?? []) {
+				for (const driver of bucket) {
 					if (skip(driver.driverId)) continue;
 					nearest = closer(nearest, driver, pickup);
 				}
