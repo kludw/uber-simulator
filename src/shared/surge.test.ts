@@ -105,21 +105,41 @@ describe("surgeOf", () => {
 
 describe("fareOf", () => {
 	test("is $2.50 plus 2 cents per cell at 1.0", () => {
-		expect(fareOf(cell(0, 0), cell(100, 50), Surge.parse(1))).toBe(
-			Fare.parse(550),
-		);
+		expect(
+			fareOf({ pickup: cell(0, 0), dropoff: cell(100, 50) }, Surge.parse(1)),
+		).toBe(Fare.parse(550));
 	});
 
 	test("is multiplied by the surge", () => {
-		expect(fareOf(cell(0, 0), cell(100, 50), Surge.parse(1.5))).toBe(
-			Fare.parse(825),
-		);
+		expect(
+			fareOf({ pickup: cell(0, 0), dropoff: cell(100, 50) }, Surge.parse(1.5)),
+		).toBe(Fare.parse(825));
 	});
 
 	test("rounds to whole cents", () => {
-		expect(fareOf(cell(0, 0), cell(1, 0), Surge.parse(1.3))).toBe(
-			Fare.parse(328),
-		);
+		expect(
+			fareOf({ pickup: cell(0, 0), dropoff: cell(1, 0) }, Surge.parse(1.3)),
+		).toBe(Fare.parse(328));
+	});
+
+	// Pooled fare (ADR 0056): $2.50 + 3 cells × 2 cents = 256 cents.
+	test("takes 25% off a pooled trip's fare", () => {
+		expect(
+			fareOf(
+				{ pickup: cell(0, 0), dropoff: cell(3, 0), pooled: true },
+				baseSurge,
+			),
+		).toBe(Fare.parse(192));
+	});
+
+	// 256 × 1.1 × 0.75 = 211.2; rounding at 1.1 first (282) would give 212.
+	test("rounds a pooled fare once, after the discount", () => {
+		expect(
+			fareOf(
+				{ pickup: cell(0, 0), dropoff: cell(3, 0), pooled: true },
+				Surge.parse(1.1),
+			),
+		).toBe(Fare.parse(211));
 	});
 });
 
@@ -136,6 +156,8 @@ describe("dollars", () => {
 describe("baseSurge", () => {
 	// $2.50 + 1 cell × 2 cents, unmultiplied.
 	test("prices a fare at base price", () => {
-		expect(fareOf(cell(0, 0), cell(1, 0), baseSurge)).toBe(Fare.parse(252));
+		expect(fareOf({ pickup: cell(0, 0), dropoff: cell(1, 0) }, baseSurge)).toBe(
+			Fare.parse(252),
+		);
 	});
 });

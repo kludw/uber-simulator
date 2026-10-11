@@ -213,6 +213,27 @@ const samples: Message[] = [
 		pickup,
 		surge: Surge.parse(1.8),
 	},
+	// Pooling (ADR 0056).
+	{
+		type: "request_trip",
+		tick,
+		tripId,
+		riderId,
+		pickup,
+		dropoff,
+		region: Region.parse(0),
+		pooled: true,
+	},
+	{
+		type: "trip.requested",
+		tick,
+		tripId,
+		riderId,
+		pickup,
+		dropoff,
+		pooled: true,
+	},
+	{ type: "offer", tripId, driverId, pickup, dropoff, pooled: true },
 ];
 
 test.each(samples.map((message) => [message.type, message]))(
@@ -398,6 +419,20 @@ const invalidInputs: [string, unknown][] = [
 	["request with a surge between tenths", { ...oneRequest, surge: 1.25 }],
 	["trip requested with a zero fare", { ...oneRequested, fare: 0 }],
 	["trip requested with a fractional fare", { ...oneRequested, fare: 2.5 }],
+	// Pooling (ADR 0056): pooled is true or absent.
+	["request pooled false", { ...oneRequest, pooled: false }],
+	["trip requested pooled false", { ...oneRequested, pooled: false }],
+	[
+		"offer pooled as a string",
+		{
+			type: "offer",
+			tripId: "t-1",
+			driverId: "d-1",
+			pickup: { x: 0, y: 0 },
+			dropoff: { x: 0, y: 0 },
+			pooled: "true",
+		},
+	],
 	[
 		"trip requested with a surge but no fare",
 		{ ...oneRequested, surge: 1.2, fare: undefined },

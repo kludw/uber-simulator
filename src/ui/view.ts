@@ -165,7 +165,7 @@ export function applyEvent(view: View, event: SimEvent): void {
 				pickup: event.pickup,
 				dropoff: event.dropoff,
 				requestedAt: event.tick,
-				fare: event.fare ?? fareOf(event.pickup, event.dropoff, baseSurge),
+				fare: event.fare ?? fareOf(event, baseSurge),
 			});
 			return;
 		case "trip.matched": {
