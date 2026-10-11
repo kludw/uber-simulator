@@ -2538,6 +2538,21 @@ describe("decideDispatch pooling", () => {
 		expect(outputs).toEqual([]);
 	});
 
+	test("keeps a driver busy with its first trip once a join offer to it expires", () => {
+		const outputs = offers([
+			...partnerMatched,
+			pooled(2, at(20), at(100)),
+			ticked(2),
+			ticked(3),
+			ticked(4),
+			ticked(5),
+			unpooled(3, at(0), at(80)),
+			ticked(6),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
 	test("offers no join to a partner's driver held offline after declining a join", () => {
 		const outputs = offers([
 			...partnerMatched,
@@ -2677,5 +2692,34 @@ describe("decideDispatch pooling", () => {
 				dropoff: at(80),
 			},
 		]);
+	});
+
+	// No open pooled trip: matching skips the join passes (ADR 0056 rule 4).
+	function openPooledAfter(inputs: DispatchInput[]): number {
+		let state = startDispatch({ grid: poolGrid, fleetSize, tick: tick(0) });
+		for (const input of inputs) {
+			({ state } = decideDispatch(state, input, random));
+		}
+		return state.pooledOpen;
+	}
+
+	test("counts no open pooled trip once its pooled trips are cancelled", () => {
+		const open = openPooledAfter([
+			...partnerMatched,
+			pooled(5, at(200), at(250)),
+			cancelTrip(trip(5)),
+			cancelTrip(trip(1)),
+		]);
+
+		expect(open).toBe(0);
+	});
+
+	test("counts no open pooled trip once both trips of a pool are completed", () => {
+		const open = openPooledAfter([
+			...firstDroppedOff,
+			arrivedAtDropoff(trip(2), d1, at(50)),
+		]);
+
+		expect(open).toBe(0);
 	});
 });
