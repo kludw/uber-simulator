@@ -2488,7 +2488,7 @@ describe("decideDriverShard taking a second rider", () => {
 	const secondOffer = pooledOffer(t2, cell(6, 5), cell(9, 2));
 	const t3 = TripId.parse("t-3");
 	const declinedSecond = {
-		type: "offer_declined",
+		type: "offer_declined" as const,
 		tripId: t2,
 		driverId: d1,
 		region: Region.parse(0),
@@ -2552,6 +2552,133 @@ describe("decideDriverShard taking a second rider", () => {
 		).state;
 		const { outputs } = decideDriverShard(holding, secondOffer, random);
 		expect(outputs).toEqual([{ ...declinedSecond, region: Region.parse(1) }]);
+	});
+
+	// Ticks from..to, feeding each tick's scheduled inputs first and answering
+	// each arrival as dispatch would (trip.picked_up, trip.completed), except
+	// arrivals at unanswered trips' dropoffs. Arrivals in order.
+	function serve(
+		state: DriverShardState,
+		random: Random,
+		ticks: { from: number; to: number },
+		scheduled: Record<number, DriverShardInput[]> = {},
+		unanswered: TripId[] = [],
+	) {
+		const arrivals: { stop: string; tripId: TripId; cell: Cell }[] = [];
+		const outputs: unknown[] = [];
+		const feed = (input: DriverShardInput) => {
+			const decided = decideDriverShard(state, input, random);
+			state = decided.state;
+			outputs.push(...decided.outputs);
+			return decided.outputs;
+		};
+		for (let n = ticks.from; n <= ticks.to; n++) {
+			for (const input of scheduled[n] ?? []) feed(input);
+			for (const output of feed({ type: "clock.ticked", tick: tick(n) })) {
+				if (output.type === "driver.arrived_at_pickup") {
+					arrivals.push({ stop: "pickup", ...output });
+					feed({
+						type: "trip.picked_up",
+						tick: tick(n),
+						tripId: output.tripId,
+						driverId: d1,
+					});
+				}
+				if (output.type === "driver.arrived_at_dropoff") {
+					arrivals.push({ stop: "dropoff", ...output });
+					if (unanswered.includes(output.tripId)) continue;
+					feed({
+						type: "trip.completed",
+						tick: tick(n),
+						tripId: output.tripId,
+						driverId: d1,
+					});
+				}
+			}
+		}
+		return {
+			state,
+			outputs,
+			arrivals: arrivals.map(({ stop, tripId, cell }) => ({
+				stop,
+				tripId,
+				cell,
+			})),
+		};
+	}
+
+	test("driver joined before its partner's pickup picks both up, then drops the partner first when its dropoff is nearer the joining pickup", () => {
+		// From (6, 5): t-1's dropoff (8, 2) is 5 away, t-2's (9, 2) 6.
+		const random = scriptedRandom([0, 0, 0, 0]);
+		const joined = decideDriverShard(
+			holdingPooledTrip(random),
+			secondOffer,
+			random,
+		).state;
+		const { arrivals } = serve(joined, random, { from: 1, to: 20 });
+		expect(arrivals).toEqual([
+			{ stop: "pickup", tripId: t1, cell: cell(5, 5) },
+			{ stop: "pickup", tripId: t2, cell: cell(6, 5) },
+			{ stop: "dropoff", tripId: t1, cell: cell(8, 2) },
+			{ stop: "dropoff", tripId: t2, cell: cell(9, 2) },
+		]);
+	});
+
+	test("driver joined before its partner's pickup drops the joining rider first when its dropoff is nearer the joining pickup", () => {
+		// From (6, 5): t-2's dropoff (7, 4) is 2 away, t-1's (8, 2) 5.
+		const random = scriptedRandom([0, 0, 0, 0]);
+		const joined = decideDriverShard(
+			holdingPooledTrip(random),
+			pooledOffer(t2, cell(6, 5), cell(7, 4)),
+			random,
+		).state;
+		const { arrivals } = serve(joined, random, { from: 1, to: 20 });
+		expect(arrivals).toEqual([
+			{ stop: "pickup", tripId: t1, cell: cell(5, 5) },
+			{ stop: "pickup", tripId: t2, cell: cell(6, 5) },
+			{ stop: "dropoff", tripId: t2, cell: cell(7, 4) },
+			{ stop: "dropoff", tripId: t1, cell: cell(8, 2) },
+		]);
+	});
+
+	test("driver joined while carrying its partner picks the joining rider up, then drops off in the same order", () => {
+		// t-1 picked up at (5, 5) on tick 10; joined before tick 11.
+		const random = scriptedRandom([0, 0, 0, 0]);
+		const { arrivals } = serve(
+			holdingPooledTrip(random),
+			random,
+			{ from: 1, to: 25 },
+			{ 11: [pooledOffer(t2, cell(6, 5), cell(7, 4))] },
+		);
+		expect(arrivals).toEqual([
+			{ stop: "pickup", tripId: t1, cell: cell(5, 5) },
+			{ stop: "pickup", tripId: t2, cell: cell(6, 5) },
+			{ stop: "dropoff", tripId: t2, cell: cell(7, 4) },
+			{ stop: "dropoff", tripId: t1, cell: cell(8, 2) },
+		]);
+	});
+
+	test("driver joined while waiting at its partner's dropoff drops the partner there, then serves the joining trip", () => {
+		// t-1's dropoff reached on tick 16, completed before tick 18.
+		const random = scriptedRandom([0, 0, 0, 0]);
+		const { arrivals } = serve(
+			holdingPooledTrip(random),
+			random,
+			{ from: 1, to: 30 },
+			{
+				17: [pooledOffer(t2, cell(6, 5), cell(7, 4))],
+				18: [
+					{ type: "trip.completed", tick: tick(17), tripId: t1, driverId: d1 },
+				],
+			},
+			[t1],
+		);
+		expect(arrivals).toEqual([
+			{ stop: "pickup", tripId: t1, cell: cell(5, 5) },
+			{ stop: "dropoff", tripId: t1, cell: cell(8, 2) },
+			{ stop: "pickup", tripId: t2, cell: cell(6, 5) },
+			{ stop: "dropoff", tripId: t2, cell: cell(7, 4) },
+		]);
 	});
 
 	test("picky driver holding a pooled trip accepts a pooled offer beyond its max pickup distance, drawing nothing", () => {

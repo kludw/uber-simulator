@@ -32,6 +32,7 @@ import type {
 	ZonesPriced,
 } from "../shared/messages.ts";
 import { driversMoved, driversWentOnline } from "../shared/messages.ts";
+import { partnerDropsFirst } from "../shared/pool.ts";
 import type { Random } from "../shared/random.ts";
 import {
 	oneRegion,
@@ -497,7 +498,41 @@ function joining(
 	if (driver.trips.length !== 1 || driver.region !== region) return null;
 	const [partner] = driver.trips;
 	if (!partner.pooled) return null;
-	return { ...driver, trips: [partner, heldTripOf(offer)] };
+	const joined = heldTripOf(offer);
+	const trips: HeldTrips = [partner, joined];
+	const pickup: Stop = {
+		kind: "pickup",
+		tripId: joined.tripId,
+		cell: joined.pickup,
+	};
+	const joinedDropoff: Stop = {
+		kind: "dropoff",
+		tripId: joined.tripId,
+		cell: joined.dropoff,
+	};
+	const partnerDropoff: Stop = {
+		kind: "dropoff",
+		tripId: partner.tripId,
+		cell: partner.dropoff,
+	};
+	const dropoffs = partnerDropsFirst(partner, joined)
+		? [partnerDropoff, joinedDropoff]
+		: [joinedDropoff, partnerDropoff];
+	switch (driver.state) {
+		// The partner's pickup stays the current stop.
+		case "en_route":
+		case "at_pickup":
+			return { ...driver, trips, next: [pickup, ...dropoffs] };
+		case "on_trip":
+			return toStop(driver, driver.cell, trips, [pickup, ...dropoffs]);
+		// Already at the partner's dropoff: drops it there first.
+		case "at_dropoff":
+			return { ...driver, trips, next: [pickup, joinedDropoff] };
+		default: {
+			const unhandled: never = driver;
+			throw new Error(`unhandled driver state: ${unhandled}`);
+		}
+	}
 }
 
 function heldTripOf(offer: Offer): HeldTrip {
@@ -577,13 +612,32 @@ function onCompleted(
 	if (addressed.tripId !== completed.tripId) {
 		return reject(state, completed, "driver_on_another_trip");
 	}
-	return replaceDriver(state, {
-		state: "idle",
-		id: addressed.id,
-		index: addressed.index,
-		cell: addressed.dropoff,
-		wanderTarget: null,
-	});
+	return replaceDriver(state, withoutTrip(addressed, completed.tripId));
+}
+
+type BusyDriver = Exclude<Driver, IdleDriver | OfflineDriver>;
+
+// The driver without a trip it holds and that trip's stops: on to its next
+// stop if the current one was the trip's, idle when none is left.
+function withoutTrip(driver: BusyDriver, tripId: TripId): Driver {
+	const [first, second] = driver.trips;
+	const kept = first.tripId === tripId ? second : first;
+	const cell = positionOf(driver);
+	if (kept === undefined) return idle(driver, cell);
+	const next = driver.next.filter((stop) => stop.tripId !== tripId);
+	if (driver.tripId !== tripId) return { ...driver, trips: [kept], next };
+	return toStop(driver, cell, [kept], next);
+}
+
+function positionOf(driver: BusyDriver): Cell {
+	switch (driver.state) {
+		case "at_pickup":
+			return driver.pickup;
+		case "at_dropoff":
+			return driver.dropoff;
+		default:
+			return driver.cell;
+	}
 }
 
 function reject(
