@@ -532,15 +532,22 @@ describe("runInProcess", () => {
 		["batched", { type: "batched", windowTicks: 5 }, oneRegion],
 		["greedy at 2x2", { type: "greedy" }, { columns: 2, rows: 2 }],
 	] as const)(
-		"a %s ratings run breaks no invariant and rates drivers",
+		"a %s ratings run breaks no invariant and rates every completed trip",
 		(_, matching, regions) => {
 			const config = { ...ratingsConfig, matching, regions };
 			const result = runInProcess({ ...config, keepEventLog: true });
+			const summary = summarize(config, result);
 
+			// Without message loss every rider sees its pickup and completion.
 			expect({
-				violations: summarize(config, result).violations,
-				rates: ratingsIn(result.eventLog) > 0,
-			}).toEqual({ violations: [], rates: true });
+				violations: summary.violations,
+				completes: summary.trips.completed > 0,
+				ratings: ratingsIn(result.eventLog),
+			}).toEqual({
+				violations: [],
+				completes: true,
+				ratings: summary.trips.completed,
+			});
 		},
 	);
 

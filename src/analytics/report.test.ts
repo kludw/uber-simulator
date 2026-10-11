@@ -321,9 +321,13 @@ describe.skipIf(!config)("run report", () => {
 
 		const report = await succeeded(runReport(clickhouse, runId));
 
-		expect(report.ratings).toEqual({
+		// No rating fails: the report has no count then, the summary 0.
+		expect({
+			count: report.ratings?.count,
+			meanStars: report.ratings?.meanStars ?? null,
+		}).toEqual({
 			count: summary.ratings,
-			meanStars: summary.meanStars ?? Number.NaN,
+			meanStars: summary.meanStars,
 		});
 	});
 
