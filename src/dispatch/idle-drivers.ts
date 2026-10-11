@@ -84,6 +84,15 @@ export function rateDriver(
 			count: new Int32Array(size),
 			penalty,
 		};
+		// Bench stress: every driver already rated 3, 4 or 5 stars once.
+		if (process.env.SPIKE_PREFILL === "1") {
+			const { sum, count } = drivers.ratings;
+			for (let i = 0; i < size; i++) {
+				sum[i] = 3 + (i % 3);
+				count[i] = 1;
+				penalty[i] = penaltyOf(3 + (i % 3), 1);
+			}
+		}
 	}
 	const { sum, count, penalty } = drivers.ratings;
 	sum[index] = (sum[index] ?? 0) + stars;
@@ -528,25 +537,53 @@ function searchRingsRated(
 		drivers.columns - 1 - column,
 		drivers.rows - 1 - row,
 	);
-	let best: Scored;
+	// Locals, not a Scored per improvement: no allocation per candidate.
+	let bestDriver: Driver | undefined;
+	let bestScore = Number.POSITIVE_INFINITY;
 	for (let ring = 0; ring <= lastRing; ring++) {
-		if (best !== undefined && nearestBeyond(pickup, size, ring) > best.score) {
-			break;
-		}
+		if (nearestBeyond(pickup, size, ring) > bestScore) break;
 		for (let y = row - ring; y <= row + ring; y++) {
 			if (y < 0 || y >= drivers.rows) continue;
 			const edgeRow = y === row - ring || y === row + ring;
 			const step = edgeRow ? 1 : 2 * ring;
+			// Least distance from the pickup to this row of buckets.
+			const dy =
+				y < row
+					? pickup.y - (y * size + size - 1)
+					: y > row
+						? y * size - pickup.y
+						: 0;
 			for (let x = column - ring; x <= column + ring; x += step) {
 				if (x < 0 || x >= drivers.columns) continue;
+				const dx =
+					x < column
+						? pickup.x - (x * size + size - 1)
+						: x > column
+							? x * size - pickup.x
+							: 0;
+				// A bucket whose nearest cell is farther than the best score
+				// can't hold a better driver (penalties are >= 0).
+				if (dx + dy > bestScore) continue;
 				for (const driver of drivers.buckets[y * drivers.columns + x] ?? []) {
+					const distance = distanceToCoordinates(pickup, driver.x, driver.y);
+					if (distance > bestScore) continue;
+					const score = distance + (penalty[driver.index] ?? 0);
+					if (score > bestScore) continue;
+					if (
+						score === bestScore &&
+						bestDriver !== undefined &&
+						driver.driverId > bestDriver.driverId
+					) {
+						continue;
+					}
 					if (skip(driver.driverId)) continue;
-					best = better(best, driver, penalty, pickup);
+					bestDriver = driver;
+					bestScore = score;
 				}
 			}
 		}
 	}
-	return best?.driver;
+	return bestDriver;
 }
 
 // Least distance from the pickup to any cell in ring `ring` or beyond, i.e.
