@@ -3,7 +3,8 @@
 // side by side (ADR 0030); or --compare-surge: the configured matching with
 // surge off and on, likewise (ADR 0054); or --compare-pooling: pooling off
 // and on, likewise (ADR 0056); or --compare-ratings: ratings off and on,
-// likewise (ADR 0057).
+// likewise (ADR 0057); or --compare-earnings: earnings off and on, likewise
+// (ADR 0060).
 // Exit codes: 0 ok, 1 invariant violated, 2 invalid args or NATS_URL,
 // 3 NATS unreachable.
 import * as z from "zod";
@@ -31,6 +32,7 @@ const {
 	compareSurge,
 	comparePooling,
 	compareRatings,
+	compareEarnings,
 	windowTicks,
 	demandName,
 	shiftsName,
@@ -52,10 +54,13 @@ const loadLines = [
 	...(config.pooling && !comparePooling ? ["pooling: on"] : []),
 	// Ratings-off output stays as before ratings existed (ADR 0057).
 	...(config.ratings && !compareRatings ? ["ratings: on"] : []),
+	// Earnings-off output stays as before earnings existed (ADR 0060).
+	...(config.earnings && !compareEarnings ? ["earnings: on"] : []),
 ];
 const surge = config.surge ?? false;
 const pooling = config.pooling ?? false;
 const ratings = config.ratings ?? false;
+const earnings = config.earnings ?? false;
 const batched: Matching = { type: "batched", windowTicks };
 const matching: Matching =
 	args.value.matching === "batched" ? batched : { type: "greedy" };
@@ -75,6 +80,7 @@ if (compare) {
 		surge,
 		pooling,
 		ratings,
+		earnings,
 	});
 	printAndFailOnViolations("greedy", greedySummary);
 	printAndFailOnViolations("batched", batchedSummary);
@@ -89,6 +95,7 @@ if (compare) {
 		surge: true,
 		pooling,
 		ratings,
+		earnings,
 	});
 	printAndFailOnViolations("surge off", offSummary);
 	printAndFailOnViolations("surge on", onSummary);
@@ -107,6 +114,7 @@ if (compare) {
 		surge,
 		pooling: true,
 		ratings,
+		earnings,
 	});
 	printAndFailOnViolations("pooling off", offSummary);
 	printAndFailOnViolations("pooling on", onSummary);
@@ -125,9 +133,29 @@ if (compare) {
 		surge,
 		pooling,
 		ratings: true,
+		earnings,
 	});
 	printAndFailOnViolations("ratings off", offSummary);
 	printAndFailOnViolations("ratings on", onSummary);
+} else if (compareEarnings) {
+	const offSummary = summarizeInProcess({
+		...config,
+		matching,
+		earnings: false,
+	});
+	const onSummary = summarizeInProcess({ ...config, matching, earnings: true });
+	console.log(`seed: ${config.seed}`);
+	console.log(`ticks: ${config.ticks}`);
+	console.log(matchingLine);
+	for (const line of loadLines) console.log(line);
+	printComparison(["earnings off", "earnings on"], offSummary, onSummary, {
+		surge,
+		pooling,
+		ratings,
+		earnings: true,
+	});
+	printAndFailOnViolations("earnings off", offSummary);
+	printAndFailOnViolations("earnings on", onSummary);
 } else {
 	const summary = await run({ ...config, matching });
 
@@ -155,6 +183,19 @@ if (compare) {
 		console.log(`ratings: ${summary.ratings}`);
 		console.log(`mean stars: ${summary.meanStars?.toFixed(2) ?? "n/a"}`);
 	}
+	if (summary.earnings) {
+		const { total, perDriver, periods } = summary.earnings;
+		console.log(`driver earnings: ${dollars(total)}`);
+		console.log(
+			`per driver: p10 ${dollars(perDriver.p10)} / median ${dollars(perDriver.median)} / p90 ${dollars(perDriver.p90)}`,
+		);
+		console.log(`mean drivers online: ${summary.meanOnline.toFixed(1)}`);
+		if (periods) {
+			const median =
+				periods.medianEarned === null ? "n/a" : dollars(periods.medianEarned);
+			console.log(`online periods: ${periods.count}, median earned ${median}`);
+		}
+	}
 	console.log(`rejected inputs: ${summary.rejectedInputs}`);
 	console.log(`invariant violations: ${summary.violations.length}`);
 	printAndFailOnViolations(null, summary);
@@ -164,7 +205,12 @@ function printComparison(
 	[firstName, secondName]: [string, string],
 	first: Summary,
 	second: Summary,
-	options: { surge: boolean; pooling: boolean; ratings: boolean },
+	options: {
+		surge: boolean;
+		pooling: boolean;
+		ratings: boolean;
+		earnings: boolean;
+	},
 ): void {
 	const rows = [
 		{ metric: "", first: firstName, second: secondName },

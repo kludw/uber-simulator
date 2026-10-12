@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
 import {
+	type DriverId,
 	driversMoved,
 	driversWentOnline,
 	type Message,
@@ -12,6 +13,7 @@ import {
 import { Stars } from "../shared/rating.ts";
 import { Region } from "../shared/regions.ts";
 import { Fare, Surge } from "../shared/surge.ts";
+import { shiftsNamed } from "./config.ts";
 import {
 	compareSummaries,
 	createSummary,
@@ -372,6 +374,125 @@ describe("summarize ratings", () => {
 	});
 });
 
+// ADR 0060: driver shares of completions' fares, per driver over the fleet,
+// online periods' earned; drivers online at the end of each tick.
+describe("summarize earnings", () => {
+	const earningsConfig = { ...config, earnings: true };
+	const d2 = driverIdAt(fleetSize, DriverIndex.parse(2));
+
+	function completed(
+		tripId: TripId,
+		driverId: DriverId,
+		fare: number,
+	): Message {
+		return {
+			type: "trip.completed",
+			tick: tick(9),
+			tripId,
+			driverId,
+			fare: Fare.parse(fare),
+		};
+	}
+
+	function wentOffline(at: number, earned: number): Message {
+		return {
+			type: "driver.went_offline",
+			tick: tick(at),
+			driverId: d1,
+			cell: cell(0, 0),
+			region: Region.parse(0),
+			earned,
+		};
+	}
+
+	// 254 -> 191 (half up), 1000 -> 750, 400 -> 300.
+	const completions = [
+		completed(t1, d1, 254),
+		completed(t2, d1, 1000),
+		completed(t3, d2, 400),
+	];
+
+	test("totals the driver shares of completions' fares", () => {
+		expect(
+			summarize(earningsConfig, { eventLog: completions, rejected: [] })
+				.earnings?.total,
+		).toBe(1241);
+	});
+
+	// Fleet of 6: d1 941, d2 300, four at 0. Sorted 0 0 0 0 300 941: p10 is
+	// the value at floor(0.1 x 6) = 0, median at 3, p90 at 5.
+	test("gives per-driver p10, median and p90 over the fleet, drivers without a completion at 0", () => {
+		expect(
+			summarize(earningsConfig, { eventLog: completions, rejected: [] })
+				.earnings?.perDriver,
+		).toEqual({ p10: 0, median: 0, p90: 941 });
+	});
+
+	// Sorted 500 1200 2000: the median at floor(0.5 x 3) = 1.
+	test("with shifts counts online periods and their median earned", () => {
+		const log = [
+			wentOffline(5, 2000),
+			wentOffline(9, 500),
+			wentOffline(14, 1200),
+		];
+
+		expect(
+			summarize(
+				{ ...earningsConfig, shifts: shiftsNamed("on") },
+				{ eventLog: log, rejected: [] },
+			).earnings?.periods,
+		).toEqual({ count: 3, medianEarned: 1200 });
+	});
+
+	test("with shifts and no online period ended has no median earned", () => {
+		expect(
+			summarize(
+				{ ...earningsConfig, shifts: shiftsNamed("on") },
+				{ eventLog: completions, rejected: [] },
+			).earnings?.periods,
+		).toEqual({ count: 0, medianEarned: null });
+	});
+
+	test("without shifts has no online periods", () => {
+		expect(
+			summarize(earningsConfig, { eventLog: completions, rejected: [] })
+				.earnings?.periods,
+		).toBeNull();
+	});
+
+	test("with earnings off has no earnings", () => {
+		expect(
+			summarize(config, { eventLog: completions, rejected: [] }).earnings,
+		).toBeNull();
+	});
+
+	// 20 ticks. d1 online from tick 0, offline at 11: online at the end of
+	// ticks 1-10. d2 from 0 to the end: 20. d3 online at 16: ticks 16-20, 5.
+	// (10 + 20 + 5) / 20.
+	test("averages drivers online at the end of each tick", () => {
+		const log: Message[] = [
+			driversWentOnline(tick(0), Region.parse(0), fleetSize, [
+				{ driverIndex: i1, cell: cell(0, 0) },
+				{ driverIndex: DriverIndex.parse(2), cell: cell(1, 0) },
+			]),
+			{
+				type: "driver.went_offline",
+				tick: tick(11),
+				driverId: d1,
+				cell: cell(0, 0),
+				region: Region.parse(0),
+			},
+			driversWentOnline(tick(16), Region.parse(0), fleetSize, [
+				{ driverIndex: DriverIndex.parse(3), cell: cell(2, 0) },
+			]),
+		];
+
+		expect(summarize(config, { eventLog: log, rejected: [] }).meanOnline).toBe(
+			1.75,
+		);
+	});
+});
+
 describe("createSummary", () => {
 	test("summarizes the messages observed as they come", () => {
 		const summary = createSummary(config);
@@ -391,6 +512,9 @@ describe("createSummary", () => {
 			meanTicksToComplete: 1,
 			ratings: 0,
 			meanStars: null,
+			// d1 online for all 20 ticks.
+			meanOnline: 1,
+			earnings: null,
 			rejectedInputs: 2,
 			violations: [],
 		});
@@ -423,6 +547,8 @@ describe("compareSummaries", () => {
 		meanTicksToComplete: 300.04,
 		ratings: 0,
 		meanStars: null,
+		meanOnline: 80,
+		earnings: null,
 		rejectedInputs: 0,
 		violations: [],
 	};
@@ -437,6 +563,12 @@ describe("compareSummaries", () => {
 		meanTicksToComplete: null,
 		ratings: 412,
 		meanStars: 4.2051,
+		meanOnline: 79.46,
+		earnings: {
+			total: 282_004,
+			perDriver: { p10: 1998, median: 2840, p90: 3659 },
+			periods: { count: 109, medianEarned: 2011 },
+		},
 		violations: [
 			{
 				type: "illegal_trip_transition",
@@ -454,6 +586,7 @@ describe("compareSummaries", () => {
 				surge: false,
 				pooling: false,
 				ratings: false,
+				earnings: false,
 			}),
 		).toEqual([
 			{ metric: "trips requested", first: "600", second: "600" },
@@ -475,6 +608,7 @@ describe("compareSummaries", () => {
 				surge: true,
 				pooling: false,
 				ratings: false,
+				earnings: false,
 			}),
 		).toEqual([
 			{ metric: "trips requested", first: "600", second: "600" },
@@ -498,6 +632,7 @@ describe("compareSummaries", () => {
 				surge: false,
 				pooling: true,
 				ratings: false,
+				earnings: false,
 			}),
 		).toEqual([
 			{ metric: "trips requested", first: "600", second: "600" },
@@ -526,6 +661,7 @@ describe("compareSummaries", () => {
 				surge: true,
 				pooling: true,
 				ratings: false,
+				earnings: false,
 			}).map((row) => row.metric),
 		).toEqual([
 			"trips requested",
@@ -548,6 +684,7 @@ describe("compareSummaries", () => {
 				surge: false,
 				pooling: false,
 				ratings: true,
+				earnings: false,
 			}),
 		).toEqual([
 			{ metric: "trips requested", first: "600", second: "600" },
@@ -562,5 +699,56 @@ describe("compareSummaries", () => {
 			{ metric: "mean stars", first: "n/a", second: "4.21" },
 			{ metric: "invariant violations", first: "0", second: "1" },
 		]);
+	});
+
+	// ADR 0060: --compare-earnings' rows; the earnings-off run has none.
+	test("with earnings adds driver earnings, per driver, drivers online and online periods", () => {
+		expect(
+			compareSummaries(greedy, batched, {
+				surge: false,
+				pooling: false,
+				ratings: false,
+				earnings: true,
+			}),
+		).toEqual([
+			{ metric: "trips requested", first: "600", second: "600" },
+			{ metric: "trips completed", first: "550", second: "548" },
+			{ metric: "trips cancelled", first: "20", second: "25" },
+			{
+				metric: "mean ticks from request to pickup",
+				first: "101.3",
+				second: "n/a",
+			},
+			{ metric: "driver earnings", first: "n/a", second: "$2,820.04" },
+			{
+				metric: "per driver p10 / median / p90",
+				first: "n/a",
+				second: "$19.98 / $28.40 / $36.59",
+			},
+			{ metric: "mean drivers online", first: "80.0", second: "79.5" },
+			{ metric: "online periods", first: "n/a", second: "109" },
+			{
+				metric: "median earned per online period",
+				first: "n/a",
+				second: "$20.11",
+			},
+			{ metric: "invariant violations", first: "0", second: "1" },
+		]);
+	});
+
+	test("with earnings but no shifts has no online period rows", () => {
+		const withoutShifts: Summary = {
+			...batched,
+			earnings: batched.earnings && { ...batched.earnings, periods: null },
+		};
+
+		expect(
+			compareSummaries(greedy, withoutShifts, {
+				surge: false,
+				pooling: false,
+				ratings: false,
+				earnings: true,
+			}).map((row) => row.metric),
+		).not.toContain("online periods");
 	});
 });
