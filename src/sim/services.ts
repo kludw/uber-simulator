@@ -53,7 +53,8 @@ export type SimConfig = {
 	// Riders rate drivers (ADR 0057); off when unset. Dispatch acts on the
 	// ratings it sees, so it needs no switch.
 	ratings?: boolean | undefined;
-	// Dispatch keeps each trip's fare and puts it on its completion (ADR
+	// Dispatch keeps each trip's fare and puts it on its completion, driver
+	// shards credit it and, with shifts, end online periods at targets (ADR
 	// 0060); off when unset.
 	earnings?: boolean | undefined;
 };
@@ -161,6 +162,7 @@ export function driverShardService(
 						shifts: config.shifts,
 						preferences: config.preferences,
 						regions: config.regions,
+						earnings: config.earnings,
 					},
 					random,
 				),

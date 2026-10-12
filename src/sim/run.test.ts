@@ -3,6 +3,7 @@ import { connect } from "@nats-io/transport-node";
 import * as z from "zod";
 import type { Matching } from "../dispatch/brain.ts";
 import { cityDemand } from "../rider/demand.ts";
+import { driverShareOf } from "../shared/earnings.ts";
 import { driverIdAt } from "../shared/fleet.ts";
 import { Cell, cellAt, distance } from "../shared/grid.ts";
 import type { DriverId, Message, Tick, TripId } from "../shared/messages.ts";
@@ -208,6 +209,52 @@ describe("runInProcess", () => {
 			completed: completions.length > 0,
 			withoutFare: completions.filter(({ fare }) => fare === undefined).length,
 		}).toEqual({ completed: true, withoutFare: 0 });
+	});
+
+	// ADR 0060: with shifts, drivers report each online period's driver
+	// shares on going offline, some ending it early at their target.
+	describe("with earnings and shifts on", () => {
+		const earningsConfig = {
+			keepEventLog: true as const,
+			seed: 1,
+			ticks: 3600,
+			grid: { width: 500, height: 500 },
+			driverShards: { count: 2, driversPerShard: 50 },
+			requestsPerMinute: 10,
+			shifts: shiftsNamed("on"),
+			earnings: true,
+		};
+
+		test("each driver going offline reports the driver shares of its completions since it went online", () => {
+			const { eventLog } = runInProcess(earningsConfig);
+			const sinceOnline = new Map<DriverId, number>();
+			const mismatches: unknown[] = [];
+			let reported = 0;
+			for (const message of eventLog) {
+				if (message.type === "trip.completed" && message.fare !== undefined) {
+					const earned = sinceOnline.get(message.driverId) ?? 0;
+					sinceOnline.set(
+						message.driverId,
+						earned + driverShareOf(message.fare),
+					);
+				}
+				if (message.type !== "driver.went_offline") continue;
+				const expected = sinceOnline.get(message.driverId) ?? 0;
+				if (message.earned !== expected) mismatches.push(message);
+				if (expected > 0) reported++;
+				sinceOnline.delete(message.driverId);
+			}
+			expect({ reportedEarnings: reported > 0, mismatches }).toEqual({
+				reportedEarnings: true,
+				mismatches: [],
+			});
+		}, 30_000);
+
+		test("same seed and config give an identical event log", () => {
+			expect(runInProcess(earningsConfig).eventLog).toEqual(
+				runInProcess(earningsConfig).eventLog,
+			);
+		}, 30_000);
 	});
 
 	test("same seed and config give an identical event log", () => {

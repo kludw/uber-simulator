@@ -1,3 +1,4 @@
+import { driverShareOf, earningsTarget } from "../shared/earnings.ts";
 import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import {
 	type Cell,
@@ -50,6 +51,7 @@ import {
 } from "../shared/roads.ts";
 import {
 	baseSurge,
+	type Fare,
 	type Surge,
 	Zone,
 	zoneCount,
@@ -181,7 +183,8 @@ type Schedule = {
 // schedule: null when always online. picky: null when accepting all.
 // prices: the last zones.priced per region, by zone; zones not listed are
 // 1.0. pricesChanged: a zones.priced arrived since the last tick, which
-// rebuilds chaseTable (ADR 0055). roads: null with roads off.
+// rebuilds chaseTable (ADR 0055). roads: null with roads off. earnings:
+// null with earnings off.
 export type DriverShardState = {
 	grid: Grid;
 	regions: RegionLayout;
@@ -193,6 +196,16 @@ export type DriverShardState = {
 	pricesChanged: boolean;
 	chaseTable: ChaseTable;
 	roads: Roads | null;
+	earnings: Earnings | null;
+};
+
+// Earnings on (ADR 0060), cents, by the driver's place in the shard (driver
+// index - firstIndex), updated in place (ADR 0033). earned: in the current
+// online period. targets: null without shifts, which have no period to end.
+type Earnings = {
+	firstIndex: DriverIndex;
+	earned: Int32Array;
+	targets: Int32Array | null;
 };
 
 // Roads on (ADR 0059): the network, and the waypoint of each of the shard's
@@ -234,6 +247,8 @@ export function startDriverShard(
 		regions?: RegionLayout;
 		// Missing or null = roads off.
 		roads?: RoadNetwork | null;
+		// Missing = off: no earnings kept, no target drawn (ADR 0060).
+		earnings?: boolean | undefined;
 	},
 	random: Random,
 ): { state: DriverShardState; outputs: DriversWentOnline[] } {
@@ -300,6 +315,10 @@ export function startDriverShard(
 						waypoints: waypointsFor(config.driverCount),
 						firstIndex: config.firstIndex,
 					},
+		earnings:
+			config.earnings === true
+				? startEarnings(config.firstIndex, placed, schedule !== null, random)
+				: null,
 	};
 	const online: ByRegion = new Map();
 	for (const driver of drivers.values()) {
@@ -315,6 +334,39 @@ export function startDriverShard(
 			driversWentOnline(config.tick, region, config.fleetSize, chunk),
 		),
 	};
+}
+
+// Each target from its driver's own stream, so no other draw shifts.
+function startEarnings(
+	firstIndex: DriverIndex,
+	drivers: readonly { id: DriverId }[],
+	withShifts: boolean,
+	random: Random,
+): Earnings {
+	return {
+		firstIndex,
+		earned: new Int32Array(drivers.length),
+		targets: withShifts
+			? Int32Array.from(drivers, ({ id }) => earningsTarget(random, id))
+			: null,
+	};
+}
+
+// The driver share of a completed trip's fare; nothing with earnings off.
+function credit(
+	earnings: Earnings | null,
+	driver: { index: DriverIndex },
+	fare: Fare | undefined,
+): void {
+	if (earnings === null || fare === undefined) return;
+	const i = driver.index - earnings.firstIndex;
+	earnings.earned[i] = (earnings.earned[i] ?? 0) + driverShareOf(fare);
+}
+
+function reachedTarget(earnings: Earnings | null, index: DriverIndex): boolean {
+	if (earnings === null || earnings.targets === null) return false;
+	const i = index - earnings.firstIndex;
+	return (earnings.earned[i] ?? 0) >= (earnings.targets[i] ?? 0);
 }
 
 // accept_all takes no preference streams, so default runs stay unchanged.
@@ -658,6 +710,7 @@ function onCompleted(
 	if (addressed.tripId !== completed.tripId) {
 		return reject(state, completed, "driver_on_another_trip");
 	}
+	credit(state.earnings, addressed, completed.fare);
 	return replaceDriver(state, withoutTrip(addressed, completed.tripId));
 }
 
@@ -761,6 +814,9 @@ function onTripStatus(state: DriverShardState, status: TripStatus): Decision {
 		status.stage === "dropoff" &&
 		status.status !== "picked_up"
 	) {
+		if (status.status === "completed") {
+			credit(state.earnings, addressed, status.fare);
+		}
 		return replaceDriver(state, withoutTrip(addressed, status.tripId));
 	}
 	return ignored;
@@ -824,7 +880,7 @@ function onTick(
 		const changed =
 			schedule === null
 				? null
-				: changeShift(driver, schedule, input.tick, random);
+				: changeShift(driver, schedule, input.tick, random, state.earnings);
 		if (schedule !== null && changed !== null) {
 			drivers.set(driver.id, changed.driver);
 			schedule.periods.set(driver.id, changed.period);
@@ -833,13 +889,9 @@ function onTick(
 			if (changed.driver.state === "idle") {
 				inRegion(online, region).push({ driverIndex: driver.index, cell });
 			} else {
-				outputs.push({
-					type: "driver.went_offline",
-					tick: input.tick,
-					driverId: driver.id,
-					cell,
-					region,
-				});
+				outputs.push(
+					wentOffline(state.earnings, driver, input.tick, cell, region),
+				);
 			}
 			continue;
 		}
@@ -964,20 +1016,49 @@ function inChunks<Entry, Batch>(
 	return chunks;
 }
 
-// Ends the driver's current period if it is over; the next one starts this
-// tick. A driver on a trip finishes it first: its online period runs over
-// until it is idle (ADR 0032). null: no change.
+// With earnings on, reports the online period's earned and resets it.
+function wentOffline(
+	earnings: Earnings | null,
+	driver: { id: DriverId; index: DriverIndex },
+	tick: Tick,
+	cell: Cell,
+	region: Region,
+): DriverWentOffline {
+	const offline: DriverWentOffline = {
+		type: "driver.went_offline",
+		tick,
+		driverId: driver.id,
+		cell,
+		region,
+	};
+	if (earnings === null) return offline;
+	const i = driver.index - earnings.firstIndex;
+	const earned = earnings.earned[i] ?? 0;
+	earnings.earned[i] = 0;
+	return { ...offline, earned };
+}
+
+// Ends the driver's current period if it is over, or an idle driver's online
+// period once its earned reached its target (ADR 0060); the next one starts
+// this tick. A driver on a trip finishes it first: its online period runs
+// over until it is idle (ADR 0032). null: no change.
 function changeShift(
 	driver: Driver,
 	schedule: Schedule,
 	tick: Tick,
 	random: Random,
+	earnings: Earnings | null,
 ): { driver: IdleDriver | OfflineDriver; period: Period } | null {
 	const period = schedule.periods.get(driver.id);
 	if (period === undefined) {
 		throw new Error(`driver ${driver.id} without a shift period`);
 	}
-	if (tick - period.startedAt < period.ticks) return null;
+	if (
+		tick - period.startedAt < period.ticks &&
+		!(driver.state === "idle" && reachedTarget(earnings, driver.index))
+	) {
+		return null;
+	}
 	if (driver.state !== "offline" && driver.state !== "idle") return null;
 	const n = period.n + 1;
 	const goingOnline = driver.state === "offline";
