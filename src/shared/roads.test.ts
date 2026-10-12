@@ -325,6 +325,43 @@ for (const name of names) {
 				expect(wrong).toEqual([]);
 			});
 		}
+
+		test("a driver sent elsewhere in its own district, then back to its old target, arrives in exactly the road distance", () => {
+			const random = createRandom(41);
+			const waypoints = waypointsFor(1);
+			const wrong: string[] = [];
+			for (let i = 0; i < 25; i++) {
+				const start = randomRoadCell(network, random);
+				let target = randomRoadCell(network, random);
+				while (sameDistrict(network, start, target)) {
+					target = randomRoadCell(network, random);
+				}
+				let at = roadStep(network, waypoints, 0, start, target);
+				// Far across its own district, so the best exit there changes.
+				let detour = randomRoadCell(network, random);
+				while (!sameDistrict(network, at, detour)) {
+					detour = randomRoadCell(network, random);
+				}
+				while (at.x !== detour.x || at.y !== detour.y) {
+					at = roadStep(network, waypoints, 0, at, detour);
+				}
+				const turnedBack = at;
+				const want = bfsFrom(network, target)[
+					turnedBack.y * grid.width + turnedBack.x
+				] as number;
+				let moves = 0;
+				while ((at.x !== target.x || at.y !== target.y) && moves <= want) {
+					at = roadStep(network, waypoints, 0, at, target);
+					moves++;
+				}
+				if (moves !== want || at.x !== target.x || at.y !== target.y) {
+					wrong.push(
+						`(${turnedBack.x}, ${turnedBack.y}) back toward (${target.x}, ${target.y}): ${moves} moves, road distance ${want}`,
+					);
+				}
+			}
+			expect(wrong).toEqual([]);
+		});
 	});
 }
 
