@@ -43,6 +43,8 @@ export const DriverWentOffline = z.object({
 	driverId: DriverId,
 	cell: Cell,
 	region: OwningRegion,
+	// The online period's earnings in cents, with earnings on (ADR 0060).
+	earned: z.int().nonnegative().optional(),
 });
 export type DriverWentOffline = z.infer<typeof DriverWentOffline>;
 
@@ -214,6 +216,8 @@ export const TripCompleted = z.object({
 	tick: Tick,
 	tripId: TripId,
 	driverId: DriverId,
+	// The trip's fare as fixed at request, with earnings on (ADR 0060).
+	fare: Fare.optional(),
 });
 export type TripCompleted = z.infer<typeof TripCompleted>;
 
@@ -420,6 +424,8 @@ export const TripStatus = z.object({
 	driverId: DriverId,
 	stage: Stage,
 	status: z.enum(["picked_up", "completed", "released"]),
+	// The trip's fare on completed, with earnings on (ADR 0060).
+	fare: Fare.optional(),
 });
 export type TripStatus = z.infer<typeof TripStatus>;
 
