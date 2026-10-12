@@ -5,6 +5,7 @@ import {
 	type Coordinate,
 	cellIn,
 	type Grid,
+	specGrid,
 } from "../shared/grid.ts";
 import type { DriverId } from "../shared/messages.ts";
 import { createRandom } from "../shared/random.ts";
@@ -15,6 +16,13 @@ import {
 	RegionLayout,
 	regionBounds,
 } from "../shared/regions.ts";
+import {
+	isDrivable,
+	isRoadCell,
+	type RoadNetwork,
+	roadDistance,
+	roadNetworkNamed,
+} from "../shared/roads.ts";
 import { Zone } from "../shared/surge.ts";
 import {
 	anyDriverRated,
@@ -932,4 +940,168 @@ function expectLinearPartnerPicks(seed: number): void {
 
 		expect({ run, found }).toEqual({ run, found: expected });
 	}
+}
+
+// ADR 0059: with roads on, every search is by road distance (match cost by
+// road with ratings), still exact: what a linear scan by road distance
+// returns, ties to the lowest ID.
+describe.each(["river", "canals"] as const)("searches on %s roads", (name) => {
+	const network = roadNetworkNamed(name, specGrid);
+
+	test("nearestIdle returns exactly what a linear scan by road distance returns", () => {
+		expectRoadScanPicks(network, 385, "nearest");
+	});
+
+	test("leastMatchCostIdle returns exactly what a linear scan by road match cost returns", () => {
+		expectRoadScanPicks(network, 386, "rated");
+	});
+
+	test("nearestIdleSkipping returns exactly what a linear scan by road distance returns, however drivers are rated", () => {
+		expectRoadScanPicks(network, 387, "skipping");
+	});
+});
+
+// As expectLinearScanPicks on the spec grid with a road network: drivers on
+// drivable cells (bridges too, mid-crossing) and pickups on road cells, most
+// near one random bridge so searches cross its river, the rest anywhere.
+function expectRoadScanPicks(
+	network: RoadNetwork,
+	seed: number,
+	search: "nearest" | "rated" | "skipping",
+): void {
+	const random = createRandom(seed);
+	const drivable = (near: Cell | null, road: boolean): Cell => {
+		for (;;) {
+			const at = (
+				near === null
+					? { x: random.int(0, 499), y: random.int(0, 499) }
+					: {
+							x: Math.min(499, Math.max(0, near.x + random.int(-40, 40))),
+							y: Math.min(499, Math.max(0, near.y + random.int(-40, 40))),
+						}
+			) as Cell;
+			if (
+				road ? isRoadCell(network, at.x, at.y) : isDrivable(network, at.x, at.y)
+			)
+				return at;
+		}
+	};
+	for (let run = 0; run < 200; run++) {
+		const bridge = network.bridges[
+			random.int(0, network.bridges.length - 1)
+		] as Cell;
+		const near = () => (random.int(0, 4) === 0 ? null : bridge);
+		const scenarioFleet = 100;
+		const index = startIdleDrivers(
+			specGrid,
+			scenarioFleet,
+			undefined,
+			{
+				cellsPerBucket: random.int(1, 16),
+				linearScanBelow: random.int(0, 1) === 0 ? 0 : random.int(0, 40),
+			},
+			network,
+		);
+		const model = {
+			cells: new Map<DriverId, Cell>(),
+			busy: new Set<DriverId>(),
+			ratings: new Map<DriverId, { sum: number; count: number }>(),
+		};
+		const found: (DriverId | undefined)[] = [];
+		const expected: (DriverId | undefined)[] = [];
+		for (let step = 0; step < 200; step++) {
+			const action = random.int(0, search === "nearest" ? 9 : 11);
+			const driverIndex = DriverIndex.parse(random.int(0, scenarioFleet - 1));
+			const driverId = driverIdAt(scenarioFleet, driverIndex);
+			if (action >= 10) {
+				const given = random.int(1, 5);
+				rateDriver(index, driverIndex, Stars.parse(given));
+				const rating = model.ratings.get(driverId) ?? { sum: 0, count: 0 };
+				model.ratings.set(driverId, {
+					sum: rating.sum + given,
+					count: rating.count + 1,
+				});
+			} else if (action <= 4) {
+				const at = drivable(near(), random.int(0, 9) !== 0);
+				placeDriverAt(index, driverIndex, at.x, at.y);
+				model.cells.set(driverId, at);
+			} else if (action === 5) {
+				removeDriver(index, driverId);
+				model.cells.delete(driverId);
+			} else if (
+				action === 6 &&
+				model.cells.has(driverId) &&
+				!model.busy.has(driverId)
+			) {
+				markBusy(index, driverId);
+				model.busy.add(driverId);
+			} else if (action === 7 && model.busy.has(driverId)) {
+				markFree(index, driverId);
+				model.busy.delete(driverId);
+			} else if (action >= 8) {
+				const pickup = drivable(near(), true);
+				const excluded = new Set(
+					[...model.cells.keys()].filter(() => random.int(0, 9) === 0),
+				);
+				const nearest =
+					search === "nearest"
+						? nearestIdle(index, pickup, excluded)
+						: search === "rated"
+							? leastMatchCostIdle(index, pickup, excluded)
+							: nearestIdleSkipping(index, pickup, (driverId) =>
+									excluded.has(driverId),
+								)?.driverId;
+				found.push(nearest);
+				expected.push(
+					roadScan(
+						network,
+						model,
+						pickup,
+						excluded,
+						search === "rated" ? model.ratings : new Map(),
+					),
+				);
+				if (nearest !== undefined && !model.busy.has(nearest)) {
+					markBusy(index, nearest);
+					model.busy.add(nearest);
+				}
+			}
+		}
+
+		expect({ run, found }).toEqual({ run, found: expected });
+	}
+}
+
+// Reference: sort every idle, not excluded driver by (road distance +
+// rating penalty, ID).
+function roadScan(
+	network: RoadNetwork,
+	model: {
+		cells: ReadonlyMap<DriverId, Cell>;
+		busy: ReadonlySet<DriverId>;
+	},
+	pickup: Cell,
+	excluded: ReadonlySet<DriverId>,
+	ratings: ReadonlyMap<DriverId, { sum: number; count: number }>,
+): DriverId | undefined {
+	const penalty = (driverId: DriverId): number => {
+		const rating = ratings.get(driverId);
+		return rating === undefined
+			? 0
+			: Math.round(10 * (5 - rating.sum / rating.count));
+	};
+	const [nearest] = [...model.cells]
+		.filter(
+			([driverId]) => !model.busy.has(driverId) && !excluded.has(driverId),
+		)
+		.map(([driverId, at]) => ({
+			driverId,
+			cost: roadDistance(network, at, pickup) + penalty(driverId),
+		}))
+		.toSorted(
+			(a, b) =>
+				a.cost - b.cost ||
+				(a.driverId < b.driverId ? -1 : a.driverId > b.driverId ? 1 : 0),
+		);
+	return nearest?.driverId;
 }

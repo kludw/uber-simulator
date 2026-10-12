@@ -17,6 +17,7 @@ describe("joinEtaOf", () => {
 				cell(0, 0),
 				{ pickup: cell(10, 0), dropoff: cell(100, 0), rideSoFar: null },
 				{ pickup: cell(20, 0), dropoff: cell(90, 0) },
+				null,
 			),
 		).toBe(20);
 	});
@@ -28,6 +29,7 @@ describe("joinEtaOf", () => {
 				cell(0, 0),
 				{ pickup: cell(60, 0), dropoff: cell(300, 0), rideSoFar: null },
 				{ pickup: cell(120, 0), dropoff: cell(250, 0) },
+				null,
 			),
 		).toBe(120);
 	});
@@ -38,6 +40,7 @@ describe("joinEtaOf", () => {
 				cell(0, 0),
 				{ pickup: cell(60, 0), dropoff: cell(300, 0), rideSoFar: null },
 				{ pickup: cell(121, 0), dropoff: cell(250, 0) },
+				null,
 			),
 		).toBeNull();
 	});
@@ -50,6 +53,7 @@ describe("joinEtaOf", () => {
 				cell(0, 0),
 				{ pickup: cell(0, 0), dropoff: cell(10, 0), rideSoFar: null },
 				{ pickup: cell(0, 0), dropoff: cell(0, 40) },
+				null,
 			),
 		).toBe(0);
 	});
@@ -60,6 +64,7 @@ describe("joinEtaOf", () => {
 				cell(0, 0),
 				{ pickup: cell(0, 0), dropoff: cell(10, 0), rideSoFar: null },
 				{ pickup: cell(0, 0), dropoff: cell(0, 39) },
+				null,
 			),
 		).toBeNull();
 	});
@@ -72,6 +77,7 @@ describe("joinEtaOf", () => {
 				cell(0, 0),
 				{ pickup: cell(0, 0), dropoff: cell(0, 40), rideSoFar: null },
 				{ pickup: cell(0, 5), dropoff: cell(10, 5) },
+				null,
 			),
 		).toBe(5);
 	});
@@ -82,6 +88,7 @@ describe("joinEtaOf", () => {
 				cell(0, 0),
 				{ pickup: cell(0, 0), dropoff: cell(0, 39), rideSoFar: null },
 				{ pickup: cell(0, 5), dropoff: cell(10, 5) },
+				null,
 			),
 		).toBeNull();
 	});
@@ -94,6 +101,7 @@ describe("joinEtaOf", () => {
 				cell(0, 10),
 				{ pickup: cell(0, 0), dropoff: cell(0, 40), rideSoFar: 30 },
 				{ pickup: cell(0, 20), dropoff: cell(0, 30) },
+				null,
 			),
 		).toBe(10);
 	});
@@ -104,6 +112,7 @@ describe("joinEtaOf", () => {
 				cell(0, 10),
 				{ pickup: cell(0, 0), dropoff: cell(0, 40), rideSoFar: 31 },
 				{ pickup: cell(0, 20), dropoff: cell(0, 30) },
+				null,
 			),
 		).toBeNull();
 	});
@@ -116,8 +125,44 @@ describe("joinEtaOf", () => {
 				cell(0, 40),
 				{ pickup: cell(0, 0), dropoff: cell(0, 40), rideSoFar: 40 },
 				{ pickup: cell(0, 10), dropoff: cell(0, 15) },
+				null,
 			),
 		).toBe(30);
+	});
+});
+
+// River preset (ADR 0059): one river along row 263, its western bridge at
+// (90, 263), landings (90, 262) and (90, 264).
+describe("joinEtaOf on roads", () => {
+	const river = roadNetworkNamed("river", { width: 500, height: 500 });
+
+	// The partner aboard since (100, 300), heading north to (100, 200); the
+	// driver at (100, 270), 14 south of the joining pickup by Manhattan,
+	// crosses at (90, 263): 16 to the landing, 2 across, 16 on.
+	test("is the driver's road distance to the joining pickup", () => {
+		expect(
+			joinEtaOf(
+				cell(100, 270),
+				{ pickup: cell(100, 300), dropoff: cell(100, 200), rideSoFar: 30 },
+				{ pickup: cell(100, 256), dropoff: cell(100, 230) },
+				river,
+			),
+		).toBe(34);
+	});
+
+	// Joining at the driver's cell (100, 256) to (100, 270) across the river:
+	// direct 34 by road (14 by Manhattan), so its limit is 51; the partner's
+	// dropoff (92, 256) first, 8 away, then 26 on by road to the joining
+	// dropoff: a ride of 34. By Manhattan, 30 against a limit of 21.
+	test("measures the detour limit by road", () => {
+		expect(
+			joinEtaOf(
+				cell(100, 256),
+				{ pickup: cell(130, 256), dropoff: cell(92, 256), rideSoFar: 30 },
+				{ pickup: cell(100, 256), dropoff: cell(100, 270) },
+				river,
+			),
+		).toBe(0);
 	});
 });
 

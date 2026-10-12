@@ -6,6 +6,7 @@ import {
 	cellAt,
 	cellIn,
 	type Grid,
+	specGrid,
 } from "../shared/grid.ts";
 import {
 	DriverId,
@@ -20,6 +21,7 @@ import {
 import { createRandom } from "../shared/random.ts";
 import { Stars } from "../shared/rating.ts";
 import { Region, RegionLayout } from "../shared/regions.ts";
+import { roadNetworkNamed } from "../shared/roads.ts";
 import { Surge } from "../shared/surge.ts";
 import {
 	type DispatchInput,
@@ -3052,4 +3054,192 @@ describe("decideDispatch earnings", () => {
 			]);
 		},
 	);
+});
+
+// ADR 0059 on the river preset: one river along row 263, its western bridge
+// at (90, 263) between landings (90, 262) and (90, 264). (100, 256) is 14
+// from (100, 270) by Manhattan, 34 by road: 16 to the landing, 2 across, 16
+// on.
+describe("decideDispatch on roads", () => {
+	const river = roadNetworkNamed("river", specGrid);
+	const north = cellAt(100 as Coordinate, 256 as Coordinate);
+	const south = cellAt(100 as Coordinate, 270 as Coordinate);
+	const onRiver = cellAt(100 as Coordinate, 263 as Coordinate);
+	const bridge = cellAt(90 as Coordinate, 263 as Coordinate);
+
+	function at(x: number, y: number): Cell {
+		return cellAt(x as Coordinate, y as Coordinate);
+	}
+
+	type Options = { surge?: boolean; earnings?: boolean };
+
+	function lastOutputs(inputs: DispatchInput[], options: Options = {}) {
+		let state = startDispatch({
+			grid: specGrid,
+			fleetSize,
+			tick: tick(0),
+			roads: river,
+			...options,
+		});
+		let outputs: unknown[] = [];
+		for (const input of inputs) {
+			({ state, outputs } = decideDispatch(state, input, random));
+		}
+		return outputs;
+	}
+
+	function request(tripId: TripId, pickup: Cell, dropoff: Cell): RequestTrip {
+		return { ...requestTrip(tripId, 1), pickup, dropoff };
+	}
+
+	function offeredTo(outputs: unknown[]): DriverId[] {
+		return outputs.flatMap((output) =>
+			(output as { type: string }).type === "trip.offered"
+				? [(output as { driverId: DriverId }).driverId]
+				: [],
+		);
+	}
+
+	test("a nearer driver across the river loses to a farther one on the pickup's side", () => {
+		const outputs = lastOutputs([
+			request(t1, north, at(100, 200)),
+			wentOnline(i1, south),
+			wentOnline(i2, at(100, 230)),
+			ticked(2),
+		]);
+
+		expect(offeredTo(outputs)).toEqual([d2]);
+	});
+
+	test.each([
+		["pickup", onRiver, at(100, 200)],
+		["dropoff", north, onRiver],
+	])("rejects a request whose %s is off road", (_, pickup, dropoff) => {
+		const outputs = lastOutputs([request(t1, pickup, dropoff)]);
+
+		expect(outputs).toEqual([
+			{
+				type: "request_trip_rejected",
+				tripId: t1,
+				error: { type: "off_road_cell", cell: onRiver },
+			},
+		]);
+	});
+
+	test("a rejected off-road request leaves no trip to match", () => {
+		const outputs = lastOutputs([
+			request(t1, onRiver, at(100, 200)),
+			wentOnline(i1, north),
+			ticked(2),
+		]);
+
+		expect(outputs).toEqual([]);
+	});
+
+	const offRoadInputs: DispatchInput[] = [
+		driversMoved(tick(1), Region.parse(0), fleetSize, [
+			{ driverIndex: i2, cell: at(100, 250) },
+			{ driverIndex: i1, cell: onRiver },
+		]),
+		driversWentOnline(tick(1), Region.parse(0), fleetSize, [
+			{ driverIndex: i2, cell: at(100, 250) },
+			{ driverIndex: i1, cell: onRiver },
+		]),
+		wentOffline(d1, onRiver),
+		declined(t1, d1, onRiver),
+		confirmTrip(t1, d1, "pickup", onRiver),
+	];
+
+	test.each(offRoadInputs)("rejects $type with an undrivable cell", (input) => {
+		const outputs = lastOutputs([wentOnline(i1, at(100, 240)), input]);
+
+		expect(outputs).toEqual([
+			{ type: "input_rejected", reason: "off_road_cell", input },
+		]);
+	});
+
+	// d-01 stays idle at (100, 240), 10 from the pickup; had the input been
+	// taken, d-02 at (100, 250) would be nearer, or d-01 gone.
+	test.each(offRoadInputs)(
+		"leaves the view unchanged after rejecting $type",
+		(input) => {
+			const outputs = lastOutputs([
+				wentOnline(i1, at(100, 240)),
+				input,
+				request(t2, at(100, 250), at(100, 200)),
+				ticked(2),
+			]);
+
+			expect(offeredTo(outputs)).toEqual([d1]);
+		},
+	);
+
+	test("takes a driver mid-crossing on a bridge", () => {
+		const outputs = lastOutputs([
+			request(t1, at(90, 256), at(100, 200)),
+			wentOnline(i1, at(90, 240)),
+			driversMoved(tick(1), Region.parse(0), fleetSize, [
+				{ driverIndex: i2, cell: bridge },
+			]),
+			ticked(2),
+		]);
+
+		expect(offeredTo(outputs)).toEqual([d2]);
+	});
+
+	// (250 + 2 × 34) × 1.5 = 477; by Manhattan 14 it would be 417.
+	test("prices a trip by road distance", () => {
+		const outputs = lastOutputs(
+			[{ ...request(t1, north, south), surge: Surge.parse(1.5) }],
+			{ surge: true },
+		);
+
+		expect(outputs[1]).toMatchObject({ surge: 1.5, fare: 477 });
+	});
+
+	// 250 + 2 × 34.
+	test("puts the base fare by road distance on a completion", () => {
+		const outputs = lastOutputs(
+			[
+				request(t1, north, south),
+				wentOnline(i1, north),
+				ticked(2),
+				accepted(t1, d1),
+				arrivedAtPickup(t1, d1, north),
+				ticked(5),
+				arrivedAtDropoff(t1, d1, south),
+			],
+			{ earnings: true },
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "trip.completed",
+				tick: tick(5),
+				tripId: t1,
+				driverId: d1,
+				fare: 318,
+			},
+		]);
+	});
+
+	// d-01, offered pooled t-1 at (100, 245), joins t-2 at (100, 256) in 5 +
+	// 11 = 16; the nearest idle driver, d-02 at (100, 270), is 14 away by
+	// Manhattan but 34 by road, so the join is within its reach.
+	test("measures a pooled trip's join reach by road", () => {
+		const pooled = (tripId: TripId, pickup: Cell, dropoff: Cell) => ({
+			...request(tripId, pickup, dropoff),
+			pooled: true as const,
+		});
+		const outputs = lastOutputs([
+			wentOnline(i1, at(100, 240)),
+			pooled(t1, at(100, 245), at(100, 100)),
+			ticked(2),
+			wentOnline(i2, south),
+			pooled(t2, north, at(100, 150)),
+			ticked(3),
+		]);
+
+		expect(offeredTo(outputs)).toEqual([d1]);
+	});
 });
