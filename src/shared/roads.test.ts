@@ -2,11 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { type Cell, type Coordinate, cellAt, type Grid } from "./grid.ts";
 import { createRandom, type Random } from "./random.ts";
 import {
+	exitCostsToward,
 	isDrivable,
 	isRoadCell,
 	type RoadNetwork,
 	type RoadNetworkName,
 	roadDistance,
+	roadDistanceTo,
 	roadNetworkNamed,
 } from "./roads.ts";
 
@@ -149,6 +151,24 @@ for (const name of names) {
 					if (there !== want || back !== want) {
 						wrong.push(
 							`(${source.x}, ${source.y}) (${target.x}, ${target.y}): ${there} / ${back}, BFS ${want}`,
+						);
+					}
+				}
+			});
+			expect(wrong).toEqual([]);
+		});
+
+		test("road distance through a cell's exit costs is the shortest path", () => {
+			const random = createRandom(13);
+			const wrong: string[] = [];
+			sources.forEach((source, s) => {
+				const toward = exitCostsToward(network, source);
+				for (const target of targetsOf(network, random)) {
+					const want = bfs[s]?.[target.y * grid.width + target.x];
+					const got = roadDistanceTo(network, toward, target.x, target.y);
+					if (got !== want) {
+						wrong.push(
+							`(${target.x}, ${target.y}) to (${source.x}, ${source.y}): ${got}, BFS ${want}`,
 						);
 					}
 				}

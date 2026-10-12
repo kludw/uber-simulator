@@ -225,6 +225,57 @@ export function roadDistance(network: RoadNetwork, a: Cell, b: Cell): number {
 	return distanceBetween(network, a.x, a.y, b.x, b.y);
 }
 
+// One cell's exit costs: for every landing p, the road distance from p
+// across its bridge to the cell. Made once for a cell asked against many
+// (a pickup against candidate drivers) and owned by the caller, never kept
+// by this module, so two networks or two searches never share them.
+export type ExitCosts = {
+	readonly x: number;
+	readonly y: number;
+	// -1 when the cell is a bridge: costs unused, distances computed in full.
+	readonly district: number;
+	readonly costs: Int32Array;
+};
+
+export function exitCostsToward(network: RoadNetwork, cell: Cell): ExitCosts {
+	const district = districtOf(network, cell.x, cell.y);
+	const costs = new Int32Array(network.landings);
+	if (district >= 0) {
+		for (let p = 0; p < network.landings; p++) {
+			costs[p] = exitCost(network, p, cell.x, cell.y, district);
+		}
+	}
+	return { x: cell.x, y: cell.y, district, costs };
+}
+
+// roadDistance from drivable (x, y) to the cell of `toward`, in a few array
+// reads.
+export function roadDistanceTo(
+	network: RoadNetwork,
+	toward: ExitCosts,
+	x: number,
+	y: number,
+): number {
+	const district = districtOf(network, x, y);
+	if (toward.district < 0 || district < 0) {
+		return distanceBetween(network, x, y, toward.x, toward.y);
+	}
+	if (district === toward.district) {
+		return Math.abs(x - toward.x) + Math.abs(y - toward.y);
+	}
+	let least = Number.POSITIVE_INFINITY;
+	const exits = network.landingsOf[district] as Int32Array;
+	for (let i = 0; i < exits.length; i++) {
+		const p = exits[i] as number;
+		const cost =
+			Math.abs((network.landingX[p] as number) - x) +
+			Math.abs((network.landingY[p] as number) - y) +
+			(toward.costs[p] as number);
+		if (cost < least) least = cost;
+	}
+	return least;
+}
+
 function distanceBetween(
 	network: RoadNetwork,
 	ax: number,
