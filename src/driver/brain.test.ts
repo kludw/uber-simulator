@@ -3,6 +3,7 @@ import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
 import {
 	type DriverId,
+	type DriverWentOffline,
 	driversMoved,
 	driversWentOnline,
 	forEachMove,
@@ -15,7 +16,7 @@ import {
 import { createRandom, type Random } from "../shared/random.ts";
 import { Region, RegionLayout } from "../shared/regions.ts";
 import { isDrivable, roadNetworkNamed } from "../shared/roads.ts";
-import { Surge, Zone } from "../shared/surge.ts";
+import { Fare, Surge, Zone } from "../shared/surge.ts";
 import {
 	type DriverShardInput,
 	type DriverShardState,
@@ -376,6 +377,333 @@ describe("decideDriverShard with shifts", () => {
 		);
 		const { outputs } = runTicks(cancelled.state, 2, 3, random);
 		expect([...cancelled.outputs, ...outputs]).toEqual([]);
+	});
+});
+
+// ADR 0060. Driver d-1 starts online at (0, 0) for a 10-tick online period;
+// its trip t-1 from (1, 0) to (2, 0) leaves it at the dropoff on tick 2.
+describe("decideDriverShard with earnings", () => {
+	function runTicks(
+		state: DriverShardState,
+		from: number,
+		to: number,
+		random: Random,
+	) {
+		const outputs: unknown[] = [];
+		for (let n = from; n <= to; n++) {
+			const decided = decideDriverShard(
+				state,
+				{ type: "clock.ticked", tick: tick(n) },
+				random,
+			);
+			state = decided.state;
+			outputs.push(...decided.outputs);
+		}
+		return { state, outputs };
+	}
+
+	// streams: shift and earnings streams beyond d-1's first period; draws:
+	// the shard stream's after placing d-1 at (0, 0).
+	function atDropoffOnTick2(
+		target: number,
+		streams: Record<string, number[]> = {},
+		draws: number[] = [],
+	) {
+		const random = shiftRandom([0, 0, ...draws], {
+			"shift:d-1:0": [0.2, 10],
+			"earnings:d-1": [target],
+			...streams,
+		});
+		const started = startDriverShard(
+			{ grid, ...shard(i1, 1), tick: tick(0), shifts, earnings: true },
+			random,
+		);
+		const accepted = decideDriverShard(
+			started.state,
+			{ ...offer(d1), pickup: cell(1, 0), dropoff: cell(2, 0) },
+			random,
+		);
+		const atPickup = runTicks(accepted.state, 1, 1, random);
+		const pickedUp = decideDriverShard(
+			atPickup.state,
+			{ type: "trip.picked_up", tick: tick(1), tripId: t1, driverId: d1 },
+			random,
+		);
+		return { state: runTicks(pickedUp.state, 2, 2, random).state, random };
+	}
+
+	function completed(fare: number): DriverShardInput {
+		return {
+			type: "trip.completed",
+			tick: tick(2),
+			tripId: t1,
+			driverId: d1,
+			fare: Fare.parse(fare),
+		};
+	}
+
+	test("an idle driver whose earned reached its target goes offline on the next tick, reporting it", () => {
+		const { state, random } = atDropoffOnTick2(1500, {
+			"shift:d-1:1": [3],
+			"shift:d-1:2": [5],
+		});
+		const done = decideDriverShard(state, completed(2000), random);
+		const { outputs } = runTicks(done.state, 3, 6, random);
+		expect(outputs).toEqual([
+			{
+				type: "driver.went_offline",
+				tick: tick(3),
+				driverId: d1,
+				cell: cell(2, 0),
+				region: Region.parse(0),
+				earned: 1500,
+			},
+			driversWentOnline(tick(6), Region.parse(0), fleetSize, [
+				{ driverIndex: i1, cell: cell(2, 0) },
+			]),
+		]);
+	});
+
+	function earnedOnGoingOffline(outputs: unknown[]) {
+		return outputs.flatMap((output) =>
+			(output as { type: string }).type === "driver.went_offline"
+				? [(output as DriverWentOffline).earned]
+				: [],
+		);
+	}
+
+	// Wandering toward (9, 9) after the trip, the driver is still on its way
+	// when its 10-tick online period ends on tick 10.
+	const wanderFar = [9, 9];
+
+	test("a driver below its target keeps working and reports its earned when its online period ends", () => {
+		const { state, random } = atDropoffOnTick2(
+			1500,
+			{ "shift:d-1:1": [3] },
+			wanderFar,
+		);
+		const done = decideDriverShard(state, completed(1998), random);
+		const { outputs } = runTicks(done.state, 3, 10, random);
+		expect(earnedOnGoingOffline(outputs)).toEqual([1499]);
+	});
+
+	test("a driver told at the dropoff that its trip is completed earns its fare", () => {
+		const { state, random } = atDropoffOnTick2(1500, { "shift:d-1:1": [3] });
+		const told = decideDriverShard(
+			state,
+			{
+				type: "trip_status",
+				tripId: t1,
+				driverId: d1,
+				stage: "dropoff",
+				status: "completed",
+				fare: Fare.parse(2000),
+			},
+			random,
+		);
+		const { outputs } = runTicks(told.state, 3, 3, random);
+		expect(earnedOnGoingOffline(outputs)).toEqual([1500]);
+	});
+
+	test("a late completed reply to a pickup confirm earns nothing", () => {
+		const { state, random } = atDropoffOnTick2(
+			3000,
+			{ "shift:d-1:1": [3] },
+			wanderFar,
+		);
+		const late = decideDriverShard(
+			state,
+			{
+				type: "trip_status",
+				tripId: t1,
+				driverId: d1,
+				stage: "pickup",
+				status: "completed",
+				fare: Fare.parse(2000),
+			},
+			random,
+		);
+		const done = decideDriverShard(late.state, completed(1000), random);
+		const { outputs } = runTicks(done.state, 3, 10, random);
+		expect(earnedOnGoingOffline(outputs)).toEqual([750]);
+	});
+
+	test("a trip completed and then confirmed completed earns once", () => {
+		const { state, random } = atDropoffOnTick2(
+			3000,
+			{ "shift:d-1:1": [3] },
+			wanderFar,
+		);
+		const done = decideDriverShard(state, completed(1000), random);
+		const confirmed = decideDriverShard(
+			done.state,
+			{
+				type: "trip_status",
+				tripId: t1,
+				driverId: d1,
+				stage: "dropoff",
+				status: "completed",
+				fare: Fare.parse(1000),
+			},
+			random,
+		);
+		const { outputs } = runTicks(confirmed.state, 3, 10, random);
+		expect(earnedOnGoingOffline(outputs)).toEqual([750]);
+	});
+
+	test("the next online period starts from nothing earned", () => {
+		const { state, random } = atDropoffOnTick2(
+			1500,
+			{ "shift:d-1:1": [3], "shift:d-1:2": [2], "shift:d-1:3": [3] },
+			[0, 0],
+		);
+		const done = decideDriverShard(state, completed(2000), random);
+		const { outputs } = runTicks(done.state, 3, 8, random);
+		expect(earnedOnGoingOffline(outputs)).toEqual([1500, 0]);
+	});
+
+	// Two pooled trips, both picked up at (1, 0) and dropped off at (2, 0):
+	// t-1 completed on tick 3, t-2 on tick 4.
+	function poolingOnTick4(target: number, fares: [number, number]) {
+		const random = shiftRandom([0, 0], {
+			"shift:d-1:0": [0.2, 10],
+			"earnings:d-1": [target],
+			"shift:d-1:1": [3],
+		});
+		const started = startDriverShard(
+			{ grid, ...shard(i1, 1), tick: tick(0), shifts, earnings: true },
+			random,
+		);
+		let state = started.state;
+		const outputs: unknown[] = [];
+		const feed = (input: DriverShardInput) => {
+			const decided = decideDriverShard(state, input, random);
+			state = decided.state;
+			outputs.push(...decided.outputs);
+		};
+		const pooled = (tripId: TripId): Offer => ({
+			...offer(d1),
+			tripId,
+			pickup: cell(1, 0),
+			dropoff: cell(2, 0),
+			pooled: true,
+		});
+		const ticked = (n: number) => feed({ type: "clock.ticked", tick: tick(n) });
+		feed(pooled(t1));
+		feed(pooled(t2));
+		ticked(1);
+		feed({ type: "trip.picked_up", tick: tick(1), tripId: t1, driverId: d1 });
+		ticked(2);
+		feed({ type: "trip.picked_up", tick: tick(2), tripId: t2, driverId: d1 });
+		ticked(3);
+		feed({
+			type: "trip.completed",
+			tick: tick(3),
+			tripId: t1,
+			driverId: d1,
+			fare: Fare.parse(fares[0]),
+		});
+		ticked(4);
+		feed({
+			type: "trip.completed",
+			tick: tick(4),
+			tripId: t2,
+			driverId: d1,
+			fare: Fare.parse(fares[1]),
+		});
+		ticked(5);
+		return outputs;
+	}
+
+	test("a pooling driver earns each of its trips' fares", () => {
+		expect(earnedOnGoingOffline(poolingOnTick4(1500, [1000, 1000]))).toEqual([
+			1500,
+		]);
+	});
+
+	test("a driver that reached its target with a trip left finishes it before going offline", () => {
+		const outputs = poolingOnTick4(1500, [2000, 1000]);
+		expect(
+			outputs.filter(
+				(output) => (output as { type: string }).type === "driver.went_offline",
+			),
+		).toEqual([
+			{
+				type: "driver.went_offline",
+				tick: tick(5),
+				driverId: d1,
+				cell: cell(2, 0),
+				region: Region.parse(0),
+				earned: 2250,
+			},
+		]);
+	});
+
+	test("without shifts a driver draws no target and keeps working whatever it earns", () => {
+		// The scripted random has no child streams: a target draw would throw.
+		const random = scriptedRandom([0, 0, 0, 5]);
+		const started = startDriverShard(
+			{ grid, ...shard(i1, 1), tick: tick(0), earnings: true },
+			random,
+		);
+		const accepted = decideDriverShard(
+			started.state,
+			{ ...offer(d1), pickup: cell(1, 0), dropoff: cell(2, 0) },
+			random,
+		);
+		const atPickup = runTicks(accepted.state, 1, 1, random);
+		const pickedUp = decideDriverShard(
+			atPickup.state,
+			{ type: "trip.picked_up", tick: tick(1), tripId: t1, driverId: d1 },
+			random,
+		);
+		const atDropoff = runTicks(pickedUp.state, 2, 2, random);
+		const done = decideDriverShard(atDropoff.state, completed(99_999), random);
+		const { outputs } = runTicks(done.state, 3, 3, random);
+		expect(outputs).toEqual([
+			driversMoved(tick(3), Region.parse(0), fleetSize, [
+				{ driverIndex: i1, cell: cell(2, 1) },
+			]),
+		]);
+	});
+
+	test("with earnings off a driver draws no target, ignores fares and reports no earned", () => {
+		// No earnings:d-1 stream: a target draw would throw.
+		const random = shiftRandom([0, 0, ...wanderFar], {
+			"shift:d-1:0": [0.2, 10],
+			"shift:d-1:1": [3],
+		});
+		const started = startDriverShard(
+			{ grid, ...shard(i1, 1), tick: tick(0), shifts },
+			random,
+		);
+		const accepted = decideDriverShard(
+			started.state,
+			{ ...offer(d1), pickup: cell(1, 0), dropoff: cell(2, 0) },
+			random,
+		);
+		const atPickup = runTicks(accepted.state, 1, 1, random);
+		const pickedUp = decideDriverShard(
+			atPickup.state,
+			{ type: "trip.picked_up", tick: tick(1), tripId: t1, driverId: d1 },
+			random,
+		);
+		const atDropoff = runTicks(pickedUp.state, 2, 2, random);
+		const done = decideDriverShard(atDropoff.state, completed(99_999), random);
+		const { outputs } = runTicks(done.state, 3, 10, random);
+		expect(
+			outputs.filter(
+				(output) => (output as { type: string }).type === "driver.went_offline",
+			),
+		).toEqual([
+			{
+				type: "driver.went_offline",
+				tick: tick(10),
+				driverId: d1,
+				cell: cell(5, 4),
+				region: Region.parse(0),
+			},
+		]);
 	});
 });
 
@@ -2040,10 +2368,10 @@ describe("decideDriverShard 2x2 regions", () => {
 });
 
 describe("driver shard determinism", () => {
-	function run(seed: number, shifts?: Shifts) {
+	function run(seed: number, shifts?: Shifts, earnings?: boolean) {
 		const random = createRandom(seed);
 		const started = startDriverShard(
-			{ grid, ...shard(i1, 2), tick: tick(0), shifts },
+			{ grid, ...shard(i1, 2), tick: tick(0), shifts, earnings },
 			random,
 		);
 		const outputs: unknown[] = [...started.outputs];
@@ -2066,6 +2394,10 @@ describe("driver shard determinism", () => {
 
 	test("same seed and inputs give identical outputs with shifts", () => {
 		expect(run(42, shifts)).toEqual(run(42, shifts));
+	});
+
+	test("same seed and inputs give identical outputs with shifts and earnings", () => {
+		expect(run(42, shifts, true)).toEqual(run(42, shifts, true));
 	});
 });
 
