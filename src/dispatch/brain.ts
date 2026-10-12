@@ -1,5 +1,5 @@
 import { driverIdAt, driverIndexOf } from "../shared/fleet.ts";
-import { distance, type Grid } from "../shared/grid.ts";
+import { type Cell, distance, type Grid } from "../shared/grid.ts";
 import type {
 	CancelTrip,
 	CancelTripAccepted,
@@ -43,6 +43,12 @@ import {
 	type RegionLayout,
 	regionBounds,
 } from "../shared/regions.ts";
+import {
+	distanceOn,
+	isDrivable,
+	isRoadCell,
+	type RoadNetwork,
+} from "../shared/roads.ts";
 import {
 	baseSurge,
 	type Fare,
@@ -103,6 +109,9 @@ import {
 // surge: whether it prices zones and trips (ADR 0054).
 // earnings: whether it keeps each trip's fare and puts it on completions (ADR
 // 0060).
+// roads: the road network it matches and prices by (ADR 0059), null with
+// roads off; with it, trips' cells are road cells and drivers' drivable,
+// checked as inputs arrive.
 // Pooling (ADR 0056, 0058): partners, each driver holding one pooled trip
 // alone, and that trip; holdingTwo, the busy drivers holding two trips (a
 // partner and its join), and both; pickedUpAt, each picked-up pooled trip's
@@ -117,6 +126,7 @@ export type DispatchState = {
 	region: Region;
 	surge: boolean;
 	earnings: boolean;
+	roads: RoadNetwork | null;
 	trips: Map<TripId, Trip>;
 	endedTrips: Map<TripId, EndedTrip>;
 	drivers: IdleDrivers;
@@ -163,6 +173,14 @@ type DispatchOutput =
 	| (InputRejected<DriversWentOnline | DriversMoved, "fleet_size_mismatch"> & {
 			expectedFleetSize: number;
 	  })
+	| InputRejected<
+			| DriversWentOnline
+			| DriversMoved
+			| DriverWentOffline
+			| OfferDeclined
+			| ConfirmTrip,
+			"off_road_cell"
+	  >
 	| InputRejected<RiderRatedDriver, "driver_not_in_fleet">
 	| InputRejected<OfferAccepted | OfferDeclined, NoPendingOffer["type"]>
 	| InputRejected<
@@ -182,6 +200,7 @@ const pricingIntervalTicks = 30;
 // missing = one region.
 // surge: price zones and trips (ADR 0054); missing = off.
 // earnings: fares on completions (ADR 0060); missing = off.
+// roads: the road network (ADR 0059); missing or null = roads off.
 export function startDispatch(config: {
 	grid: Grid;
 	fleetSize: number;
@@ -191,6 +210,7 @@ export function startDispatch(config: {
 	region?: Region;
 	surge?: boolean;
 	earnings?: boolean;
+	roads?: RoadNetwork | null;
 }): DispatchState {
 	const matching = config.matching ?? { type: "greedy" };
 	// Parsed at the edge; a bad window here is a caller bug.
@@ -203,6 +223,7 @@ export function startDispatch(config: {
 		);
 	}
 	const region = config.region ?? Region.parse(0);
+	const roads = config.roads ?? null;
 	return {
 		grid: config.grid,
 		fleetSize: config.fleetSize,
@@ -211,12 +232,15 @@ export function startDispatch(config: {
 		region,
 		surge: config.surge ?? false,
 		earnings: config.earnings ?? false,
+		roads,
 		trips: new Map(),
 		endedTrips: new Map(),
 		drivers: startIdleDrivers(
 			config.grid,
 			config.fleetSize,
 			regionBounds(config.regions ?? oneRegion, config.grid, region),
+			undefined,
+			roads,
 		),
 		partners: new Map(),
 		holdingTwo: new Map(),
@@ -402,7 +426,7 @@ function partnerFor(
 	const reach = joinReachOf(
 		nearestIdle === undefined
 			? undefined
-			: distance(nearestIdle.cell, trip.pickup),
+			: distanceOn(state.roads, nearestIdle.cell, trip.pickup),
 	);
 	return bestPartner(state.drivers, trip.pickup, reach, (driverId, cell) => {
 		if (trip.excludedDrivers.has(driverId)) return null;
@@ -420,6 +444,7 @@ function partnerFor(
 				rideSoFar: rideSoFar(state, partner),
 			},
 			trip,
+			state.roads,
 		);
 	});
 }
@@ -509,14 +534,30 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 			],
 		};
 	}
-	const priced = state.surge ? price(request) : undefined;
+	const offRoad = offRoadCellOf(state.roads, request);
+	if (offRoad !== null) {
+		return {
+			state,
+			outputs: [
+				{
+					type: "request_trip_rejected",
+					tripId: request.tripId,
+					error: { type: "off_road_cell", cell: offRoad },
+				},
+			],
+		};
+	}
+	const priced = state.surge ? price(request, state.roads) : undefined;
 	const trip = requestedTrip(request);
 	// The fare as fixed here: the priced one, else the base fare, pooled 25%
 	// off either way (ADR 0060 rule 6). Off: no fare field per trip.
 	storeTrip(
 		state,
 		state.earnings
-			? { ...trip, fare: priced?.fare ?? fareOf(request, baseSurge, null) }
+			? {
+					...trip,
+					fare: priced?.fare ?? fareOf(request, baseSurge, state.roads),
+				}
 			: trip,
 	);
 	return {
@@ -538,9 +579,41 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 }
 
 // The rider's quote is the trip's price, fixed from here (ADR 0054).
-function price(request: RequestTrip): { surge: Surge; fare: Fare } {
+function price(
+	request: RequestTrip,
+	roads: RoadNetwork | null,
+): { surge: Surge; fare: Fare } {
 	const surge = request.surge ?? baseSurge;
-	return { surge, fare: fareOf(request, surge, null) };
+	return { surge, fare: fareOf(request, surge, roads) };
+}
+
+// The trip's first cell that is not a road cell (pickup, then dropoff); null
+// when both are, or with roads off.
+function offRoadCellOf(
+	roads: RoadNetwork | null,
+	request: RequestTrip,
+): Cell | null {
+	if (roads === null) return null;
+	for (const cell of [request.pickup, request.dropoff]) {
+		if (!isRoadCell(roads, cell.x, cell.y)) return cell;
+	}
+	return null;
+}
+
+// A driver's cell from another service that is not drivable on dispatch's
+// network (say a process with another ROADS): rejected whole, before any
+// change (ADR 0059). Never with roads off.
+function offRoadRejection(
+	state: DispatchState,
+	input: DriverWentOffline | OfferDeclined | ConfirmTrip,
+	cell: Cell | null,
+): Decision | null {
+	if (state.roads === null || cell === null) return null;
+	if (isDrivable(state.roads, cell.x, cell.y)) return null;
+	return {
+		state,
+		outputs: [{ type: "input_rejected", reason: "off_road_cell", input }],
+	};
 }
 
 function onCancelTrip(state: DispatchState, command: CancelTrip): Decision {
@@ -604,6 +677,18 @@ function onDriversAt(
 			],
 		};
 	}
+	const roads = state.roads;
+	if (roads !== null) {
+		for (let i = 0; i < message.xs.length; i++) {
+			if (isDrivable(roads, message.xs[i] ?? -1, message.ys[i] ?? -1)) continue;
+			return {
+				state,
+				outputs: [
+					{ type: "input_rejected", reason: "off_road_cell", input: message },
+				],
+			};
+		}
+	}
 	forEachDriverAt(message, (driverIndex, x, y) => {
 		placeDriverAt(state.drivers, driverIndex, x, y);
 	});
@@ -614,6 +699,8 @@ function onDriverWentOffline(
 	state: DispatchState,
 	wentOffline: DriverWentOffline,
 ): Decision {
+	const offRoad = offRoadRejection(state, wentOffline, wentOffline.cell);
+	if (offRoad !== null) return offRoad;
 	removeDriver(state.drivers, wentOffline.driverId);
 	return { state, outputs: [] };
 }
@@ -649,6 +736,10 @@ function onOfferReply(
 	state: DispatchState,
 	reply: OfferAccepted | OfferDeclined,
 ): Decision {
+	if (reply.type === "offer_declined") {
+		const offRoad = offRoadRejection(state, reply, reply.idleAt);
+		if (offRoad !== null) return offRoad;
+	}
 	const trip = knownTrip(state, reply.tripId);
 	if (trip === undefined) return { state, outputs: [] };
 	if (trip.state === "cancelled") return { state, outputs: [] };
@@ -753,6 +844,8 @@ function arrive(
 
 // ADR 0041's table: a trip that is not this driver's releases it.
 function onConfirmTrip(state: DispatchState, confirm: ConfirmTrip): Decision {
+	const offRoad = offRoadRejection(state, confirm, confirm.cell);
+	if (offRoad !== null) return offRoad;
 	const trip = knownTrip(state, confirm.tripId);
 	if (trip === undefined) return replyStatus(state, confirm, "released");
 	const atPickup = confirm.stage === "pickup";

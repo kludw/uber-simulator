@@ -372,7 +372,12 @@ export type RequestTripAccepted = z.infer<typeof RequestTripAccepted>;
 export const RequestTripRejected = z.object({
 	type: z.literal("request_trip_rejected"),
 	tripId: TripId,
-	error: z.object({ type: z.literal("duplicate_trip_id") }),
+	// off_road_cell: the pickup or dropoff (the first off road) is not a road
+	// cell of dispatch's network (ADR 0059).
+	error: z.discriminatedUnion("type", [
+		z.object({ type: z.literal("duplicate_trip_id") }),
+		z.object({ type: z.literal("off_road_cell"), cell: Cell }),
+	]),
 });
 export type RequestTripRejected = z.infer<typeof RequestTripRejected>;
 
