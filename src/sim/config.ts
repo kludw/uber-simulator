@@ -90,8 +90,8 @@ export const PoolingName = z.enum(["off", "on"]);
 // Riders only: dispatch acts on the ratings it sees (ADR 0057).
 export const RatingsName = z.enum(["off", "on"]);
 
-// Driver earnings, by name, from the CLI (--earnings). Bench only so far
-// (ADR 0060).
+// Driver earnings, by name, from env (EARNINGS) or the CLI (--earnings).
+// Dispatch and driver shards (ADR 0060).
 export const EarningsName = z.enum(["off", "on"]);
 
 // Every process of a run must get the same value (ADR 0050).
@@ -136,6 +136,7 @@ const Env = z.object({
 	SURGE: SurgeName.default("off"),
 	POOLING: PoolingName.default("off"),
 	RATINGS: RatingsName.default("off"),
+	EARNINGS: EarningsName.default("off"),
 });
 
 export function parseServiceConfig(
@@ -169,6 +170,7 @@ export function parseServiceConfig(
 			surge: vars.SURGE === "on",
 			pooling: vars.POOLING === "on",
 			ratings: vars.RATINGS === "on",
+			earnings: vars.EARNINGS === "on",
 		},
 	};
 }

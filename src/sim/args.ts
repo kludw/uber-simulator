@@ -7,6 +7,7 @@ import type { Result } from "../shared/result.ts";
 import {
 	DemandName,
 	demandNamed,
+	EarningsName,
 	PoolingName,
 	PreferencesName,
 	preferencesNamed,
@@ -27,6 +28,8 @@ export type SimArgs = {
 	comparePooling: boolean;
 	// The configured matching with ratings off and on, side by side (ADR 0057).
 	compareRatings: boolean;
+	// The configured matching with earnings off and on, side by side (ADR 0060).
+	compareEarnings: boolean;
 	matching: "greedy" | "batched";
 	// Batched only.
 	windowTicks: number;
@@ -67,6 +70,8 @@ const Args = z
 		pooling: PoolingName,
 		"compare-ratings": z.boolean(),
 		ratings: RatingsName,
+		"compare-earnings": z.boolean(),
+		earnings: EarningsName,
 		demand: DemandName,
 		shifts: ShiftsName,
 		preferences: PreferencesName,
@@ -114,6 +119,25 @@ const Args = z
 			path: ["compare-ratings"],
 		},
 	)
+	.refine((args) => !(args["compare-earnings"] && args.bus === "nats"), {
+		error: "--compare-earnings runs in process only",
+		path: ["compare-earnings"],
+	})
+	.refine(
+		(args) =>
+			!(
+				args["compare-earnings"] &&
+				(args.compare ||
+					args["compare-surge"] ||
+					args["compare-pooling"] ||
+					args["compare-ratings"])
+			),
+		{
+			error:
+				"--compare-earnings, --compare, --compare-surge, --compare-pooling and --compare-ratings are exclusive",
+			path: ["compare-earnings"],
+		},
+	)
 	.refine(
 		({ regions }) =>
 			regions.columns <= specGrid.width && regions.rows <= specGrid.height,
@@ -142,6 +166,9 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 				"compare-ratings": { type: "boolean", default: false },
 				// Off: no rider rates a driver (ADR 0057).
 				ratings: { type: "string", default: "off" },
+				"compare-earnings": { type: "boolean", default: false },
+				// Off: no fare on completions, drivers keep no earnings (ADR 0060).
+				earnings: { type: "string", default: "off" },
 				// Spec defaults (docs/spec.md).
 				demand: { type: "string", default: "uniform" },
 				shifts: { type: "string", default: "off" },
@@ -177,6 +204,7 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 			compareSurge: args["compare-surge"],
 			comparePooling: args["compare-pooling"],
 			compareRatings: args["compare-ratings"],
+			compareEarnings: args["compare-earnings"],
 			matching: args.matching,
 			windowTicks: args["batch-window"],
 			demandName: args.demand,
@@ -196,6 +224,7 @@ export function parseSimArgs(argv: string[]): Result<SimArgs, InvalidArgs> {
 				surge: args.surge === "on",
 				pooling: args.pooling === "on",
 				ratings: args.ratings === "on",
+				earnings: args.earnings === "on",
 			},
 		},
 	};

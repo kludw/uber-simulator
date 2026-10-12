@@ -15,6 +15,7 @@ describe("parseLoadtestArgs", () => {
 				surge: false,
 				pooling: false,
 				ratings: false,
+				earnings: false,
 				drainBoundMs: 300_000,
 				natsMonitoringUrl: "http://localhost:8222",
 			},
@@ -92,6 +93,21 @@ describe("parseLoadtestArgs", () => {
 
 	test("--ratings other than on or off is invalid", () => {
 		expect(parseLoadtestArgs(["--ratings", "yes"])).toMatchObject({
+			ok: false,
+			error: { type: "invalid_args" },
+		});
+	});
+
+	// ADR 0060: the cost of earnings at scale.
+	test("--earnings on turns earnings on", () => {
+		expect(parseLoadtestArgs(["--earnings", "on"])).toMatchObject({
+			ok: true,
+			value: { earnings: true },
+		});
+	});
+
+	test("--earnings other than on or off is invalid", () => {
+		expect(parseLoadtestArgs(["--earnings", "yes"])).toMatchObject({
 			ok: false,
 			error: { type: "invalid_args" },
 		});

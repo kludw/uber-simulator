@@ -37,6 +37,7 @@ describe("parseServiceConfig", () => {
 				surge: false,
 				pooling: false,
 				ratings: false,
+				earnings: false,
 			},
 		});
 	});
@@ -50,6 +51,30 @@ describe("parseServiceConfig", () => {
 		});
 
 		expect(parsed).toMatchObject({ ok: true, value: { ratings: true } });
+	});
+
+	// ADR 0060: dispatch puts fares on completions, driver shards earn them.
+	test("EARNINGS=on lets drivers earn a share of fares", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			EARNINGS: "on",
+		});
+
+		expect(parsed).toMatchObject({ ok: true, value: { earnings: true } });
+	});
+
+	test("names an unknown EARNINGS", () => {
+		const parsed = parseServiceConfig({
+			NATS_URL: "nats://nats:4222",
+			RUN_ID: "run-1",
+			EARNINGS: "yes",
+		});
+
+		expect(parsed).toMatchObject({
+			ok: false,
+			error: { issues: [{ variable: "EARNINGS" }] },
+		});
 	});
 
 	test("names an unknown RATINGS", () => {

@@ -1,3 +1,4 @@
+import { driverShareOf } from "../shared/earnings.ts";
 import type { DriverId, Message, Tick, TripId } from "../shared/messages.ts";
 import { baseSurge, dollars, type Fare, fareOf } from "../shared/surge.ts";
 import { createInvariantChecker, type Violation } from "./invariants.ts";
@@ -25,8 +26,23 @@ export type Summary = {
 	ratings: number;
 	// Over every rating; null when none.
 	meanStars: number | null;
+	// Mean drivers online at the end of each tick.
+	meanOnline: number;
+	// With earnings on (ADR 0060); null off.
+	earnings: Earnings | null;
 	rejectedInputs: number;
 	violations: Violation[];
+};
+
+// Cents, from completions' fares and going offline's earned (ADR 0060).
+export type Earnings = {
+	// Every driver share of the run.
+	total: number;
+	// Over the fleet, 0 for a driver without a completed trip.
+	perDriver: { p10: number; median: number; p90: number };
+	// With shifts only (ADR 0032): online periods ended, and the median of
+	// their earned (null when none ended); null without shifts.
+	periods: { count: number; medianEarned: number | null } | null;
 };
 
 export function summarize(
@@ -51,6 +67,10 @@ export function createSummary(config: RunConfig): RunSummary {
 	const surgeSummary = createSurgeSummary();
 	const poolingSummary = createPoolingSummary();
 	const ratingSummary = createRatingSummary();
+	const onlineSummary = createOnlineSummary(config.ticks);
+	const earningsSummary = config.earnings
+		? createEarningsSummary(config)
+		: null;
 	const checker = createInvariantChecker(config.grid, config);
 	const { count, driversPerShard } = config.driverShards;
 	return {
@@ -60,6 +80,8 @@ export function createSummary(config: RunConfig): RunSummary {
 			surgeSummary.observe(message);
 			poolingSummary.observe(message);
 			ratingSummary.observe(message);
+			onlineSummary.observe(message);
+			earningsSummary?.observe(message);
 		},
 		result: (rejectedInputs) => ({
 			seed: config.seed,
@@ -69,6 +91,8 @@ export function createSummary(config: RunConfig): RunSummary {
 			...surgeSummary.result(),
 			...poolingSummary.result(),
 			...ratingSummary.result(),
+			meanOnline: onlineSummary.result(),
+			earnings: earningsSummary?.result() ?? null,
 			rejectedInputs,
 			violations: checker.violations(),
 		}),
@@ -232,14 +256,94 @@ function createRatingSummary(): {
 	};
 }
 
+// Mean drivers online at the end of each tick 1..ticks, from the ticks of
+// going online and offline rather than message order: a driver changing at
+// tick t counts from the end of tick t (tick 0, the start, from tick 1).
+function createOnlineSummary(ticks: number): {
+	observe(message: Message): void;
+	result(): number;
+} {
+	let onlineTicks = 0;
+	const ticksFrom = (tick: Tick) => ticks - Math.max(tick, 1) + 1;
+	return {
+		observe: (message) => {
+			if (message.type === "drivers.went_online") {
+				onlineTicks += message.driverIndexes.length * ticksFrom(message.tick);
+			} else if (message.type === "driver.went_offline") {
+				onlineTicks -= ticksFrom(message.tick);
+			}
+		},
+		result: () => onlineTicks / ticks,
+	};
+}
+
+// The summary's earnings (ADR 0060). Memory grows with drivers that earned
+// and online periods, not with messages.
+function createEarningsSummary(config: RunConfig): {
+	observe(message: Message): void;
+	result(): Earnings;
+} {
+	const { count, driversPerShard } = config.driverShards;
+	const fleetSize = count * driversPerShard;
+	const byDriver = new Map<DriverId, number>();
+	const periodsEarned: number[] = [];
+	let total = 0;
+	return {
+		observe: (message) => {
+			if (message.type === "trip.completed" && message.fare !== undefined) {
+				const share = driverShareOf(message.fare);
+				total += share;
+				byDriver.set(
+					message.driverId,
+					(byDriver.get(message.driverId) ?? 0) + share,
+				);
+			} else if (
+				message.type === "driver.went_offline" &&
+				message.earned !== undefined
+			) {
+				periodsEarned.push(message.earned);
+			}
+		},
+		result: () => {
+			const withoutTrip = Math.max(fleetSize - byDriver.size, 0);
+			const fleet = [
+				...Array<number>(withoutTrip).fill(0),
+				...byDriver.values(),
+			].sort((a, b) => a - b);
+			const periods = periodsEarned.toSorted((a, b) => a - b);
+			return {
+				total,
+				perDriver: {
+					p10: quantile(fleet, 0.1) ?? 0,
+					median: quantile(fleet, 0.5) ?? 0,
+					p90: quantile(fleet, 0.9) ?? 0,
+				},
+				periods:
+					config.shifts?.type === "shifts"
+						? { count: periods.length, medianEarned: quantile(periods, 0.5) }
+						: null,
+			};
+		},
+	};
+}
+
+// The value at floor(q x n) of sorted values, as `bun run report` takes it
+// (src/analytics/report.ts); null when none.
+function quantile(sorted: readonly number[], q: number): number | null {
+	return sorted[Math.floor(q * sorted.length)] ?? null;
+}
+
 // One headline number of two runs on the same seed, formatted: greedy and
 // batched (ADR 0030), surge off and on (ADR 0054), pooling off and on
-// (ADR 0056), or ratings off and on (ADR 0057).
+// (ADR 0056), ratings off and on (ADR 0057), or earnings off and on (ADR
+// 0060).
 export type ComparisonRow = { metric: string; first: string; second: string };
 
 // surge: add riders declined and revenue. pooling: add trips pooled and
 // shared, ticks from pickup to completion, and revenue. ratings: add ratings
-// and mean stars.
+// and mean stars. earnings: add driver earnings, per driver, mean drivers
+// online, and, when either run ended online periods with earnings (shifts),
+// those periods and their median earned.
 export function compareSummaries(
 	first: Summary,
 	second: Summary,
@@ -247,7 +351,8 @@ export function compareSummaries(
 		surge,
 		pooling,
 		ratings,
-	}: { surge: boolean; pooling: boolean; ratings: boolean },
+		earnings,
+	}: { surge: boolean; pooling: boolean; ratings: boolean; earnings: boolean },
 ): ComparisonRow[] {
 	type Metric = [string, (summary: Summary) => string];
 	const metrics: Metric[] = [
@@ -284,6 +389,45 @@ export function compareSummaries(
 					[
 						"mean stars",
 						(summary) => summary.meanStars?.toFixed(2) ?? "n/a",
+					] as Metric,
+				]
+			: []),
+		...(earnings
+			? [
+					[
+						"driver earnings",
+						(summary) =>
+							summary.earnings ? dollars(summary.earnings.total) : "n/a",
+					] as Metric,
+					[
+						"per driver p10 / median / p90",
+						(summary) => {
+							if (!summary.earnings) return "n/a";
+							const { p10, median, p90 } = summary.earnings.perDriver;
+							return `${dollars(p10)} / ${dollars(median)} / ${dollars(p90)}`;
+						},
+					] as Metric,
+					[
+						"mean drivers online",
+						(summary) => summary.meanOnline.toFixed(1),
+					] as Metric,
+				]
+			: []),
+		// With shifts on, the earnings-on run ends online periods (ADR 0060).
+		...(earnings && (first.earnings?.periods || second.earnings?.periods)
+			? [
+					[
+						"online periods",
+						(summary) => String(summary.earnings?.periods?.count ?? "n/a"),
+					] as Metric,
+					[
+						"median earned per online period",
+						(summary) => {
+							const median = summary.earnings?.periods?.medianEarned;
+							return median === undefined || median === null
+								? "n/a"
+								: dollars(median);
+						},
 					] as Metric,
 				]
 			: []),
