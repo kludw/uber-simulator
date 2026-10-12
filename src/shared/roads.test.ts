@@ -275,6 +275,60 @@ for (const name of names) {
 	});
 }
 
+test("both presets in one process share no state: each answers by its own network", () => {
+	const river = roadNetworkNamed("river", grid);
+	const canals = roadNetworkNamed("canals", grid);
+	// A road cell of both, asked of both in turn.
+	const random = createRandom(31);
+	let target = randomRoadCell(river, random);
+	while (!isRoadCell(canals, target.x, target.y)) {
+		target = randomRoadCell(river, random);
+	}
+	const networks = [river, canals].map((network) => ({
+		network,
+		distances: bfsFrom(network, target),
+		toward: exitCostsToward(network, target),
+		waypoints: waypointsFor(1),
+	}));
+	const wrong: string[] = [];
+	for (let i = 0; i < 100; i++) {
+		const starts = networks.map(({ network }) =>
+			randomRoadCell(network, random),
+		);
+		const at = [...starts];
+		const moves = [0, 0];
+		for (const { waypoints } of networks) clearWaypoint(waypoints, 0);
+		networks.forEach(({ network, distances, toward }, n) => {
+			const start = starts[n] as Cell;
+			const want = distances[start.y * grid.width + start.x];
+			const got = roadDistanceTo(network, toward, start.x, start.y);
+			if (got !== want) {
+				wrong.push(`${network.name} distance ${got}, BFS ${want}`);
+			}
+		});
+		// The two drivers step in turn, same driver index, until both arrive.
+		const arrived = (n: number) =>
+			at[n]?.x === target.x && at[n]?.y === target.y;
+		while (!(arrived(0) && arrived(1)) && moves.every((m) => m < 2000)) {
+			networks.forEach(({ network, waypoints }, n) => {
+				if (arrived(n)) return;
+				at[n] = roadStep(network, waypoints, 0, at[n] as Cell, target);
+				moves[n] = (moves[n] as number) + 1;
+			});
+		}
+		networks.forEach(({ network, distances }, n) => {
+			const start = starts[n] as Cell;
+			const want = distances[start.y * grid.width + start.x];
+			if (!arrived(n) || moves[n] !== want) {
+				wrong.push(
+					`${network.name} from (${start.x}, ${start.y}): ${moves[n]} moves, BFS ${want}`,
+				);
+			}
+		});
+	}
+	expect(wrong).toEqual([]);
+});
+
 type Box = [x0: number, y0: number, x1: number, y1: number];
 
 // Search buckets of 1 to 60 cells a side anywhere, and around bridges so

@@ -63,9 +63,8 @@ function presetOf(name: RoadNetworkName, grid: Grid): Preset {
 		case "canals": {
 			const quarters = (size: number) =>
 				[1, 2, 3].map((i) => jitter(Math.floor((i * size) / 4)));
-			const riverRows = quarters(grid.height);
 			return {
-				riverRows,
+				riverRows: quarters(grid.height),
 				riverColumns: quarters(grid.width),
 				bridgesPerStretch: 2,
 			};
