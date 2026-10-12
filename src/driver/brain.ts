@@ -806,6 +806,11 @@ function onTick(
 			);
 		let target = draw();
 		// On roads, redrawn from the same stream while off road (ADR 0059).
+		// Ends because every chase area has a road cell: rivers are single
+		// rows or columns far apart, so a part 2 or more wide and tall has
+		// one; a 1-wide part lies on a 50k or 50k - 1 coordinate, never a
+		// preset's river; and a part without road cells gets no pickups, so it
+		// is never priced. A new preset or grid must keep this.
 		while (
 			state.roads !== null &&
 			!isRoadCell(state.roads.network, target.x, target.y)

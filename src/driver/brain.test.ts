@@ -3,7 +3,6 @@ import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
 import {
 	type DriverId,
-	type DriversMoved,
 	driversMoved,
 	driversWentOnline,
 	forEachMove,
@@ -3180,7 +3179,10 @@ describe("decideDriverShard on roads", () => {
 			{ grid: roadGrid, ...shard(i1, 9), tick: tick(0), roads: canals },
 			random,
 		);
-		const outputs: unknown[] = [...started.outputs];
+		const outputs: (
+			| (typeof started.outputs)[number]
+			| ReturnType<typeof decideDriverShard>["outputs"][number]
+		)[] = [...started.outputs];
 		let state = started.state;
 		for (let n = 1; n <= 300; n++) {
 			const decided = decideDriverShard(
@@ -3201,11 +3203,14 @@ describe("decideDriverShard on roads", () => {
 	test("drivers wandering on roads stand only on drivable cells", () => {
 		const { canals, outputs } = wandering(7);
 		const undrivable: Cell[] = [];
-		for (const output of outputs as DriversMoved[]) {
-			// drivers.went_online reads the same way.
-			forEachMove(output, (_driverId, at) => {
-				if (!isDrivable(canals, at.x, at.y)) undrivable.push(at);
-			});
+		const check = (_driverId: DriverId, at: Cell) => {
+			if (!isDrivable(canals, at.x, at.y)) undrivable.push(at);
+		};
+		for (const output of outputs) {
+			if (output.type === "drivers.went_online") {
+				forEachWentOnline(output, check);
+			}
+			if (output.type === "drivers.moved") forEachMove(output, check);
 		}
 		expect(undrivable).toEqual([]);
 	});
