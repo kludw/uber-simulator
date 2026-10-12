@@ -1,6 +1,7 @@
 // Ride pooling (ADR 0056, 0058): whether a pooled trip can join a partner's driver,
 // and the order of their dropoffs. Pure, shared by dispatch and drivers.
 import { type Cell, distance } from "./grid.ts";
+import { distanceOn, type RoadNetwork } from "./roads.ts";
 
 export type PooledTrip = { pickup: Cell; dropoff: Cell };
 
@@ -43,7 +44,8 @@ function ridesOf(
 			? distance(partner.pickup, joining.pickup)
 			: partner.rideSoFar + distance(driverAt, joining.pickup);
 	const betweenDropoffs = distance(partner.dropoff, joining.dropoff);
-	if (partnerDropsFirst(partner, joining)) {
+	// Dispatch's join rules take roads in #336d (ADR 0059).
+	if (partnerDropsFirst(partner, joining, null)) {
 		const toPartnerDropoff = distance(joining.pickup, partner.dropoff);
 		return {
 			partner: toJoiningPickup + toPartnerDropoff,
@@ -58,14 +60,16 @@ function ridesOf(
 
 // After the joining pickup, the dropoff with the shorter remaining route
 // first, ties to the partner's. Both routes end with the leg between the
-// dropoffs, so that is the dropoff nearer the joining pickup.
+// dropoffs, so that is the dropoff nearer the joining pickup (by road with
+// roads on, ADR 0059).
 export function partnerDropsFirst(
 	partner: PooledTrip,
 	joining: PooledTrip,
+	roads: RoadNetwork | null,
 ): boolean {
 	return (
-		distance(joining.pickup, partner.dropoff) <=
-		distance(joining.pickup, joining.dropoff)
+		distanceOn(roads, joining.pickup, partner.dropoff) <=
+		distanceOn(roads, joining.pickup, joining.dropoff)
 	);
 }
 

@@ -5,7 +5,6 @@ import {
 	cellAt,
 	distance,
 	type Grid,
-	randomCell,
 	stepToward,
 } from "../shared/grid.ts";
 import type {
@@ -40,6 +39,15 @@ import {
 	type RegionLayout,
 	regionOf,
 } from "../shared/regions.ts";
+import {
+	distanceOn,
+	isRoadCell,
+	type RoadNetwork,
+	randomRoadCell,
+	roadStep,
+	type Waypoints,
+	waypointsFor,
+} from "../shared/roads.ts";
 import {
 	baseSurge,
 	type Surge,
@@ -173,7 +181,7 @@ type Schedule = {
 // schedule: null when always online. picky: null when accepting all.
 // prices: the last zones.priced per region, by zone; zones not listed are
 // 1.0. pricesChanged: a zones.priced arrived since the last tick, which
-// rebuilds chaseTable (ADR 0055).
+// rebuilds chaseTable (ADR 0055). roads: null with roads off.
 export type DriverShardState = {
 	grid: Grid;
 	regions: RegionLayout;
@@ -184,6 +192,15 @@ export type DriverShardState = {
 	prices: Map<Region, Map<Zone, Surge>>;
 	pricesChanged: boolean;
 	chaseTable: ChaseTable;
+	roads: Roads | null;
+};
+
+// Roads on (ADR 0059): the network, and the waypoint of each of the shard's
+// drivers by its place in the shard (driver index - firstIndex).
+type Roads = {
+	network: RoadNetwork;
+	waypoints: Waypoints;
+	firstIndex: DriverIndex;
 };
 
 // By zone: the bounds of the nearest surge area within chase reach. Zones
@@ -215,6 +232,8 @@ export function startDriverShard(
 		preferences?: Preferences;
 		// Missing = one region.
 		regions?: RegionLayout;
+		// Missing or null = roads off.
+		roads?: RoadNetwork | null;
 	},
 	random: Random,
 ): { state: DriverShardState; outputs: DriversWentOnline[] } {
@@ -225,7 +244,8 @@ export function startDriverShard(
 	const placed = Array.from({ length: config.driverCount }, (_, i) => {
 		const index = DriverIndex.parse(config.firstIndex + i);
 		const id = driverIdAt(config.fleetSize, index);
-		return { id, index, cell: randomCell(config.grid, random) };
+		const cell = randomRoadCell(config.roads ?? null, config.grid, random);
+		return { id, index, cell };
 	});
 	const drivers = new Map<DriverId, Driver>();
 	let schedule: Schedule | null = null;
@@ -272,6 +292,14 @@ export function startDriverShard(
 		prices: new Map(),
 		pricesChanged: false,
 		chaseTable: new Map(),
+		roads:
+			config.roads == null
+				? null
+				: {
+						network: config.roads,
+						waypoints: waypointsFor(config.driverCount),
+						firstIndex: config.firstIndex,
+					},
 	};
 	const online: ByRegion = new Map();
 	for (const driver of drivers.values()) {
@@ -365,7 +393,8 @@ type DriverShardOutput =
 	| OfferAccepted
 	| OfferDeclined
 	| ConfirmTrip
-	| Rejected;
+	| Rejected
+	| InputRejected<Offer, "off_road_cell">;
 
 type Rejected = InputRejected<
 	TripPickedUp | TripCompleted | TripCancelled | TripOfferExpired,
@@ -425,24 +454,28 @@ function onOffer(
 		throw new Error(`offer for driver ${offer.driverId} outside this shard`);
 	}
 	const region = regionOf(state.regions, state.grid, offer.pickup);
-	const taken =
-		offered.state === "idle"
-			? taking(state, offered, offer, region, random)
-			: joining(offered, offer, region);
-	if (taken === null) {
+	const declined: OfferDeclined = {
+		type: "offer_declined",
+		tripId: offer.tripId,
+		driverId: offer.driverId,
+		region,
+		idleAt: offered.state === "idle" ? offered.cell : null,
+	};
+	// From a service on another network (ADR 0059): an expected failure.
+	if (state.roads !== null && !onRoads(state.roads.network, offer)) {
 		return {
 			state,
 			outputs: [
-				{
-					type: "offer_declined",
-					tripId: offer.tripId,
-					driverId: offer.driverId,
-					region,
-					idleAt: offered.state === "idle" ? offered.cell : null,
-				},
+				declined,
+				{ type: "input_rejected", reason: "off_road_cell", input: offer },
 			],
 		};
 	}
+	const taken =
+		offered.state === "idle"
+			? taking(state, offered, offer, region, random)
+			: joining(state, offered, offer, region);
+	if (taken === null) return { state, outputs: [declined] };
 	state.drivers.set(offered.id, taken);
 	return {
 		state,
@@ -469,7 +502,7 @@ function taking(
 	// crossed), so accepting would leave two instances tracking it (ADR 0050).
 	if (
 		regionOf(state.regions, state.grid, driver.cell) !== region ||
-		declines(state.picky, driver, offer, random)
+		declines(state, driver, offer, random)
 	) {
 		return null;
 	}
@@ -490,6 +523,7 @@ function taking(
 // trip's region, while it holds one pooled trip; no preference draw. null if
 // it declines.
 function joining(
+	state: DriverShardState,
 	driver: Exclude<Driver, IdleDriver>,
 	offer: Offer,
 	region: Region,
@@ -519,7 +553,8 @@ function joining(
 		tripId: partner.tripId,
 		cell: partner.dropoff,
 	};
-	const dropoffs = partnerDropsFirst(partner, joined)
+	const network = state.roads?.network ?? null;
+	const dropoffs = partnerDropsFirst(partner, joined, network)
 		? [partnerDropoff, joinedDropoff]
 		: [joinedDropoff, partnerDropoff];
 	switch (driver.state) {
@@ -536,6 +571,14 @@ function joining(
 	}
 }
 
+function onRoads(network: RoadNetwork, offer: Offer): boolean {
+	const { pickup, dropoff } = offer;
+	return (
+		isRoadCell(network, pickup.x, pickup.y) &&
+		isRoadCell(network, dropoff.x, dropoff.y)
+	);
+}
+
 function heldTripOf(offer: Offer): HeldTrip {
 	return {
 		tripId: offer.tripId,
@@ -546,17 +589,19 @@ function heldTripOf(offer: Offer): HeldTrip {
 }
 
 function declines(
-	picky: Picky | null,
+	state: DriverShardState,
 	driver: IdleDriver,
 	offer: Offer,
 	random: Random,
 ): boolean {
+	const { picky } = state;
 	if (picky === null) return false;
 	const max = picky.maxPickupDistances.get(driver.id);
 	if (max === undefined) {
 		throw new Error(`driver ${driver.id} without a max pickup distance`);
 	}
-	if (distance(driver.cell, offer.pickup) > max) return true;
+	const network = state.roads?.network ?? null;
+	if (distanceOn(network, driver.cell, offer.pickup) > max) return true;
 	// One stream per offer: the outcome doesn't depend on offer arrival order.
 	const stream = random.child(`offer:${offer.tripId}:${driver.id}`);
 	return stream.float() < picky.declineShare;
@@ -753,10 +798,26 @@ function onTick(
 		const area = state.chaseTable.get(zoneOf(state.grid, driver.cell));
 		if (area === undefined) return null;
 		chaseStream ??= random.child(`chase:${input.tick}`);
-		return cellAt(
-			Coordinate.parse(chaseStream.int(area.min.x, area.max.x)),
-			Coordinate.parse(chaseStream.int(area.min.y, area.max.y)),
-		);
+		const stream = chaseStream;
+		const draw = () =>
+			cellAt(
+				Coordinate.parse(stream.int(area.min.x, area.max.x)),
+				Coordinate.parse(stream.int(area.min.y, area.max.y)),
+			);
+		let target = draw();
+		// On roads, redrawn from the same stream while off road (ADR 0059).
+		// Ends because every chase area has a road cell: rivers are single
+		// rows or columns far apart, so a part 2 or more wide and tall has
+		// one; a 1-wide part lies on a 50k or 50k - 1 coordinate, never a
+		// preset's river; and a part without road cells gets no pickups, so it
+		// is never priced. A new preset or grid must keep this.
+		while (
+			state.roads !== null &&
+			!isRoadCell(state.roads.network, target.x, target.y)
+		) {
+			target = draw();
+		}
+		return target;
 	};
 	// Only existing keys are set while iterating: order stays by ID.
 	for (const driver of drivers.values()) {
@@ -788,7 +849,10 @@ function onTick(
 			case "idle": {
 				const region = regionOf(state.regions, state.grid, driver.cell);
 				const target = wanderTarget(driver, state, repick, chaseTarget, random);
-				drivers.set(driver.id, wander(driver, target, inRegion(moves, region)));
+				drivers.set(
+					driver.id,
+					wander(driver, target, state.roads, inRegion(moves, region)),
+				);
 				break;
 			}
 			case "en_route":
@@ -797,6 +861,7 @@ function onTick(
 					driveToPickup(
 						driver,
 						input.tick,
+						state.roads,
 						inRegion(moves, driver.region),
 						outputs,
 					),
@@ -832,6 +897,7 @@ function onTick(
 					driveToDropoff(
 						driver,
 						input.tick,
+						state.roads,
 						inRegion(moves, driver.region),
 						outputs,
 					),
@@ -953,7 +1019,10 @@ function wanderTarget(
 ): Cell {
 	const current = driver.wanderTarget;
 	if (current === null) {
-		return chaseTarget(driver) ?? randomCell(state.grid, random);
+		return (
+			chaseTarget(driver) ??
+			randomRoadCell(state.roads?.network ?? null, state.grid, random)
+		);
 	}
 	if (!repick || surgeAt(state, current) > baseSurge) return current;
 	return chaseTarget(driver) ?? current;
@@ -1006,15 +1075,34 @@ function chaseTableOf(state: DriverShardState): ChaseTable {
 	return table;
 }
 
+// One move toward target: on roads through the driver's waypoint, else
+// today's rule.
+function step(
+	roads: Roads | null,
+	driver: { index: DriverIndex },
+	from: Cell,
+	target: Cell,
+): Cell {
+	if (roads === null) return stepToward(from, target);
+	return roadStep(
+		roads.network,
+		roads.waypoints,
+		driver.index - roads.firstIndex,
+		from,
+		target,
+	);
+}
+
 function wander(
 	driver: IdleDriver,
 	wanderTarget: Cell,
+	roads: Roads | null,
 	moves: DriverMove[],
 ): IdleDriver {
 	if (distance(driver.cell, wanderTarget) === 0) {
 		return { ...driver, wanderTarget: null };
 	}
-	const cell = stepToward(driver.cell, wanderTarget);
+	const cell = step(roads, driver, driver.cell, wanderTarget);
 	moves.push({ driverIndex: driver.index, cell });
 	const arrived = distance(cell, wanderTarget) === 0;
 	return { ...driver, cell, wanderTarget: arrived ? null : wanderTarget };
@@ -1023,12 +1111,13 @@ function wander(
 function driveToPickup(
 	driver: EnRouteDriver,
 	tick: Tick,
+	roads: Roads | null,
 	moves: DriverMove[],
 	outputs: DriverShardOutput[],
 ): Driver {
 	let cell = driver.cell;
 	if (distance(cell, driver.pickup) > 0) {
-		cell = stepToward(cell, driver.pickup);
+		cell = step(roads, driver, cell, driver.pickup);
 		moves.push({ driverIndex: driver.index, cell });
 	}
 	if (distance(cell, driver.pickup) > 0) {
@@ -1058,12 +1147,13 @@ function driveToPickup(
 function driveToDropoff(
 	driver: OnTripDriver,
 	tick: Tick,
+	roads: Roads | null,
 	moves: DriverMove[],
 	outputs: DriverShardOutput[],
 ): Driver {
 	let cell = driver.cell;
 	if (distance(cell, driver.dropoff) > 0) {
-		cell = stepToward(cell, driver.dropoff);
+		cell = step(roads, driver, cell, driver.dropoff);
 		moves.push({ driverIndex: driver.index, cell });
 	}
 	if (distance(cell, driver.dropoff) > 0) {

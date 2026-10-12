@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { type Cell, cellIn } from "./grid.ts";
 import { joinEtaOf, joinReachOf, partnerDropsFirst } from "./pool.ts";
+import { roadNetworkNamed } from "./roads.ts";
 
 function cell(x: number, y: number): Cell {
 	const result = cellIn({ width: 500, height: 500 }, x, y);
@@ -141,6 +142,7 @@ describe("partnerDropsFirst", () => {
 			partnerDropsFirst(
 				{ pickup: cell(0, 0), dropoff: cell(60, 50) },
 				{ pickup: cell(50, 50), dropoff: cell(50, 70) },
+				null,
 			),
 		).toBe(true);
 	});
@@ -150,6 +152,20 @@ describe("partnerDropsFirst", () => {
 			partnerDropsFirst(
 				{ pickup: cell(0, 0), dropoff: cell(80, 50) },
 				{ pickup: cell(50, 50), dropoff: cell(50, 70) },
+				null,
+			),
+		).toBe(false);
+	});
+
+	// From (100, 260) on the river preset: the partner's dropoff (100, 280) is
+	// 20 by Manhattan but 40 by road (across the bridge at (90, 263)), the
+	// joining rider's (100, 230) 30.
+	test("drops the joining rider first when its dropoff is nearer by road", () => {
+		expect(
+			partnerDropsFirst(
+				{ pickup: cell(0, 0), dropoff: cell(100, 280) },
+				{ pickup: cell(100, 260), dropoff: cell(100, 230) },
+				roadNetworkNamed("river", { width: 500, height: 500 }),
 			),
 		).toBe(false);
 	});
@@ -159,6 +175,7 @@ describe("partnerDropsFirst", () => {
 			partnerDropsFirst(
 				{ pickup: cell(0, 0), dropoff: cell(70, 50) },
 				{ pickup: cell(50, 50), dropoff: cell(50, 70) },
+				null,
 			),
 		).toBe(true);
 	});
