@@ -5,7 +5,13 @@
 // distance, and between districts it goes through landings, whose pairwise
 // road distances are precomputed once per network. Never less than Manhattan
 // distance, so searches bounded by Manhattan distance stay exact.
-import { type Cell, type Coordinate, cellAt, type Grid } from "./grid.ts";
+import {
+	type Cell,
+	type Coordinate,
+	cellAt,
+	type Grid,
+	stepToward,
+} from "./grid.ts";
 import { createRandom } from "./random.ts";
 
 export type RoadNetworkName = "river" | "canals";
@@ -454,6 +460,101 @@ function exitCost(
 		if (cost < least) least = cost;
 	}
 	return 2 + least;
+}
+
+// Each driver's waypoint by driver index: the exit landing it heads for
+// while its target is in another district. Owned by the driver shard's
+// state; this module only reads and writes it in roadStep.
+export type Waypoints = Int32Array;
+
+const noWaypoint = -1;
+
+export function waypointsFor(drivers: number): Waypoints {
+	return new Int32Array(drivers).fill(noWaypoint);
+}
+
+// The waypoint was chosen for the driver's old target: call when its target
+// changes.
+export function clearWaypoint(waypoints: Waypoints, index: number): void {
+	waypoints[index] = noWaypoint;
+}
+
+// The next cell on a shortest road path from drivable `from` to road cell
+// `target`, one move. Within a district today's rule (stepToward); toward
+// another district via the driver's waypoint, chosen when it has none or it
+// lies in another district than the driver's (it just crossed): the exit of
+// least Manhattan distance to it + exit cost, ties to the lowest landing.
+// Each step lowers the road distance through a kept waypoint by exactly 1,
+// so a driver keeping it arrives in exactly the road distance.
+export function roadStep(
+	network: RoadNetwork,
+	waypoints: Waypoints,
+	index: number,
+	from: Cell,
+	target: Cell,
+): Cell {
+	const targetDistrict = districtOf(network, target.x, target.y);
+	if (targetDistrict < 0) {
+		throw new Error(`road step toward off-road (${target.x}, ${target.y})`);
+	}
+	const district = districtOf(network, from.x, from.y);
+	if (district === targetDistrict) return stepToward(from, target);
+	if (district < 0) return offBridge(network, from, target);
+	let exit = waypoints[index] ?? noWaypoint;
+	if (exit === noWaypoint || network.landingDistrict[exit] !== district) {
+		exit = exitToward(network, from, target, targetDistrict);
+		waypoints[index] = exit;
+	}
+	const landing = landingCell(network, exit);
+	if (landing.x === from.x && landing.y === from.y) {
+		return network.bridges[exit >> 1] as Cell;
+	}
+	return stepToward(from, landing);
+}
+
+function exitToward(
+	network: RoadNetwork,
+	from: Cell,
+	target: Cell,
+	targetDistrict: number,
+): number {
+	let exit = noWaypoint;
+	let least = Number.POSITIVE_INFINITY;
+	const exits = network.landingsOf[
+		districtOf(network, from.x, from.y)
+	] as Int32Array;
+	for (let i = 0; i < exits.length; i++) {
+		const p = exits[i] as number;
+		const cost =
+			Math.abs((network.landingX[p] as number) - from.x) +
+			Math.abs((network.landingY[p] as number) - from.y) +
+			exitCost(network, p, target.x, target.y, targetDistrict);
+		if (cost < least) {
+			least = cost;
+			exit = p;
+		}
+	}
+	return exit;
+}
+
+// From a bridge to whichever end is nearer the target (ties to the first).
+function offBridge(network: RoadNetwork, from: Cell, target: Cell): Cell {
+	const bridge = bridgeAt(network, from.x, from.y);
+	if (bridge < 0)
+		throw new Error(`road step from off-road (${from.x}, ${from.y})`);
+	const first = landingCell(network, 2 * bridge);
+	const second = landingCell(network, 2 * bridge + 1);
+	return roadDistance(network, second, target) <
+		roadDistance(network, first, target)
+		? second
+		: first;
+}
+
+function landingCell(network: RoadNetwork, landing: number): Cell {
+	return cellAt(
+		network.landingX[landing] as Coordinate,
+		network.landingY[landing] as Coordinate,
+	);
 }
 
 // Floyd-Warshall over landings: two landings of one district are Manhattan

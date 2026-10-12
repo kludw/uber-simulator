@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { type Cell, type Coordinate, cellAt, type Grid } from "./grid.ts";
 import { createRandom, type Random } from "./random.ts";
 import {
+	clearWaypoint,
 	exitCostsToward,
 	isDrivable,
 	isRoadCell,
@@ -11,6 +12,8 @@ import {
 	roadDistance,
 	roadDistanceTo,
 	roadNetworkNamed,
+	roadStep,
+	waypointsFor,
 } from "./roads.ts";
 
 const grid: Grid = { width: 500, height: 500 };
@@ -211,6 +214,62 @@ for (const name of names) {
 					}
 				}
 			});
+			expect(wrong).toEqual([]);
+		});
+
+		// Targets are road cells; drivers start anywhere drivable.
+		const roadTargets = sources.flatMap((target, s) =>
+			isRoadCell(network, target.x, target.y)
+				? [{ target, distances: bfs[s] as Int32Array }]
+				: [],
+		);
+
+		test("a step lands on a drivable 4-neighbor one closer to the target", () => {
+			const random = createRandom(23);
+			const wrong: string[] = [];
+			for (const { target, distances } of roadTargets) {
+				for (const from of targetsOf(network, random)) {
+					const want = distances[from.y * grid.width + from.x] as number;
+					if (want === 0) continue;
+					const next = roadStep(network, waypointsFor(1), 0, from, target);
+					const moved = Math.abs(next.x - from.x) + Math.abs(next.y - from.y);
+					const closer = distances[next.y * grid.width + next.x];
+					if (
+						moved !== 1 ||
+						!isDrivable(network, next.x, next.y) ||
+						closer !== want - 1
+					) {
+						wrong.push(
+							`(${from.x}, ${from.y}) toward (${target.x}, ${target.y}): (${next.x}, ${next.y})`,
+						);
+					}
+				}
+			}
+			expect(wrong).toEqual([]);
+		});
+
+		test("a driver keeping its waypoint arrives in exactly the road distance", () => {
+			const random = createRandom(29);
+			const waypoints = waypointsFor(1);
+			const wrong: string[] = [];
+			for (const { target, distances } of roadTargets) {
+				for (const start of targetsOf(network, random)) {
+					const want = distances[start.y * grid.width + start.x] as number;
+					clearWaypoint(waypoints, 0);
+					let at = start;
+					let moves = 0;
+					while ((at.x !== target.x || at.y !== target.y) && moves <= want) {
+						at = roadStep(network, waypoints, 0, at, target);
+						moves++;
+						if (!isDrivable(network, at.x, at.y)) break;
+					}
+					if (moves !== want || at.x !== target.x || at.y !== target.y) {
+						wrong.push(
+							`(${start.x}, ${start.y}) toward (${target.x}, ${target.y}): at (${at.x}, ${at.y}) after ${moves}, road distance ${want}`,
+						);
+					}
+				}
+			}
 			expect(wrong).toEqual([]);
 		});
 	});
