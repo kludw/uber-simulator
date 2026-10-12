@@ -2940,3 +2940,116 @@ describe("decideDispatch pooling", () => {
 		]);
 	});
 });
+
+// ADR 0060: t-1 from (1, 2) to (7, 8), 12 cells: base fare 250 + 2 × 12 =
+// 274 cents.
+describe("decideDispatch earnings", () => {
+	type Options = { earnings: boolean; surge?: boolean };
+
+	function lastOutputs(inputs: DispatchInput[], options: Options) {
+		let state = startDispatch({ grid, fleetSize, tick: tick(0), ...options });
+		let outputs: unknown[] = [];
+		for (const input of inputs) {
+			({ state, outputs } = decideDispatch(state, input, random));
+		}
+		return outputs;
+	}
+
+	function completedT1(request: DispatchInput): DispatchInput[] {
+		return [
+			request,
+			wentOnline(i1, cell(3, 3)),
+			ticked(2),
+			accepted(t1, d1),
+			arrivedAtPickup(t1, d1, cell(1, 2)),
+			ticked(5),
+			arrivedAtDropoff(t1, d1, cell(7, 8)),
+		];
+	}
+
+	test("a completion carries the base fare with surge off", () => {
+		const outputs = lastOutputs(completedT1(requestTrip(t1, 1)), {
+			earnings: true,
+		});
+
+		expect(outputs).toEqual([
+			{
+				type: "trip.completed",
+				tick: tick(5),
+				tripId: t1,
+				driverId: d1,
+				fare: 274,
+			},
+		]);
+	});
+
+	function fareOnCompletion(request: DispatchInput, options: Options) {
+		const [completion] = lastOutputs(completedT1(request), options);
+		return (completion as { fare?: number }).fare;
+	}
+
+	// The rider's quote: 274 × 1.5.
+	test("a completion carries the surged fare with surge on", () => {
+		const surged = { ...requestTrip(t1, 1), surge: Surge.parse(1.5) };
+
+		expect(fareOnCompletion(surged, { earnings: true, surge: true })).toBe(411);
+	});
+
+	// 274 × 0.75 = 205.5, rounded.
+	test("a pooled completion carries the pooled fare", () => {
+		const pooled = { ...requestTrip(t1, 1), pooled: true as const };
+
+		expect(fareOnCompletion(pooled, { earnings: true })).toBe(206);
+	});
+
+	test("a completion confirmed at the dropoff carries the fare", () => {
+		const outputs = lastOutputs(
+			[
+				...completedT1(requestTrip(t1, 1)).slice(0, -1),
+				confirmTrip(t1, d1, "dropoff", cell(7, 8)),
+			],
+			{ earnings: true },
+		);
+
+		expect(outputs).toEqual([
+			{
+				type: "trip.completed",
+				tick: tick(5),
+				tripId: t1,
+				driverId: d1,
+				fare: 274,
+			},
+		]);
+	});
+
+	const completed = completedT1(requestTrip(t1, 1));
+
+	test("with earnings off neither a completion nor its status carries a fare", () => {
+		const off = { earnings: false, surge: true };
+
+		expect([
+			...lastOutputs(completed, off),
+			...lastOutputs(
+				[...completed, confirmTrip(t1, d1, "dropoff", cell(7, 8))],
+				off,
+			),
+		]).toEqual([
+			{ type: "trip.completed", tick: tick(5), tripId: t1, driverId: d1 },
+			tripStatus(t1, d1, "dropoff", "completed"),
+		]);
+	});
+
+	test.each(["pickup", "dropoff"] as const)(
+		"a %s confirm after completion replies completed with the fare",
+		(stage) => {
+			const outputs = lastOutputs(
+				[...completed, confirmTrip(t1, d1, stage, cell(7, 8))],
+				{ earnings: true },
+			);
+
+			expect(outputs).toEqual([
+				{ ...tripStatus(t1, d1, stage, "completed"), fare: 274 },
+			]);
+		},
+	);
+});

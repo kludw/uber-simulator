@@ -5,7 +5,12 @@ import * as z from "zod";
 import { specGrid } from "../shared/grid.ts";
 import { RegionLayout } from "../shared/regions.ts";
 import type { Result } from "../shared/result.ts";
-import { PoolingName, RatingsName, SurgeName } from "../sim/config.ts";
+import {
+	EarningsName,
+	PoolingName,
+	RatingsName,
+	SurgeName,
+} from "../sim/config.ts";
 import type { RunConfig } from "../sim/run.ts";
 
 // Message is for the terminal: parseArgs and Zod both describe the problem.
@@ -39,6 +44,7 @@ const Args = z
 		surge: SurgeName,
 		pooling: PoolingName,
 		ratings: RatingsName,
+		earnings: EarningsName,
 	})
 	.refine((args) => args.drivers % args.shards === 0, {
 		error: "--drivers must split evenly over --shards",
@@ -79,6 +85,8 @@ export function parseBenchArgs(argv: string[]): Result<BenchArgs, InvalidArgs> {
 				pooling: { type: "string", default: "off" },
 				// Off: no rider rates a driver (ADR 0057).
 				ratings: { type: "string", default: "off" },
+				// Off: no fare on completions (ADR 0060).
+				earnings: { type: "string", default: "off" },
 			},
 			strict: true,
 		}).values;
@@ -121,6 +129,7 @@ export function parseBenchArgs(argv: string[]): Result<BenchArgs, InvalidArgs> {
 				surge: args.surge === "on",
 				pooling: args.pooling === "on",
 				ratings: args.ratings === "on",
+				earnings: args.earnings === "on",
 			},
 			maxMinutes: args["max-minutes"],
 		},

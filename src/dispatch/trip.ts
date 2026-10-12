@@ -7,6 +7,7 @@ import type {
 	TripId,
 } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
+import type { Fare } from "../shared/surge.ts";
 
 type TripDetails = {
 	id: TripId;
@@ -16,6 +17,9 @@ type TripDetails = {
 	requestedAt: Tick;
 	// The rider opted in to pooling (ADR 0056).
 	pooled: boolean;
+	// The trip's fare as fixed at request, kept only with earnings on (ADR
+	// 0060): absent, not null, so earnings off keeps no field per trip.
+	fare?: Fare;
 	// Drivers whose offer for this trip was declined or expired: never offered
 	// it again, and their late replies are stale.
 	excludedDrivers: ReadonlySet<DriverId>;

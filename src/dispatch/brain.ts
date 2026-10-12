@@ -101,6 +101,8 @@ import {
 // fleetSize: the run's fleet, from dispatch's own config (ADR 0052).
 // region: the region this instance owns, named in zones.priced.
 // surge: whether it prices zones and trips (ADR 0054).
+// earnings: whether it keeps each trip's fare and puts it on completions (ADR
+// 0060).
 // Pooling (ADR 0056, 0058): partners, each driver holding one pooled trip
 // alone, and that trip; holdingTwo, the busy drivers holding two trips (a
 // partner and its join), and both; pickedUpAt, each picked-up pooled trip's
@@ -114,6 +116,7 @@ export type DispatchState = {
 	matching: Matching;
 	region: Region;
 	surge: boolean;
+	earnings: boolean;
 	trips: Map<TripId, Trip>;
 	endedTrips: Map<TripId, EndedTrip>;
 	drivers: IdleDrivers;
@@ -178,6 +181,7 @@ const pricingIntervalTicks = 30;
 // regions, region: the layout and the region this instance owns (ADR 0050);
 // missing = one region.
 // surge: price zones and trips (ADR 0054); missing = off.
+// earnings: fares on completions (ADR 0060); missing = off.
 export function startDispatch(config: {
 	grid: Grid;
 	fleetSize: number;
@@ -186,6 +190,7 @@ export function startDispatch(config: {
 	regions?: RegionLayout;
 	region?: Region;
 	surge?: boolean;
+	earnings?: boolean;
 }): DispatchState {
 	const matching = config.matching ?? { type: "greedy" };
 	// Parsed at the edge; a bad window here is a caller bug.
@@ -205,6 +210,7 @@ export function startDispatch(config: {
 		matching,
 		region,
 		surge: config.surge ?? false,
+		earnings: config.earnings ?? false,
 		trips: new Map(),
 		endedTrips: new Map(),
 		drivers: startIdleDrivers(
@@ -503,7 +509,16 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 			],
 		};
 	}
-	storeTrip(state, requestedTrip(request));
+	const priced = state.surge ? price(request) : undefined;
+	const trip = requestedTrip(request);
+	// The fare as fixed here: the priced one, else the base fare, pooled 25%
+	// off either way (ADR 0060 rule 6). Off: no fare field per trip.
+	storeTrip(
+		state,
+		state.earnings
+			? { ...trip, fare: priced?.fare ?? fareOf(request, baseSurge, null) }
+			: trip,
+	);
 	return {
 		state,
 		outputs: [
@@ -515,7 +530,7 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 				riderId: request.riderId,
 				pickup: request.pickup,
 				dropoff: request.dropoff,
-				...(state.surge ? price(request) : {}),
+				...priced,
 				...(request.pooled ? { pooled: true as const } : {}),
 			},
 		],
@@ -730,6 +745,7 @@ function arrive(
 				tick: state.tick,
 				tripId: trip.id,
 				driverId: input.driverId,
+				...(!atPickup && trip.fare !== undefined ? { fare: trip.fare } : {}),
 			},
 		],
 	};
@@ -756,7 +772,7 @@ function onConfirmTrip(state: DispatchState, confirm: ConfirmTrip): Decision {
 			return arrive(state, trip, confirm, false);
 		case "completed":
 			if (trip.driverId !== confirm.driverId) break;
-			return replyStatus(state, confirm, "completed");
+			return replyStatus(state, confirm, "completed", trip.fare);
 		case "cancelled":
 			break;
 		default: {
@@ -771,6 +787,8 @@ function replyStatus(
 	state: DispatchState,
 	confirm: ConfirmTrip,
 	status: TripStatus["status"],
+	// Only a completed trip's, with earnings on (ADR 0060).
+	fare?: Fare,
 ): Decision {
 	return {
 		state,
@@ -781,6 +799,7 @@ function replyStatus(
 				driverId: confirm.driverId,
 				stage: confirm.stage,
 				status,
+				...(fare === undefined ? {} : { fare }),
 			},
 		],
 	};
