@@ -8,6 +8,12 @@ import {
 } from "../shared/grid.ts";
 import type { DriverId } from "../shared/messages.ts";
 import { ratingPenaltyOf, type Stars } from "../shared/rating.ts";
+import {
+	exitCostsToward,
+	type RoadNetwork,
+	roadBoundToBox,
+	roadDistanceTo,
+} from "../shared/roads.ts";
 import { type Zone, zoneOf } from "../shared/surge.ts";
 
 // ratingPenalty: 0 unrated (ADR 0057).
@@ -80,6 +86,9 @@ type Drivers = {
 	// The fleet's ratings by driver index, any region's drivers (ADR 0057):
 	// null until the first rating, so nothing is allocated with ratings off.
 	ratings: Ratings | null;
+	// Roads on (ADR 0059): greedy's and the join reach's searches by road
+	// distance; null: Manhattan, today's code.
+	roads: RoadNetwork | null;
 };
 
 // Fleet-sized: stars sum, ratings count and the rating penalty they give.
@@ -92,7 +101,9 @@ type Area = { min: Cell; max: Cell };
 
 // fleetSize: the run's fleet; driver indexes are below it (ADR 0052).
 // region: the cells whose drivers this index keeps (ADR 0050); missing = the
-// whole grid.
+// whole grid. roads: the network searches measure by (ADR 0059); missing or
+// null = roads off. Callers place only drivable cells and search only from
+// road cells with roads on.
 export function startIdleDrivers(
 	grid: Grid,
 	fleetSize: number,
@@ -104,6 +115,7 @@ export function startIdleDrivers(
 		),
 	},
 	search: IdleDriverSearch = defaultSearch,
+	roads: RoadNetwork | null = null,
 ): IdleDrivers {
 	const size = search.cellsPerBucket;
 	const columns = Math.ceil(grid.width / size);
@@ -124,6 +136,7 @@ export function startIdleDrivers(
 				(): Driver[] => [],
 			),
 			ratings: null,
+			roads,
 		},
 	};
 }
@@ -363,8 +376,13 @@ export function nearestIdle(
 	pickup: Cell,
 	excluded: ReadonlySet<DriverId>,
 ): DriverId | undefined {
-	return search(idle[internals], pickup, (driverId) => excluded.has(driverId))
-		?.driverId;
+	const drivers = idle[internals];
+	const skip = (driverId: DriverId) => excluded.has(driverId);
+	return (
+		drivers.roads === null
+			? search(drivers, pickup, skip)
+			: searchByRoad(drivers, drivers.roads, null, pickup, skip)
+	)?.driverId;
 }
 
 // As nearestIdle, never a driver `skip` holds for, and with the driver's cell
@@ -376,7 +394,10 @@ export function nearestIdleSkipping(
 	skip: (driverId: DriverId) => boolean,
 ): IdleDriver | undefined {
 	const drivers = idle[internals];
-	const nearest = search(drivers, pickup, skip);
+	const nearest =
+		drivers.roads === null
+			? search(drivers, pickup, skip)
+			: searchByRoad(drivers, drivers.roads, null, pickup, skip);
 	return nearest === undefined ? undefined : idleDriverOf(drivers, nearest);
 }
 
@@ -399,14 +420,24 @@ export function leastMatchCostIdle(
 ): DriverId | undefined {
 	const drivers = idle[internals];
 	if (drivers.ratings === null) return nearestIdle(idle, pickup, excluded);
-	return searchRated(drivers, drivers.ratings.penalty, pickup, (driverId) =>
-		excluded.has(driverId),
+	const skip = (driverId: DriverId) => excluded.has(driverId);
+	return (
+		drivers.roads === null
+			? searchRated(drivers, drivers.ratings.penalty, pickup, skip)
+			: searchByRoad(
+					drivers,
+					drivers.roads,
+					drivers.ratings.penalty,
+					pickup,
+					skip,
+				)
 	)?.driverId;
 }
 
 // As leastMatchCostIdle, never a driver `skip` holds for, with the driver's
 // cell and rating penalty (batched matching's untouched driver, ADR 0051,
-// 0057).
+// 0057). By Manhattan distance with roads on too, until batched matching
+// takes roads (#386).
 export function leastMatchCostIdleSkipping(
 	idle: IdleDrivers,
 	pickup: Cell,
@@ -613,6 +644,87 @@ function searchRings(
 		}
 	}
 	return nearest?.driver;
+}
+
+// The idle driver of least road distance + penalty (none: 0) to the pickup,
+// ties to the lowest ID (ADR 0059): searchRingsRated's rings by road. The
+// Manhattan ring and bucket bounds stay valid (road distance is never less);
+// a bucket's road bound (roadBoundToBox) skips it before its drivers are
+// read. The pickup's exit costs are made once per search and owned by it.
+function searchByRoad(
+	drivers: Drivers,
+	network: RoadNetwork,
+	penalty: Int32Array | null,
+	pickup: Cell,
+	skip: (driverId: DriverId) => boolean,
+): Driver | undefined {
+	const toward = exitCostsToward(network, pickup);
+	let best: Driver | undefined;
+	let bestCost = Number.POSITIVE_INFINITY;
+	const consider = (driver: Driver) => {
+		if (
+			Math.abs(pickup.x - driver.x) + Math.abs(pickup.y - driver.y) >
+			bestCost
+		)
+			return;
+		const cost =
+			roadDistanceTo(network, toward, driver.x, driver.y) +
+			(penalty === null ? 0 : (penalty[driver.index] ?? 0));
+		if (cost > bestCost) return;
+		if (
+			cost === bestCost &&
+			best !== undefined &&
+			driver.driverId > best.driverId
+		) {
+			return;
+		}
+		if (skip(driver.driverId)) return;
+		best = driver;
+		bestCost = cost;
+	};
+	if (drivers.idleCount < drivers.search.linearScanBelow) {
+		for (const bucket of drivers.buckets) {
+			for (const driver of bucket) consider(driver);
+		}
+		return best;
+	}
+	const size = drivers.search.cellsPerBucket;
+	const column = Math.floor(pickup.x / size);
+	const row = Math.floor(pickup.y / size);
+	const lastRing = Math.max(
+		column,
+		row,
+		drivers.columns - 1 - column,
+		drivers.rows - 1 - row,
+	);
+	for (let ring = 0; ring <= lastRing; ring++) {
+		if (nearestBeyond(pickup, size, ring) > bestCost) break;
+		for (let y = row - ring; y <= row + ring; y++) {
+			if (y < 0 || y >= drivers.rows) continue;
+			const edgeRow = y === row - ring || y === row + ring;
+			const step = edgeRow ? 1 : 2 * ring;
+			for (let x = column - ring; x <= column + ring; x += step) {
+				if (x < 0 || x >= drivers.columns) continue;
+				const bucket = drivers.buckets[y * drivers.columns + x];
+				if (bucket === undefined || bucket.length === 0) continue;
+				if (
+					bestCost !== Number.POSITIVE_INFINITY &&
+					roadBoundToBox(
+						network,
+						toward,
+						x * size,
+						y * size,
+						x * size + size - 1,
+						y * size + size - 1,
+					) > bestCost
+				) {
+					continue;
+				}
+				for (const driver of bucket) consider(driver);
+			}
+		}
+	}
+	return best;
 }
 
 // Least distance from the pickup to any cell in ring `ring` or beyond, i.e.
