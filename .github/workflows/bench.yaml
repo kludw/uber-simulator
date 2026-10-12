@@ -5,7 +5,8 @@ name: bench
 # `-f drivers=10000 -f matching=greedy -f heap_profile=true`; measure peak
 # RSS with `-f cpu_profile=false` (--cpu-prof inflates it). Each run's
 # report, machine note, and profiles (when enabled) are uploaded as one
-# artifact.
+# artifact. Pass more `bun run bench` flags with -f args, e.g.
+# `-f args="--earnings on"` (letters, digits, `.`, `_`, `=`, `-` per word).
 on:
   workflow_dispatch:
     inputs:
@@ -33,6 +34,10 @@ on:
         description: Also write a heap profile on exit (large at 10k drivers)
         type: boolean
         default: false
+      args:
+        description: More bun run bench flags, space-separated words of letters, digits, . _ = - (e.g. --earnings on)
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -70,6 +75,7 @@ jobs:
       TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
       CPU_PROFILE: ${{ inputs.cpu_profile }}
       HEAP_PROFILE: ${{ inputs.heap_profile }}
+      ARGS: ${{ inputs.args }}
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -87,6 +93,11 @@ jobs:
           if [ "$HEAP_PROFILE" = "true" ]; then
             profile_flags="$profile_flags --heap-prof-md --heap-prof-dir out/profiles"
           fi
+          # Extra flags as words, each checked, never evaluated by the shell.
+          read -ra extra_args <<< "$ARGS"
+          for arg in "${extra_args[@]}"; do
+            if ! [[ "$arg" =~ ^[A-Za-z0-9._=-]+$ ]]; then echo "invalid args word: $arg" >&2; exit 2; fi
+          done
           # The bench stops itself between ticks at --max-minutes (exit 3, partial
           # report and profile written); timeout is the backstop for a tick that
           # never ends, and kills without a profile.
@@ -96,7 +107,7 @@ jobs:
           # benchmark process itself.
           timeout "${backstop}m" \
             bun $profile_flags src/bench/main.ts --drivers "$DRIVERS" --ticks "$TICKS" --matching "$MATCHING" \
-              --max-minutes "$TIMEOUT_MINUTES" \
+              --max-minutes "$TIMEOUT_MINUTES" "${extra_args[@]}" \
             > out/report.txt 2> out/stderr.txt
           code=$?
           set -e
