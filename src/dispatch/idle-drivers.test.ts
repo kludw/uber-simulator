@@ -959,6 +959,10 @@ describe.each(["river", "canals"] as const)("searches on %s roads", (name) => {
 	test("nearestIdleSkipping returns exactly what a linear scan by road distance returns, however drivers are rated", () => {
 		expectRoadScanPicks(network, 387, "skipping");
 	});
+
+	test("leastMatchCostIdleSkipping returns exactly what a linear scan by road match cost returns", () => {
+		expectRoadScanPicks(network, 388, "ratedSkipping");
+	});
 });
 
 // As expectLinearScanPicks on the spec grid with a road network: drivers on
@@ -967,7 +971,7 @@ describe.each(["river", "canals"] as const)("searches on %s roads", (name) => {
 function expectRoadScanPicks(
 	network: RoadNetwork,
 	seed: number,
-	search: "nearest" | "rated" | "skipping",
+	search: "nearest" | "rated" | "skipping" | "ratedSkipping",
 ): void {
 	const random = createRandom(seed);
 	const drivable = (near: Cell | null, road: boolean): Cell => {
@@ -1048,9 +1052,13 @@ function expectRoadScanPicks(
 						? nearestIdle(index, pickup, excluded)
 						: search === "rated"
 							? leastMatchCostIdle(index, pickup, excluded)
-							: nearestIdleSkipping(index, pickup, (driverId) =>
-									excluded.has(driverId),
-								)?.driverId;
+							: search === "ratedSkipping"
+								? leastMatchCostIdleSkipping(index, pickup, (driverId) =>
+										excluded.has(driverId),
+									)?.driverId
+								: nearestIdleSkipping(index, pickup, (driverId) =>
+										excluded.has(driverId),
+									)?.driverId;
 				found.push(nearest);
 				expected.push(
 					roadScan(
@@ -1058,7 +1066,9 @@ function expectRoadScanPicks(
 						model,
 						pickup,
 						excluded,
-						search === "rated" ? model.ratings : new Map(),
+						search === "rated" || search === "ratedSkipping"
+							? model.ratings
+							: new Map(),
 					),
 				);
 				if (nearest !== undefined && !model.busy.has(nearest)) {

@@ -3071,7 +3071,7 @@ describe("decideDispatch on roads", () => {
 		return cellAt(x as Coordinate, y as Coordinate);
 	}
 
-	type Options = { surge?: boolean; earnings?: boolean };
+	type Options = { surge?: boolean; earnings?: boolean; matching?: Matching };
 
 	function lastOutputs(inputs: DispatchInput[], options: Options = {}) {
 		let state = startDispatch({
@@ -3109,6 +3109,58 @@ describe("decideDispatch on roads", () => {
 		]);
 
 		expect(offeredTo(outputs)).toEqual([d2]);
+	});
+
+	function offers(outputs: unknown[]) {
+		return outputs.flatMap((output) => {
+			const offered = output as {
+				type: string;
+				tripId: TripId;
+				driverId: DriverId;
+			};
+			return offered.type === "trip.offered"
+				? [{ tripId: offered.tripId, driverId: offered.driverId }]
+				: [];
+		});
+	}
+
+	const batched: Matching = { type: "batched", windowTicks: 2 };
+
+	// By road: t1-d1 6 + t2-d10 60 = 66 against t1-d2 36 + t2-d1 40 = 76.
+	// By Manhattan the second wins: 36 + 20 = 56.
+	test("batched offers the pairs with least total road distance", () => {
+		const outputs = lastOutputs(
+			[
+				request(t1, north, at(100, 200)),
+				request(t2, at(100, 270), at(100, 400)),
+				wentOnline(i1, at(100, 250)),
+				wentOnline(i2, at(100, 220)),
+				wentOnline(i10, at(100, 330)),
+				ticked(2),
+			],
+			{ matching: batched },
+		);
+
+		expect(offers(outputs)).toEqual([
+			{ tripId: t1, driverId: d1 },
+			{ tripId: t2, driverId: driverIdAt(fleetSize, i10) },
+		]);
+	});
+
+	// More trips than idle drivers (the dense solver): from (100, 258), t1's
+	// pickup is 12 by Manhattan but 32 by road across the river, t2's 18.
+	test("batched with more trips than idle drivers offers the driver the trip nearest by road", () => {
+		const outputs = lastOutputs(
+			[
+				request(t1, at(100, 270), at(100, 400)),
+				request(t2, at(100, 240), at(100, 200)),
+				wentOnline(i1, at(100, 258)),
+				ticked(2),
+			],
+			{ matching: batched },
+		);
+
+		expect(offers(outputs)).toEqual([{ tripId: t2, driverId: d1 }]);
 	});
 
 	test.each([

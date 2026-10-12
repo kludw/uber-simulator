@@ -436,18 +436,20 @@ export function leastMatchCostIdle(
 
 // As leastMatchCostIdle, never a driver `skip` holds for, with the driver's
 // cell and rating penalty (batched matching's untouched driver, ADR 0051,
-// 0057). By Manhattan distance with roads on too, until batched matching
-// takes roads (#386).
+// 0057), by road with roads on (ADR 0059).
 export function leastMatchCostIdleSkipping(
 	idle: IdleDrivers,
 	pickup: Cell,
 	skip: (driverId: DriverId) => boolean,
 ): IdleDriver | undefined {
 	const drivers = idle[internals];
+	const penalty = drivers.ratings?.penalty ?? null;
 	const best =
-		drivers.ratings === null
-			? search(drivers, pickup, skip)
-			: searchRated(drivers, drivers.ratings.penalty, pickup, skip);
+		drivers.roads !== null
+			? searchByRoad(drivers, drivers.roads, penalty, pickup, skip)
+			: penalty === null
+				? search(drivers, pickup, skip)
+				: searchRated(drivers, penalty, pickup, skip);
 	return best === undefined ? undefined : idleDriverOf(drivers, best);
 }
 

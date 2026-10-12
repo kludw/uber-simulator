@@ -45,9 +45,12 @@ import {
 } from "../shared/regions.ts";
 import {
 	distanceOn,
+	type ExitCosts,
+	exitCostsToward,
 	isDrivable,
 	isRoadCell,
 	type RoadNetwork,
+	roadDistanceTo,
 } from "../shared/roads.ts";
 import {
 	baseSurge,
@@ -469,7 +472,8 @@ function queuedTrips(state: DispatchState): QueuedTrip[] {
 }
 
 // ADR 0030: as many pairs as possible, least total match cost (pickup
-// distance until any driver is rated, ADR 0057) among those. Idle drivers
+// distance until any driver is rated, ADR 0057; by road with roads on, ADR
+// 0059) among those. Idle drivers
 // found by the index's query, unless more trips are queued than drivers are
 // idle: then the dense solver over the few idle drivers (ADR 0051).
 function batchedPairs(
@@ -477,13 +481,14 @@ function batchedPairs(
 	queued: readonly QueuedTrip[],
 ): OfferPair[] {
 	if (queued.length > idleCount(state.drivers)) {
-		return densePairs(queued, idleDriversById(state.drivers));
+		return densePairs(queued, idleDriversById(state.drivers), state.roads);
 	}
 	return minCostMatchingByNearest(
 		queued,
 		(pickup, skip) => leastMatchCostIdleSkipping(state.drivers, pickup, skip),
 		state.grid,
 		anyDriverRated(state.drivers) ? maxRatingPenalty : 0,
+		state.roads,
 	).map(({ row, driverId }) => {
 		const trip = queued[row];
 		if (trip === undefined) throw new Error(`matching row ${row} out of range`);
@@ -494,7 +499,19 @@ function batchedPairs(
 function densePairs(
 	queued: readonly QueuedTrip[],
 	idle: readonly IdleDriver[],
+	roads: RoadNetwork | null,
 ): OfferPair[] {
+	// Roads on: each driver's exit costs, made once for the batch (ADR 0059).
+	const towards: (ExitCosts | undefined)[] = new Array(idle.length);
+	const pickupDistance = (column: number, driver: IdleDriver, pickup: Cell) => {
+		if (roads === null) return distance(driver.cell, pickup);
+		let toward = towards[column];
+		if (toward === undefined) {
+			toward = exitCostsToward(roads, driver.cell);
+			towards[column] = toward;
+		}
+		return roadDistanceTo(roads, toward, pickup.x, pickup.y);
+	};
 	// More trips than idle drivers: the solver solves the transpose and asks
 	// for drivers' columns only.
 	const ofRow = () => {
@@ -506,7 +523,7 @@ function densePairs(
 		for (const [row, trip] of queued.entries()) {
 			out[row] = trip.excludedDrivers.has(driver.driverId)
 				? Number.POSITIVE_INFINITY
-				: distance(driver.cell, trip.pickup) + driver.ratingPenalty;
+				: pickupDistance(column, driver, trip.pickup) + driver.ratingPenalty;
 		}
 	};
 	return minCostMatching(queued.length, idle.length, { ofRow, ofColumn }).map(
