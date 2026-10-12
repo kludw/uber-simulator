@@ -147,6 +147,11 @@ export function roadNetworkNamed(
 	}
 	const bridgeOf = new Int32Array(width * height).fill(-1);
 	const landings = bridges.length * 2;
+	// A waypoint packs target cell and exit landing into an Int32 (spec grid,
+	// canals: 250,000 cells x 96 landings, about 24M).
+	if (width * height * landings > 2 ** 31 - 1) {
+		throw new Error(`${name} on ${width} x ${height}: waypoints overflow`);
+	}
 	const landingX = new Int32Array(landings);
 	const landingY = new Int32Array(landings);
 	const landingDistrict = new Int32Array(landings);
@@ -461,30 +466,27 @@ function exitCost(
 	return 2 + least;
 }
 
-// Each driver's waypoint by driver index: the exit landing it heads for
-// while its target is in another district. Owned by the driver shard's
-// state; this module only reads and writes it in roadStep.
-export type Waypoints = Int32Array;
+// Each driver's waypoint by driver index (4 bytes per driver): the exit
+// landing it heads for while its target is in another district, packed with
+// the target it was chosen for, (target.y * width + target.x) * landings +
+// exit, or -1 for none. Owned by the driver shard's state; only roadStep
+// reads and writes it, so callers never say when a target changed.
+export type Waypoints = Int32Array & { readonly __brand: "Waypoints" };
 
 const noWaypoint = -1;
 
 export function waypointsFor(drivers: number): Waypoints {
-	return new Int32Array(drivers).fill(noWaypoint);
-}
-
-// The waypoint was chosen for the driver's old target: call when its target
-// changes.
-export function clearWaypoint(waypoints: Waypoints, index: number): void {
-	waypoints[index] = noWaypoint;
+	return new Int32Array(drivers).fill(noWaypoint) as Waypoints;
 }
 
 // The next cell on a shortest road path from drivable `from` to road cell
 // `target`, one move. Within a district today's rule (stepToward); toward
-// another district via the driver's waypoint, chosen when it has none or it
-// lies in another district than the driver's (it just crossed): the exit of
-// least Manhattan distance to it + exit cost, ties to the lowest landing.
-// Each step lowers the road distance through a kept waypoint by exactly 1,
-// so a driver keeping it arrives in exactly the road distance.
+// another district via the driver's waypoint, chosen again when it has none,
+// was chosen for another target, or lies in another district than the
+// driver's (it just crossed): the exit of least Manhattan distance to it +
+// exit cost, ties to the lowest landing. Each step lowers the road distance
+// through a kept waypoint by exactly 1, so a driver arrives in exactly the
+// road distance.
 export function roadStep(
 	network: RoadNetwork,
 	waypoints: Waypoints,
@@ -496,13 +498,32 @@ export function roadStep(
 	if (targetDistrict < 0) {
 		throw new Error(`road step toward off-road (${target.x}, ${target.y})`);
 	}
+	if (!Number.isInteger(index) || index < 0 || index >= waypoints.length) {
+		throw new Error(`waypoint index ${index} outside ${waypoints.length}`);
+	}
 	const district = districtOf(network, from.x, from.y);
-	if (district === targetDistrict) return stepToward(from, target);
-	if (district < 0) return offBridge(network, from, target);
-	let exit = waypoints[index] ?? noWaypoint;
-	if (exit === noWaypoint || network.landingDistrict[exit] !== district) {
+	// Moving without the waypoint drops it, so a kept one was always chosen
+	// on the driver's way to its target since (never stale if the target
+	// comes back later).
+	if (district === targetDistrict) {
+		waypoints[index] = noWaypoint;
+		return stepToward(from, target);
+	}
+	if (district < 0) {
+		waypoints[index] = noWaypoint;
+		return offBridge(network, from, target);
+	}
+	const targetKey = (target.y * network.width + target.x) * network.landings;
+	const kept = waypoints[index] as number;
+	let exit = kept - targetKey;
+	if (
+		kept === noWaypoint ||
+		exit < 0 ||
+		exit >= network.landings ||
+		network.landingDistrict[exit] !== district
+	) {
 		exit = exitToward(network, from, target, targetDistrict);
-		waypoints[index] = exit;
+		waypoints[index] = targetKey + exit;
 	}
 	const landing = landingCell(network, exit);
 	if (landing.x === from.x && landing.y === from.y) {

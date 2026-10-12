@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { type Cell, type Coordinate, cellAt, type Grid } from "./grid.ts";
 import { createRandom, type Random } from "./random.ts";
 import {
-	clearWaypoint,
 	exitCostsToward,
 	isDrivable,
 	isRoadCell,
@@ -255,7 +254,6 @@ for (const name of names) {
 			for (const { target, distances } of roadTargets) {
 				for (const start of targetsOf(network, random)) {
 					const want = distances[start.y * grid.width + start.x] as number;
-					clearWaypoint(waypoints, 0);
 					let at = start;
 					let moves = 0;
 					while ((at.x !== target.x || at.y !== target.y) && moves <= want) {
@@ -272,7 +270,72 @@ for (const name of names) {
 			}
 			expect(wrong).toEqual([]);
 		});
+
+		for (const change of [
+			"in the old target's district",
+			"across a river from the old target",
+		]) {
+			test(`a driver whose target changes mid-route ${change} arrives in exactly the new road distance`, () => {
+				const random = createRandom(37);
+				const waypoints = waypointsFor(1);
+				const wrong: string[] = [];
+				for (let i = 0; i < 25; i++) {
+					const start = randomRoadCell(network, random);
+					let oldTarget = randomRoadCell(network, random);
+					while (sameDistrict(network, start, oldTarget)) {
+						oldTarget = randomRoadCell(network, random);
+					}
+					let newTarget = randomRoadCell(network, random);
+					while (
+						sameDistrict(network, oldTarget, newTarget) !==
+							(change === "in the old target's district") ||
+						(newTarget.x === oldTarget.x && newTarget.y === oldTarget.y)
+					) {
+						newTarget = randomRoadCell(network, random);
+					}
+					let at = start;
+					const before = random.int(
+						1,
+						Math.max(
+							1,
+							Math.floor(roadDistance(network, start, oldTarget) / 2),
+						),
+					);
+					for (let m = 0; m < before; m++) {
+						at = roadStep(network, waypoints, 0, at, oldTarget);
+					}
+					const changedAt = at;
+					const want = bfsFrom(network, newTarget)[
+						changedAt.y * grid.width + changedAt.x
+					] as number;
+					let moves = 0;
+					while (
+						(at.x !== newTarget.x || at.y !== newTarget.y) &&
+						moves <= want
+					) {
+						at = roadStep(network, waypoints, 0, at, newTarget);
+						moves++;
+					}
+					if (moves !== want || at.x !== newTarget.x || at.y !== newTarget.y) {
+						wrong.push(
+							`(${changedAt.x}, ${changedAt.y}) toward (${newTarget.x}, ${newTarget.y}) after (${oldTarget.x}, ${oldTarget.y}): ${moves} moves, road distance ${want}`,
+						);
+					}
+				}
+				expect(wrong).toEqual([]);
+			});
+		}
 	});
+}
+
+// No river row or column between the two cells.
+function sameDistrict(network: RoadNetwork, a: Cell, b: Cell): boolean {
+	const between = (river: number, p: number, q: number) =>
+		river > Math.min(p, q) && river < Math.max(p, q);
+	return (
+		!network.riverRows.some((row) => between(row, a.y, b.y)) &&
+		!network.riverColumns.some((column) => between(column, a.x, b.x))
+	);
 }
 
 test("both presets in one process share no state: each answers by its own network", () => {
@@ -297,7 +360,6 @@ test("both presets in one process share no state: each answers by its own networ
 		);
 		const at = [...starts];
 		const moves = [0, 0];
-		for (const { waypoints } of networks) clearWaypoint(waypoints, 0);
 		networks.forEach(({ network, distances, toward }, n) => {
 			const start = starts[n] as Cell;
 			const want = distances[start.y * grid.width + start.x];
@@ -327,6 +389,13 @@ test("both presets in one process share no state: each answers by its own networ
 		});
 	}
 	expect(wrong).toEqual([]);
+});
+
+test("a step for a driver index outside its waypoints is a caller's bug", () => {
+	const river = roadNetworkNamed("river", grid);
+	expect(() =>
+		roadStep(river, waypointsFor(1), 1, cell(10, 10), cell(10, 400)),
+	).toThrow();
 });
 
 type Box = [x0: number, y0: number, x1: number, y1: number];
