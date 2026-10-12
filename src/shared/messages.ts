@@ -43,6 +43,8 @@ export const DriverWentOffline = z.object({
 	driverId: DriverId,
 	cell: Cell,
 	region: OwningRegion,
+	// SPIKE (#339): the online period's earnings, cents, with earnings on.
+	earned: z.int().nonnegative().optional(),
 });
 export type DriverWentOffline = z.infer<typeof DriverWentOffline>;
 
@@ -214,6 +216,8 @@ export const TripCompleted = z.object({
 	tick: Tick,
 	tripId: TripId,
 	driverId: DriverId,
+	// SPIKE (#339): the trip's fare, with earnings on.
+	fare: Fare.optional(),
 });
 export type TripCompleted = z.infer<typeof TripCompleted>;
 
@@ -420,6 +424,8 @@ export const TripStatus = z.object({
 	driverId: DriverId,
 	stage: Stage,
 	status: z.enum(["picked_up", "completed", "released"]),
+	// SPIKE (#339): the trip's fare on completed, with earnings on.
+	fare: Fare.optional(),
 });
 export type TripStatus = z.infer<typeof TripStatus>;
 

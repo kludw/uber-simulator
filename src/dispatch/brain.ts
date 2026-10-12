@@ -1,3 +1,4 @@
+import { spikeEarnings } from "../shared/earnings.ts";
 import { driverIdAt, driverIndexOf } from "../shared/fleet.ts";
 import { distance, type Grid } from "../shared/grid.ts";
 import type {
@@ -503,7 +504,13 @@ function onRequestTrip(state: DispatchState, request: RequestTrip): Decision {
 			],
 		};
 	}
-	storeTrip(state, requestedTrip(request));
+	const requested = requestedTrip(request);
+	if (spikeEarnings.on) {
+		requested.fare = state.surge
+			? price(request).fare
+			: fareOf(request, baseSurge);
+	}
+	storeTrip(state, requested);
 	return {
 		state,
 		outputs: [
@@ -730,6 +737,7 @@ function arrive(
 				tick: state.tick,
 				tripId: trip.id,
 				driverId: input.driverId,
+				...(!atPickup && trip.fare !== undefined ? { fare: trip.fare } : {}),
 			},
 		],
 	};
@@ -756,7 +764,7 @@ function onConfirmTrip(state: DispatchState, confirm: ConfirmTrip): Decision {
 			return arrive(state, trip, confirm, false);
 		case "completed":
 			if (trip.driverId !== confirm.driverId) break;
-			return replyStatus(state, confirm, "completed");
+			return replyStatus(state, confirm, "completed", trip.fare);
 		case "cancelled":
 			break;
 		default: {
@@ -771,6 +779,7 @@ function replyStatus(
 	state: DispatchState,
 	confirm: ConfirmTrip,
 	status: TripStatus["status"],
+	fare?: Fare,
 ): Decision {
 	return {
 		state,
@@ -781,6 +790,7 @@ function replyStatus(
 				driverId: confirm.driverId,
 				stage: confirm.stage,
 				status,
+				...(fare === undefined ? {} : { fare }),
 			},
 		],
 	};

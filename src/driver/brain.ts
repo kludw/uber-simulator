@@ -1,3 +1,8 @@
+import {
+	driverShareOf,
+	earningsTarget,
+	spikeEarnings,
+} from "../shared/earnings.ts";
 import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import {
 	type Cell,
@@ -42,6 +47,7 @@ import {
 } from "../shared/regions.ts";
 import {
 	baseSurge,
+	type Fare,
 	type Surge,
 	Zone,
 	zoneCount,
@@ -184,6 +190,17 @@ export type DriverShardState = {
 	prices: Map<Region, Map<Zone, Surge>>;
 	pricesChanged: boolean;
 	chaseTable: ChaseTable;
+	// SPIKE (#339): null with earnings off.
+	earnings: Earnings | null;
+};
+
+// SPIKE (#339): by driver index - firstIndex. earned: the current online
+// period's driver share of fares, cents. targets: null without shifts or
+// with SPIKE_TARGET=off.
+type Earnings = {
+	firstIndex: number;
+	earned: Int32Array;
+	targets: Int32Array | null;
 };
 
 // By zone: the bounds of the nearest surge area within chase reach. Zones
@@ -272,6 +289,12 @@ export function startDriverShard(
 		prices: new Map(),
 		pricesChanged: false,
 		chaseTable: new Map(),
+		earnings: startEarnings(
+			config.firstIndex,
+			placed.map((driver) => driver.id),
+			schedule !== null,
+			random,
+		),
 	};
 	const online: ByRegion = new Map();
 	for (const driver of drivers.values()) {
@@ -287,6 +310,41 @@ export function startDriverShard(
 			driversWentOnline(config.tick, region, config.fleetSize, chunk),
 		),
 	};
+}
+
+function startEarnings(
+	firstIndex: DriverIndex,
+	driverIds: DriverId[],
+	shifts: boolean,
+	random: Random,
+): Earnings | null {
+	if (!spikeEarnings.on) return null;
+	const targets =
+		shifts && spikeEarnings.target
+			? Int32Array.from(driverIds, (id) => earningsTarget(random, id))
+			: null;
+	return {
+		firstIndex,
+		earned: new Int32Array(driverIds.length),
+		targets,
+	};
+}
+
+function credit(
+	state: DriverShardState,
+	driver: { index: DriverIndex },
+	fare: Fare | undefined,
+): void {
+	if (state.earnings === null || fare === undefined) return;
+	const i = driver.index - state.earnings.firstIndex;
+	state.earnings.earned[i] =
+		(state.earnings.earned[i] ?? 0) + driverShareOf(fare);
+}
+
+function atTarget(earnings: Earnings | null, index: DriverIndex): boolean {
+	if (earnings === null || earnings.targets === null) return false;
+	const i = index - earnings.firstIndex;
+	return (earnings.earned[i] ?? 0) >= (earnings.targets[i] ?? 0);
 }
 
 // accept_all takes no preference streams, so default runs stay unchanged.
@@ -613,6 +671,7 @@ function onCompleted(
 	if (addressed.tripId !== completed.tripId) {
 		return reject(state, completed, "driver_on_another_trip");
 	}
+	credit(state, addressed, completed.fare);
 	return replaceDriver(state, withoutTrip(addressed, completed.tripId));
 }
 
@@ -716,6 +775,7 @@ function onTripStatus(state: DriverShardState, status: TripStatus): Decision {
 		status.stage === "dropoff" &&
 		status.status !== "picked_up"
 	) {
+		if (status.status === "completed") credit(state, addressed, status.fare);
 		return replaceDriver(state, withoutTrip(addressed, status.tripId));
 	}
 	return ignored;
@@ -763,7 +823,7 @@ function onTick(
 		const changed =
 			schedule === null
 				? null
-				: changeShift(driver, schedule, input.tick, random);
+				: changeShift(driver, schedule, input.tick, random, state.earnings);
 		if (schedule !== null && changed !== null) {
 			drivers.set(driver.id, changed.driver);
 			schedule.periods.set(driver.id, changed.period);
@@ -772,13 +832,17 @@ function onTick(
 			if (changed.driver.state === "idle") {
 				inRegion(online, region).push({ driverIndex: driver.index, cell });
 			} else {
+				const { earnings } = state;
+				const i = driver.index - (earnings?.firstIndex ?? 0);
 				outputs.push({
 					type: "driver.went_offline",
 					tick: input.tick,
 					driverId: driver.id,
 					cell,
 					region,
+					...(earnings === null ? {} : { earned: earnings.earned[i] ?? 0 }),
 				});
+				if (earnings !== null) earnings.earned[i] = 0;
 			}
 			continue;
 		}
@@ -906,12 +970,19 @@ function changeShift(
 	schedule: Schedule,
 	tick: Tick,
 	random: Random,
+	earnings: Earnings | null,
 ): { driver: IdleDriver | OfflineDriver; period: Period } | null {
 	const period = schedule.periods.get(driver.id);
 	if (period === undefined) {
 		throw new Error(`driver ${driver.id} without a shift period`);
 	}
-	if (tick - period.startedAt < period.ticks) return null;
+	// SPIKE (#339): an idle driver at its target ends its online period now.
+	if (
+		tick - period.startedAt < period.ticks &&
+		!(driver.state === "idle" && atTarget(earnings, driver.index))
+	) {
+		return null;
+	}
 	if (driver.state !== "offline" && driver.state !== "idle") return null;
 	const n = period.n + 1;
 	const goingOnline = driver.state === "offline";
