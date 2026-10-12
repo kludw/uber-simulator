@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { type Cell, cellIn, distance, type Grid } from "../shared/grid.ts";
+import { type Cell, cellIn, type Grid, specGrid } from "../shared/grid.ts";
 import { DriverId } from "../shared/messages.ts";
 import { createRandom, type Random } from "../shared/random.ts";
+import {
+	distanceOn,
+	isDrivable,
+	isRoadCell,
+	type RoadNetwork,
+	roadNetworkNamed,
+} from "../shared/roads.ts";
 import {
 	type MatchTrip,
 	minCostMatching,
@@ -239,18 +246,25 @@ function trip(x: number, y: number, ...excluded: string[]): MatchTrip {
 	};
 }
 
-// Pickup distance + rating penalty (ADR 0057).
-function matchCost(pickup: Cell, candidate: TestDriver): number {
-	return distance(pickup, candidate.cell) + candidate.ratingPenalty;
+// Pickup distance (by road with a network, ADR 0059) + rating penalty (ADR
+// 0057).
+function matchCost(
+	pickup: Cell,
+	candidate: TestDriver,
+	roads: RoadNetwork | null = null,
+): number {
+	return distanceOn(roads, candidate.cell, pickup) + candidate.ratingPenalty;
 }
 
 // The index's query as a linear scan: least match cost not skipped, ties to
 // the lowest ID. maxRatingPenalty: the most any driver's penalty can be.
+// roads: the network distances are measured on (ADR 0059), null = Manhattan.
 function matchByNearest(
 	trips: readonly MatchTrip[],
 	drivers: readonly TestDriver[],
 	onGrid: Grid = grid,
 	maxRatingPenalty = 0,
+	roads: RoadNetwork | null = null,
 ) {
 	return minCostMatchingByNearest(
 		trips,
@@ -258,11 +272,11 @@ function matchByNearest(
 			let best: TestDriver | undefined;
 			for (const candidate of drivers) {
 				if (skip(candidate.driverId)) continue;
-				const cost = matchCost(pickup, candidate);
+				const cost = matchCost(pickup, candidate, roads);
 				if (
 					best === undefined ||
-					cost < matchCost(pickup, best) ||
-					(cost === matchCost(pickup, best) &&
+					cost < matchCost(pickup, best, roads) ||
+					(cost === matchCost(pickup, best, roads) &&
 						candidate.driverId < best.driverId)
 				) {
 					best = candidate;
@@ -272,6 +286,7 @@ function matchByNearest(
 		},
 		onGrid,
 		maxRatingPenalty,
+		roads,
 	);
 }
 
@@ -377,6 +392,32 @@ describe("minCostMatchingByNearest", () => {
 	});
 });
 
+// ADR 0059: with roads on, pickup distance is road distance, and the solver
+// stays exact.
+describe.each(["river", "canals"] as const)(
+	"minCostMatchingByNearest on %s roads",
+	(name) => {
+		const roads = roadNetworkNamed(name, specGrid);
+
+		test.each([
+			["", false],
+			[" with rating penalties", true],
+		])(
+			"same pair count and total match cost by road distance as the dense solver on seeded random batches%s",
+			(_, rated) => {
+				const random = createRandom(rated ? 3362 : 3361);
+				for (let sample = 0; sample < 500; sample++) {
+					const batch = randomRoadBatch(random, roads, rated);
+					expect({ sample, ...nearestOutcome(batch) }).toEqual({
+						sample,
+						...denseOutcome(batch),
+					});
+				}
+			},
+		);
+	},
+);
+
 // ADR 0057: 10 cells per star below 5, at most 4 stars.
 const maxRatingPenalty = 40;
 
@@ -385,6 +426,7 @@ type Batch = {
 	trips: MatchTrip[];
 	drivers: TestDriver[];
 	rated: boolean;
+	roads: RoadNetwork | null;
 };
 
 // Up to 12 trips on small grids, so pickups and drivers share cells and tie
@@ -420,16 +462,71 @@ function randomBatch(random: Random, rated = false): Batch {
 				.map(({ driverId }) => driverId),
 		),
 	}));
-	return { grid: batchGrid, trips, drivers, rated };
+	return { grid: batchGrid, trips, drivers, rated, roads: null };
+}
+
+// As randomBatch on the spec grid with a road network (ADR 0059): pickups on
+// road cells, drivers on drivable ones (bridges too, mid-crossing), most
+// within 40 cells of one random bridge so pairs cross its river, the rest
+// anywhere.
+function randomRoadBatch(
+	random: Random,
+	roads: RoadNetwork,
+	rated: boolean,
+): Batch {
+	const bridge = roads.bridges[random.int(0, roads.bridges.length - 1)] as Cell;
+	const at = (road: boolean): Cell => {
+		const near = random.int(0, 4) > 0;
+		for (;;) {
+			const x = near
+				? Math.min(499, Math.max(0, bridge.x + random.int(-40, 40)))
+				: random.int(0, 499);
+			const y = near
+				? Math.min(499, Math.max(0, bridge.y + random.int(-40, 40)))
+				: random.int(0, 499);
+			if (road ? isRoadCell(roads, x, y) : isDrivable(roads, x, y)) {
+				return { x, y } as Cell;
+			}
+		}
+	};
+	const tripCount = random.int(0, 12);
+	const drivers = Array.from(
+		{ length: tripCount + random.int(0, 8) },
+		(_, index) => ({
+			driverId: DriverId.parse(`d-${index}`),
+			cell: at(random.int(0, 9) > 0),
+			ratingPenalty:
+				rated && random.int(0, 3) > 0 ? random.int(0, maxRatingPenalty) : 0,
+		}),
+	);
+	const excludedOneIn = random.int(0, 2);
+	const trips = Array.from({ length: tripCount }, () => ({
+		pickup: at(true),
+		excludedDrivers: new Set(
+			drivers
+				.filter(
+					() => excludedOneIn > 0 && random.int(1, 2 * excludedOneIn) === 1,
+				)
+				.map(({ driverId }) => driverId),
+		),
+	}));
+	return { grid: specGrid, trips, drivers, rated, roads };
 }
 
 // Throws if not a valid matching (trip or driver used twice, excluded pair).
-function nearestOutcome({ grid: batchGrid, trips, drivers, rated }: Batch) {
+function nearestOutcome({
+	grid: batchGrid,
+	trips,
+	drivers,
+	rated,
+	roads,
+}: Batch) {
 	const pairs = matchByNearest(
 		trips,
 		drivers,
 		batchGrid,
 		rated ? maxRatingPenalty : 0,
+		roads,
 	);
 	const driverOf = new Map(drivers.map((each) => [each.driverId, each]));
 	if (
@@ -448,17 +545,17 @@ function nearestOutcome({ grid: batchGrid, trips, drivers, rated }: Batch) {
 		if (paired.excludedDrivers.has(driverId)) {
 			throw new Error(`excluded pair (${row}, ${driverId})`);
 		}
-		totalMatchCost += matchCost(paired.pickup, matched);
+		totalMatchCost += matchCost(paired.pickup, matched, roads);
 	}
 	return { pairs: pairs.length, totalMatchCost };
 }
 
-function denseOutcome({ trips, drivers }: Batch) {
+function denseOutcome({ trips, drivers, roads }: Batch) {
 	const costs = trips.map((paired) =>
 		drivers.map((candidate) =>
 			paired.excludedDrivers.has(candidate.driverId)
 				? null
-				: matchCost(paired.pickup, candidate),
+				: matchCost(paired.pickup, candidate, roads),
 		),
 	);
 	const { size, cost } = outcome(costs);

@@ -1,10 +1,12 @@
-import {
-	type Cell,
-	distance,
-	distanceToCoordinates,
-	type Grid,
-} from "../shared/grid.ts";
+import { type Cell, distanceToCoordinates, type Grid } from "../shared/grid.ts";
 import type { DriverId } from "../shared/messages.ts";
+import {
+	type ExitCosts,
+	exitCostsToward,
+	type RoadNetwork,
+	roadDistanceBound,
+	roadDistanceTo,
+} from "../shared/roads.ts";
 
 export interface Pair {
 	row: number;
@@ -161,7 +163,9 @@ export type TripPair = { row: number; driverId: DriverId };
  * ordered by row (trip index). Needs at least as many idle drivers as trips;
  * throws otherwise (caller bug). Costs are match costs (ADR 0057): pickup
  * distance + the driver's rating penalty, at most `maxRatingPenalty`;
- * drivers excluded for a trip are not allowed. Pure function of the input;
+ * drivers excluded for a trip are not allowed. With `roads`, pickup distance
+ * is road distance (ADR 0059): pickups are road cells and drivers' cells
+ * drivable, and `nearest` searches by road too. Pure function of the input;
  * which of several optimal matchings comes back is not specified.
  */
 export function minCostMatchingByNearest(
@@ -169,15 +173,30 @@ export function minCostMatchingByNearest(
 	nearest: NearestDriver,
 	grid: Grid,
 	maxRatingPenalty: number,
+	roads: RoadNetwork | null = null,
 ): TripPair[] {
 	const rows = trips.length;
 	// A disallowed pair costs more than any whole set of allowed pairs, so the
 	// optimum uses as many allowed pairs as possible. Assumes every pickup and
 	// driver cell is on the grid, so no distance exceeds width + height - 2
-	// (ADR 0051), and no match cost exceeds that plus maxRatingPenalty (ADR
-	// 0057). An off-grid cell is bad input from another service; with one, a
-	// batch may get fewer pairs than the dense solver's.
-	const sentinel = rows * (grid.width + grid.height - 2 + maxRatingPenalty) + 1;
+	// (ADR 0051), or the network's bound with roads on (ADR 0059), and no
+	// match cost exceeds that plus maxRatingPenalty (ADR 0057). An off-grid
+	// cell is bad input from another service; with one, a batch may get fewer
+	// pairs than the dense solver's.
+	const maxDistance =
+		roads === null ? grid.width + grid.height - 2 : roadDistanceBound(roads);
+	const sentinel = rows * (maxDistance + maxRatingPenalty) + 1;
+	// Roads on: each trip's pickup exit costs, made once for the batch.
+	const towards: (ExitCosts | undefined)[] = new Array(rows);
+	const pickupDistance = (row: number, pickup: Cell, x: number, y: number) => {
+		if (roads === null) return distanceToCoordinates(pickup, x, y);
+		let toward = towards[row];
+		if (toward === undefined) {
+			toward = exitCostsToward(roads, pickup);
+			towards[row] = toward;
+		}
+		return roadDistanceTo(roads, toward, x, y);
+	};
 	const rowPotential = new Float64Array(rows);
 	const columnOfRow = new Int32Array(rows).fill(unmatched);
 	// Touched drivers (columns), in the order paths reached them. Each path
@@ -226,7 +245,9 @@ export function minCostMatchingByNearest(
 				driverId: allowed.driverId,
 				cell: allowed.cell,
 				ratingPenalty: allowed.ratingPenalty,
-				cost: distance(trip.pickup, allowed.cell) + allowed.ratingPenalty,
+				cost:
+					pickupDistance(row, trip.pickup, allowed.cell.x, allowed.cell.y) +
+					allowed.ratingPenalty,
 				allowed: true,
 			};
 			cached[row] = found;
@@ -258,9 +279,27 @@ export function minCostMatchingByNearest(
 			const base = reached - at(rowPotential, row);
 			for (let column = 0; column < touched; column++) {
 				if (visited[column] === 1) continue;
+				// Road distance is never less than Manhattan (ADR 0059): a column
+				// whose reduced cost by Manhattan can't improve its key is skipped
+				// before the road distance.
+				if (
+					roads !== null &&
+					base +
+						distanceToCoordinates(
+							trip.pickup,
+							at(touchedXs, column),
+							at(touchedYs, column),
+						) +
+						at(touchedPenalties, column) -
+						at(columnPotential, column) >=
+						at(key, column)
+				) {
+					continue;
+				}
 				const allowed = !trip.excludedDrivers.has(at(touchedIds, column));
 				const cost = allowed
-					? distanceToCoordinates(
+					? pickupDistance(
+							row,
 							trip.pickup,
 							at(touchedXs, column),
 							at(touchedYs, column),

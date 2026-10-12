@@ -9,6 +9,7 @@ import {
 	type RoadNetworkName,
 	roadBoundToBox,
 	roadDistance,
+	roadDistanceBound,
 	roadDistanceTo,
 	roadNetworkNamed,
 	roadStep,
@@ -159,6 +160,11 @@ for (const name of names) {
 				}
 			});
 			expect(wrong).toEqual([]);
+		});
+
+		test("no road distance exceeds the network's distance bound", () => {
+			const farthest = Math.max(...bfs.map((each) => Math.max(...each)));
+			expect(farthest).toBeLessThanOrEqual(roadDistanceBound(network));
 		});
 
 		test("road distance through a cell's exit costs is the shortest path", () => {

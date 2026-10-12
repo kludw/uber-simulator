@@ -261,6 +261,19 @@ export function distanceOn(
 	return network === null ? distance(a, b) : roadDistance(network, a, b);
 }
 
+// More than no road distance on the network can be (batched matching's
+// sentinel, ADR 0059 rule 6): within a district to an exit landing, at most
+// width + height - 2 from each end, the landing-to-landing table's longest
+// between, and 2 across each end's bridge plus 1 more for each end on a
+// bridge.
+export function roadDistanceBound(network: RoadNetwork): number {
+	let longest = 0;
+	for (const between of network.between) longest = Math.max(longest, between);
+	const width = network.columnOf.length;
+	const height = network.rowOf.length;
+	return 2 * (width + height - 2) + longest + 4;
+}
+
 // One drivable cell's exit costs: for every landing, the road distance from
 // it to the cell leaving through its bridge. Made once for a cell asked
 // against many (a pickup against candidate drivers) and owned by the caller,
