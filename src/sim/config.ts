@@ -90,7 +90,7 @@ export const PoolingName = z.enum(["off", "on"]);
 // Riders only: dispatch acts on the ratings it sees (ADR 0057).
 export const RatingsName = z.enum(["off", "on"]);
 
-// Driver earnings, by name, from the CLI (--earnings). Dispatch only so far
+// Driver earnings, by name, from the CLI (--earnings). Bench only so far
 // (ADR 0060).
 export const EarningsName = z.enum(["off", "on"]);
 
