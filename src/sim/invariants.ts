@@ -1,6 +1,8 @@
+import { driverShareOf } from "../shared/earnings.ts";
 import { type Cell, cellIn, distance, type Grid } from "../shared/grid.ts";
 import type {
 	DriverId,
+	DriverWentOffline,
 	Message,
 	RiderId,
 	RiderRatedDriver,
@@ -123,6 +125,15 @@ export type Violation =
 			driverId: DriverId;
 			fare: Fare | null;
 			expectedFare: Fare;
+	  }
+	// ADR 0060: earned is the driver shares of the driver's completions since
+	// it last went online, in cents. earned: null when missing.
+	| {
+			type: "earnings_mismatch";
+			tick: Tick;
+			driverId: DriverId;
+			earned: number | null;
+			expectedEarned: number;
 	  };
 
 // What the log has shown so far, rebuilt only from events.
@@ -138,6 +149,9 @@ type LogState = {
 	// Riders in a trip.requested / a rider.declined_surge.
 	requestingRiders: Set<RiderId>;
 	decliningRiders: Set<RiderId>;
+	// Driver -> the driver shares of its completions' fares since it last went
+	// online (ADR 0060).
+	earnedSinceOnline: Map<DriverId, number>;
 };
 
 // What the run had switched on that the log alone can't tell.
@@ -178,6 +192,7 @@ export function createInvariantChecker(
 		offlineDrivers: new Set(),
 		requestingRiders: new Set(),
 		decliningRiders: new Set(),
+		earnedSinceOnline: new Map(),
 	};
 	return {
 		observe: (message) => observe(log, grid, earnings, violations, message),
@@ -197,6 +212,7 @@ function observe(
 		case "drivers.went_online":
 			forEachWentOnline(message, (driverId, cell) => {
 				log.offlineDrivers.delete(driverId);
+				log.earnedSinceOnline.delete(driverId);
 				log.driverPositions.set(driverId, { tick: message.tick, cell });
 			});
 			break;
@@ -210,6 +226,7 @@ function observe(
 					tripId,
 				});
 			}
+			violations.push(...checkEarned(log, earnings, message));
 			log.offlineDrivers.add(message.driverId);
 			log.driverPositions.set(message.driverId, message);
 			break;
@@ -385,6 +402,13 @@ function checkTripEvent(
 	log.trips.set(event.tripId, next);
 	if (event.type === "trip.completed") {
 		violations.push(...checkFare(event, next.fare, earnings));
+		if (event.fare !== undefined) {
+			const earned = log.earnedSinceOnline.get(event.driverId) ?? 0;
+			log.earnedSinceOnline.set(
+				event.driverId,
+				earned + driverShareOf(event.fare),
+			);
+		}
 	}
 	const arrival = arrivalTarget(event);
 	if (arrival !== null) {
@@ -430,6 +454,21 @@ function checkFare(
 	const { tick, tripId, driverId } = completion;
 	return [
 		{ type: "fare_mismatch", tick, tripId, driverId, fare, expectedFare },
+	];
+}
+
+// Without earnings going offline reports no earned (ADR 0060).
+function checkEarned(
+	log: LogState,
+	earnings: boolean,
+	wentOffline: DriverWentOffline,
+): Violation[] {
+	const { tick, driverId } = wentOffline;
+	const earned = wentOffline.earned ?? null;
+	const expectedEarned = log.earnedSinceOnline.get(driverId) ?? 0;
+	if (earned === expectedEarned || (earned === null && !earnings)) return [];
+	return [
+		{ type: "earnings_mismatch", tick, driverId, earned, expectedEarned },
 	];
 }
 

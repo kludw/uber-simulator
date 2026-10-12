@@ -785,6 +785,127 @@ describe("checkInvariants earnings", () => {
 		expect(checkInvariants(tripWithFare(undefined), grid)).toEqual([]);
 	});
 
+	function wentOfflineEarning(earned: number | undefined, at: number): Message {
+		return {
+			type: "driver.went_offline",
+			tick: tick(at),
+			driverId: d1,
+			cell: cell(2, 0),
+			region: Region.parse(0),
+			earned,
+		};
+	}
+
+	// Driver share of 252: round(252 × 0.75) = 189.
+	test("a driver going offline with the driver share of its completion is clean", () => {
+		const log = [...tripWithFare(baseFare), wentOfflineEarning(189, 4)];
+
+		expect(checkInvariants(log, grid, { earnings: true })).toEqual([]);
+	});
+
+	test("a driver going offline with another earned is flagged", () => {
+		const log = [...tripWithFare(baseFare), wentOfflineEarning(100, 4)];
+
+		expect(checkInvariants(log, grid, { earnings: true })).toEqual([
+			{
+				type: "earnings_mismatch",
+				tick: tick(4),
+				driverId: d1,
+				earned: 100,
+				expectedEarned: 189,
+			},
+		]);
+	});
+
+	test("with earnings on a driver going offline without earned is flagged", () => {
+		const log = [...tripWithFare(baseFare), wentOfflineEarning(undefined, 4)];
+
+		expect(checkInvariants(log, grid, { earnings: true })).toEqual([
+			{
+				type: "earnings_mismatch",
+				tick: tick(4),
+				driverId: d1,
+				earned: null,
+				expectedEarned: 189,
+			},
+		]);
+	});
+
+	// d1's second online period: t2 from (1,0) to (2,0), as t1 in its first.
+	const secondPeriod: Message[] = [
+		wentOfflineEarning(189, 4),
+		wentOnline(i1, cell(2, 0)),
+		requested(t2, 5),
+		tripEvent("trip.offered", t2, d1, 5),
+		tripEvent("trip.matched", t2, d1, 5),
+		moved(i1, cell(1, 0), 6),
+		tripEvent("trip.picked_up", t2, d1, 6),
+		moved(i1, cell(2, 0), 7),
+		completed(t2, d1, 7, baseFare),
+	];
+
+	test("each online period reports only its own completions", () => {
+		const log = [
+			...tripWithFare(baseFare),
+			...secondPeriod,
+			wentOfflineEarning(189, 8),
+		];
+
+		expect(checkInvariants(log, grid, { earnings: true })).toEqual([]);
+	});
+
+	test("an online period reporting the earnings of an earlier one is flagged", () => {
+		const log = [
+			...tripWithFare(baseFare),
+			...secondPeriod,
+			wentOfflineEarning(378, 8),
+		];
+
+		expect(checkInvariants(log, grid, { earnings: true })).toEqual([
+			{
+				type: "earnings_mismatch",
+				tick: tick(8),
+				driverId: d1,
+				earned: 378,
+				expectedEarned: 189,
+			},
+		]);
+	});
+
+	// Two pooled riders on d1, each paying 189: driver share 142 each.
+	test("a driver of a pooled pair earns the driver share of each fare", () => {
+		const pooledFare = Fare.parse(189);
+		function pooledRequested(tripId: TripId): Message {
+			return {
+				type: "trip.requested",
+				tick: tick(1),
+				tripId,
+				riderId: r1,
+				pickup: cell(1, 0),
+				dropoff: cell(2, 0),
+				pooled: true,
+			};
+		}
+		const log: Message[] = [
+			wentOnline(i1, cell(0, 0)),
+			pooledRequested(t1),
+			pooledRequested(t2),
+			tripEvent("trip.offered", t1, d1, 1),
+			tripEvent("trip.matched", t1, d1, 1),
+			tripEvent("trip.offered", t2, d1, 1),
+			tripEvent("trip.matched", t2, d1, 1),
+			moved(i1, cell(1, 0), 2),
+			tripEvent("trip.picked_up", t1, d1, 2),
+			tripEvent("trip.picked_up", t2, d1, 2),
+			moved(i1, cell(2, 0), 3),
+			completed(t1, d1, 3, pooledFare),
+			completed(t2, d1, 3, pooledFare),
+			wentOfflineEarning(284, 4),
+		];
+
+		expect(checkInvariants(log, grid, { earnings: true })).toEqual([]);
+	});
+
 	// With surge on the trip's fare is trip.requested's, here 1.5 × 252.
 	function surgedTripWithFare(fare: Fare): Message[] {
 		return tripWithFare(fare).with(2, {
