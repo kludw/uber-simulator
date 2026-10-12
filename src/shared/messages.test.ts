@@ -131,6 +131,11 @@ const samples: Message[] = [
 		tripId,
 		error: { type: "duplicate_trip_id" },
 	},
+	{
+		type: "request_trip_rejected",
+		tripId,
+		error: { type: "off_road_cell", cell: pickup },
+	},
 	{ type: "cancel_trip", tripId, region: Region.parse(0) },
 	{ type: "cancel_trip_accepted", tripId },
 	{ type: "cancel_trip_rejected", tripId, error: { type: "unknown_trip" } },
