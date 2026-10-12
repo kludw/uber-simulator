@@ -418,15 +418,20 @@ export const ConfirmTrip = z.object({
 export type ConfirmTrip = z.infer<typeof ConfirmTrip>;
 
 // Reply to confirm_trip, echoing its stage (ADR 0041).
-export const TripStatus = z.object({
-	type: z.literal("trip_status"),
-	tripId: TripId,
-	driverId: DriverId,
-	stage: Stage,
-	status: z.enum(["picked_up", "completed", "released"]),
-	// The trip's fare on completed, with earnings on (ADR 0060).
-	fare: Fare.optional(),
-});
+export const TripStatus = z
+	.object({
+		type: z.literal("trip_status"),
+		tripId: TripId,
+		driverId: DriverId,
+		stage: Stage,
+		status: z.enum(["picked_up", "completed", "released"]),
+		// The trip's fare, only on completed, with earnings on (ADR 0060).
+		fare: Fare.optional(),
+	})
+	.refine(
+		(status) => status.fare === undefined || status.status === "completed",
+		{ error: "fare only on completed" },
+	);
 export type TripStatus = z.infer<typeof TripStatus>;
 
 // surge and fare: the trip's price, fixed at request (ADR 0054); both absent

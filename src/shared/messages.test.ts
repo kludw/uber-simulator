@@ -542,6 +542,14 @@ const invalidInputs: [string, unknown][] = [
 	// Earnings (ADR 0060): fares positive cents, earned nonnegative cents.
 	["trip completed with a zero fare", { ...oneCompleted, fare: 0 }],
 	["trip status completed with a zero fare", { ...oneStatus, fare: 0 }],
+	[
+		"trip status picked up with a fare",
+		{ ...oneStatus, stage: "pickup", status: "picked_up", fare: 254 },
+	],
+	[
+		"trip status released with a fare",
+		{ ...oneStatus, status: "released", fare: 254 },
+	],
 	["went offline having earned -1", { ...oneWentOffline, earned: -1 }],
 	["went offline having earned 2.5", { ...oneWentOffline, earned: 2.5 }],
 ];

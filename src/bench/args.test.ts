@@ -29,6 +29,7 @@ describe("parseBenchArgs", () => {
 					surge: false,
 					pooling: false,
 					ratings: false,
+					earnings: false,
 				},
 				maxMinutes: undefined,
 			},
@@ -56,6 +57,20 @@ describe("parseBenchArgs", () => {
 		expect(parseBenchArgs(["--ratings", "on"])).toMatchObject({
 			ok: true,
 			value: { config: { ratings: true } },
+		});
+	});
+
+	// ADR 0060: dispatch only until driver shards take it (#340c).
+	test("--earnings on puts fares on completions", () => {
+		expect(parseBenchArgs(["--earnings", "on"])).toMatchObject({
+			ok: true,
+			value: { config: { earnings: true } },
+		});
+	});
+
+	test("--earnings yes is rejected", () => {
+		expect(parseBenchArgs(["--earnings", "yes"])).toMatchObject({
+			ok: false,
 		});
 	});
 

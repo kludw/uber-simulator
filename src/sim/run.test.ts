@@ -193,6 +193,23 @@ describe("runInProcess", () => {
 		expect(eventLog.map((message) => message.type)).toContain("trip.completed");
 	});
 
+	// ADR 0060: dispatch keeps each trip's fare and puts it on its completion.
+	test("with earnings on every completion carries a fare", () => {
+		const { eventLog } = runInProcess({
+			...busyConfig,
+			earnings: true,
+			keepEventLog: true,
+		});
+		const completions = eventLog.filter(
+			(message) => message.type === "trip.completed",
+		);
+
+		expect({
+			completed: completions.length > 0,
+			withoutFare: completions.filter(({ fare }) => fare === undefined).length,
+		}).toEqual({ completed: true, withoutFare: 0 });
+	});
+
 	test("same seed and config give an identical event log", () => {
 		expect(
 			runInProcess({ ...busyConfig, keepEventLog: true }).eventLog,
