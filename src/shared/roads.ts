@@ -225,25 +225,27 @@ export function roadDistance(network: RoadNetwork, a: Cell, b: Cell): number {
 	return distanceBetween(network, a.x, a.y, b.x, b.y);
 }
 
-// One cell's exit costs: for every landing p, the road distance from p
-// across its bridge to the cell. Made once for a cell asked against many
-// (a pickup against candidate drivers) and owned by the caller, never kept
-// by this module, so two networks or two searches never share them.
+// One drivable cell's exit costs: for every landing, the road distance from
+// it to the cell leaving through its bridge. Made once for a cell asked
+// against many (a pickup against candidate drivers) and owned by the caller,
+// never kept by this module, so two networks or two searches never share
+// them.
 export type ExitCosts = {
 	readonly x: number;
 	readonly y: number;
-	// -1 when the cell is a bridge: costs unused, distances computed in full.
+	// -1 when the cell is a bridge.
 	readonly district: number;
 	readonly costs: Int32Array;
 };
 
 export function exitCostsToward(network: RoadNetwork, cell: Cell): ExitCosts {
 	const district = districtOf(network, cell.x, cell.y);
+	if (district < 0 && bridgeAt(network, cell.x, cell.y) < 0) {
+		throw new Error(`exit costs toward off-road (${cell.x}, ${cell.y})`);
+	}
 	const costs = new Int32Array(network.landings);
-	if (district >= 0) {
-		for (let p = 0; p < network.landings; p++) {
-			costs[p] = exitCost(network, p, cell.x, cell.y, district);
-		}
+	for (let p = 0; p < network.landings; p++) {
+		costs[p] = exitCost(network, p, cell.x, cell.y, district);
 	}
 	return { x: cell.x, y: cell.y, district, costs };
 }
@@ -257,19 +259,102 @@ export function roadDistanceTo(
 	y: number,
 ): number {
 	const district = districtOf(network, x, y);
-	if (toward.district < 0 || district < 0) {
-		return distanceBetween(network, x, y, toward.x, toward.y);
-	}
+	if (district < 0) return distanceBetween(network, x, y, toward.x, toward.y);
 	if (district === toward.district) {
 		return Math.abs(x - toward.x) + Math.abs(y - toward.y);
 	}
+	return leastViaExits(network, toward, district, x, y, x, y);
+}
+
+// A lower bound on the road distance from any drivable cell of the box
+// [x0, x1] x [y0, y1] (a search bucket, clipped to the grid) to the cell of
+// `toward`: per district the box touches, Manhattan when it is the cell's
+// own, else the least gap from the box to one of its landings plus that
+// landing's exit cost; bridges inside the box exactly. Never less than the
+// Manhattan gap.
+export function roadBoundToBox(
+	network: RoadNetwork,
+	toward: ExitCosts,
+	x0: number,
+	y0: number,
+	x1: number,
+	y1: number,
+): number {
+	const left = Math.max(0, x0);
+	const top = Math.max(0, y0);
+	const right = Math.min(network.columnOf.length - 1, x1);
+	const bottom = Math.min(network.rowOf.length - 1, y1);
+	const { x, y } = toward;
+	const manhattanGap =
+		(x < left ? left - x : x > right ? x - right : 0) +
+		(y < top ? top - y : y > bottom ? y - bottom : 0);
+	const columns = bandRange(network.columnOf, left, right);
+	const rows = bandRange(network.rowOf, top, bottom);
 	let least = Number.POSITIVE_INFINITY;
-	const exits = network.landingsOf[district] as Int32Array;
+	for (let row = rows.first; row >= 0 && row <= rows.last; row++) {
+		for (
+			let column = columns.first;
+			column >= 0 && column <= columns.last;
+			column++
+		) {
+			const district = row * network.districtColumns + column;
+			const bound =
+				district === toward.district
+					? manhattanGap
+					: leastViaExits(network, toward, district, left, top, right, bottom);
+			if (bound < least) least = bound;
+		}
+	}
+	if (columns.river || rows.river) {
+		for (const bridge of network.bridges) {
+			if (bridge.x < left || bridge.x > right) continue;
+			if (bridge.y < top || bridge.y > bottom) continue;
+			const distance = distanceBetween(
+				network,
+				bridge.x,
+				bridge.y,
+				toward.x,
+				toward.y,
+			);
+			if (distance < least) least = distance;
+		}
+	}
+	return Math.max(least, manhattanGap);
+}
+
+// The district bands [first, last] a span [from, to] of one axis touches
+// (-1 when only a river), and whether it touches a river. Rivers are single
+// cells, never adjacent, and bands increase along the axis.
+function bandRange(bands: Int32Array, from: number, to: number) {
+	const atFrom = bands[from] as number;
+	const atTo = bands[to] as number;
+	const first =
+		atFrom >= 0 || from === to ? atFrom : (bands[from + 1] as number);
+	const last = atTo >= 0 || from === to ? atTo : (bands[to - 1] as number);
+	return { first, last, river: atFrom < 0 || atTo < 0 || first !== last };
+}
+
+// Least, over district d's landings p, of the gap from the box
+// [x0, x1] x [y0, y1] to p + p's exit cost. A one-cell box gives that cell's
+// road distance.
+function leastViaExits(
+	network: RoadNetwork,
+	toward: ExitCosts,
+	d: number,
+	x0: number,
+	y0: number,
+	x1: number,
+	y1: number,
+): number {
+	let least = Number.POSITIVE_INFINITY;
+	const exits = network.landingsOf[d] as Int32Array;
 	for (let i = 0; i < exits.length; i++) {
 		const p = exits[i] as number;
+		const x = network.landingX[p] as number;
+		const y = network.landingY[p] as number;
 		const cost =
-			Math.abs((network.landingX[p] as number) - x) +
-			Math.abs((network.landingY[p] as number) - y) +
+			(x < x0 ? x0 - x : x > x1 ? x - x1 : 0) +
+			(y < y0 ? y0 - y : y > y1 ? y - y1 : 0) +
 			(toward.costs[p] as number);
 		if (cost < least) least = cost;
 	}
@@ -332,8 +417,8 @@ function viaBridgeEnds(
 	);
 }
 
-// Road distance from leaving through exit landing p (across its bridge to
-// p's other end) to road cell (x, y) of district d.
+// Road distance from landing p to (x, y), leaving through p's bridge. (x, y)
+// is a road cell of district d, or a bridge when d is -1.
 function exitCost(
 	network: RoadNetwork,
 	p: number,
@@ -342,6 +427,16 @@ function exitCost(
 	d: number,
 ): number {
 	const entry = p ^ 1;
+	if (d < 0) {
+		const bridge = bridgeAt(network, x, y);
+		if (p >> 1 === bridge) return 1;
+		const row = entry * network.landings;
+		const toEnd = Math.min(
+			network.between[row + 2 * bridge] as number,
+			network.between[row + 2 * bridge + 1] as number,
+		);
+		return 2 + toEnd + 1;
+	}
 	const ex = network.landingX[entry] as number;
 	const ey = network.landingY[entry] as number;
 	if (network.landingDistrict[entry] === d) {
