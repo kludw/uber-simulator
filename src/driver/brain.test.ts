@@ -3,6 +3,7 @@ import { DriverIndex, driverIdAt } from "../shared/fleet.ts";
 import { type Cell, cellIn, type Grid } from "../shared/grid.ts";
 import {
 	type DriverId,
+	type DriversMoved,
 	driversMoved,
 	driversWentOnline,
 	forEachMove,
@@ -14,6 +15,7 @@ import {
 } from "../shared/messages.ts";
 import { createRandom, type Random } from "../shared/random.ts";
 import { Region, RegionLayout } from "../shared/regions.ts";
+import { isDrivable, roadNetworkNamed } from "../shared/roads.ts";
 import { Surge, Zone } from "../shared/surge.ts";
 import {
 	type DriverShardInput,
@@ -3001,6 +3003,286 @@ describe("decideDriverShard taking a second rider", () => {
 				tripId: t2,
 				driverId: d1,
 				region: Region.parse(0),
+			},
+		]);
+	});
+});
+
+// ADR 0059. The river preset on the spec grid: one river on row 263, its
+// first bridge at (90, 263) with landings (90, 262) and (90, 264), the next
+// at (128, 263).
+describe("decideDriverShard on roads", () => {
+	const roadGrid: Grid = { width: 500, height: 500 };
+	const river = roadNetworkNamed("river", roadGrid);
+
+	function roadCell(x: number, y: number): Cell {
+		const result = cellIn(roadGrid, x, y);
+		if (!result.ok) throw new Error(`test cell (${x}, ${y}) outside grid`);
+		return result.value;
+	}
+
+	function roadOffer(pickup: Cell, dropoff: Cell): Offer {
+		return { type: "offer", tripId: t1, driverId: d1, pickup, dropoff };
+	}
+
+	// d-1 placed at `at`, en route to the pickup.
+	function enRoute(at: Cell, pickup: Cell) {
+		const random = scriptedRandom([at.x, at.y]);
+		const started = startDriverShard(
+			{ grid: roadGrid, ...shard(i1, 1), tick: tick(0), roads: river },
+			random,
+		);
+		const accepted = decideDriverShard(
+			started.state,
+			roadOffer(pickup, roadCell(pickup.x, pickup.y + 5)),
+			random,
+		);
+		return { state: accepted.state, random };
+	}
+
+	// The driver's cell after each move over ticks 1..n, and its arrival
+	// ticks at the pickup.
+	function drive(state: DriverShardState, random: Random, n: number) {
+		const cells: Cell[] = [];
+		const arrivals: Tick[] = [];
+		for (let t = 1; t <= n; t++) {
+			const decided = decideDriverShard(
+				state,
+				{ type: "clock.ticked", tick: tick(t) },
+				random,
+			);
+			state = decided.state;
+			for (const output of decided.outputs) {
+				if (output.type === "drivers.moved") {
+					forEachMove(output, (_driverId, cell) => cells.push(cell));
+				}
+				if (output.type === "driver.arrived_at_pickup") {
+					arrivals.push(output.tick);
+				}
+			}
+		}
+		return { cells, arrivals };
+	}
+
+	// From (100, 260) to (100, 280): Manhattan would step down to (100, 261);
+	// the road goes west to the landing (90, 262) first.
+	test("a driver heading across the river steps toward its waypoint landing", () => {
+		const { state, random } = enRoute(roadCell(100, 260), roadCell(100, 280));
+		expect(drive(state, random, 1).cells).toEqual([roadCell(99, 260)]);
+	});
+
+	test("a driver at a landing crosses the bridge in 2 moves", () => {
+		const { state, random } = enRoute(roadCell(90, 262), roadCell(90, 270));
+		expect(drive(state, random, 2).cells).toEqual([
+			roadCell(90, 263),
+			roadCell(90, 264),
+		]);
+	});
+
+	// Road distance 40: 10 + 2 to the landing, 2 across, 10 + 16 on.
+	test("a driver across the river arrives in its road distance in ticks", () => {
+		const { state, random } = enRoute(roadCell(100, 260), roadCell(100, 280));
+		expect(drive(state, random, 50).arrivals).toEqual([tick(40)]);
+	});
+
+	test("a driver placed on the river is placed again from the shard's stream", () => {
+		const { outputs } = startDriverShard(
+			{ grid: roadGrid, ...shard(i1, 1), tick: tick(0), roads: river },
+			scriptedRandom([50, 263, 50, 100]),
+		);
+		expect(outputs).toEqual([
+			driversWentOnline(tick(0), Region.parse(0), fleetSize, [
+				{ driverIndex: i1, cell: roadCell(50, 100) },
+			]),
+		]);
+	});
+
+	// Placed at (50, 100); a wander target of (50, 263) would step down.
+	test("a wander target on the river is drawn again from the shard's stream", () => {
+		const random = scriptedRandom([50, 100, 50, 263, 50, 90]);
+		const { state } = startDriverShard(
+			{ grid: roadGrid, ...shard(i1, 1), tick: tick(0), roads: river },
+			random,
+		);
+		expect(drive(state, random, 1).cells).toEqual([roadCell(50, 99)]);
+	});
+
+	// d-1 at (60, 240), zone 41; zone 51 (cells 50-99, 250-299) surges. Its
+	// chase cell (60, 263) is on the river, (60, 270) is not, and the road
+	// there goes east to the landing (90, 262) first.
+	test("a chase target on the river is drawn again from the tick's chase stream", () => {
+		const { state } = startDriverShard(
+			{ grid: roadGrid, ...shard(i1, 1), tick: tick(0), roads: river },
+			scriptedRandom([60, 240]),
+		);
+		const priced = decideDriverShard(
+			state,
+			{
+				type: "zones.priced",
+				tick: tick(0),
+				region: Region.parse(0),
+				zones: [{ zone: Zone.parse(51), surge: Surge.parse(2) }],
+			},
+			scriptedRandom([]),
+		).state;
+		const random = shiftRandom([], { "chase:1": [60, 263, 60, 270] });
+		expect(drive(priced, random, 1).cells).toEqual([roadCell(61, 240)]);
+	});
+
+	const offRoad: [string, () => Offer][] = [
+		["pickup", () => roadOffer(roadCell(50, 263), roadCell(50, 300))],
+		["dropoff", () => roadOffer(roadCell(50, 200), roadCell(50, 263))],
+	];
+
+	test.each(offRoad)(
+		"an offer whose %s is on the river is declined and rejected as off road",
+		(_case, make) => {
+			const random = scriptedRandom([100, 260]);
+			const { state } = startDriverShard(
+				{ grid: roadGrid, ...shard(i1, 1), tick: tick(0), roads: river },
+				random,
+			);
+			const input = make();
+			expect(decideDriverShard(state, input, random).outputs).toEqual([
+				{
+					type: "offer_declined",
+					tripId: t1,
+					driverId: d1,
+					region: Region.parse(0),
+					idleAt: roadCell(100, 260),
+				},
+				{ type: "input_rejected", reason: "off_road_cell", input },
+			]);
+		},
+	);
+
+	test("with roads off, a driver placed on the river row steps straight across it", () => {
+		const random = scriptedRandom([100, 263]);
+		const started = startDriverShard(
+			{ grid: roadGrid, ...shard(i1, 1), tick: tick(0), roads: null },
+			random,
+		);
+		const accepted = decideDriverShard(
+			started.state,
+			roadOffer(roadCell(100, 280), roadCell(100, 285)),
+			random,
+		);
+		expect(drive(accepted.state, random, 1).cells).toEqual([
+			roadCell(100, 264),
+		]);
+	});
+
+	// 9 drivers wandering over the canals preset for 300 ticks.
+	function wandering(seed: number) {
+		const canals = roadNetworkNamed("canals", roadGrid);
+		const random = createRandom(seed);
+		const started = startDriverShard(
+			{ grid: roadGrid, ...shard(i1, 9), tick: tick(0), roads: canals },
+			random,
+		);
+		const outputs: unknown[] = [...started.outputs];
+		let state = started.state;
+		for (let n = 1; n <= 300; n++) {
+			const decided = decideDriverShard(
+				state,
+				{ type: "clock.ticked", tick: tick(n) },
+				random,
+			);
+			state = decided.state;
+			outputs.push(...decided.outputs);
+		}
+		return { canals, outputs };
+	}
+
+	test("same seed and inputs on roads give identical outputs", () => {
+		expect(wandering(42).outputs).toEqual(wandering(42).outputs);
+	});
+
+	test("drivers wandering on roads stand only on drivable cells", () => {
+		const { canals, outputs } = wandering(7);
+		const undrivable: Cell[] = [];
+		for (const output of outputs as DriversMoved[]) {
+			// drivers.went_online reads the same way.
+			forEachMove(output, (_driverId, at) => {
+				if (!isDrivable(canals, at.x, at.y)) undrivable.push(at);
+			});
+		}
+		expect(undrivable).toEqual([]);
+	});
+
+	// d-1 at (100, 250) holds pooled t-1 (pickup (100, 255), dropoff
+	// (100, 280)) when t-2 (pickup (100, 260), dropoff (100, 230)) joins. From
+	// t-2's pickup, t-1's dropoff is 20 by Manhattan but 40 by road, t-2's 30.
+	test("a driver joined on roads drops off first the rider whose dropoff is nearer the joining pickup by road", () => {
+		const random = scriptedRandom([100, 250]);
+		let { state } = startDriverShard(
+			{ grid: roadGrid, ...shard(i1, 1), tick: tick(0), roads: river },
+			random,
+		);
+		const pooled = (tripId: TripId, pickup: Cell, dropoff: Cell): Offer => ({
+			...roadOffer(pickup, dropoff),
+			tripId,
+			pooled: true,
+		});
+		for (const offered of [
+			pooled(t1, roadCell(100, 255), roadCell(100, 280)),
+			pooled(t2, roadCell(100, 260), roadCell(100, 230)),
+		]) {
+			state = decideDriverShard(state, offered, random).state;
+		}
+		const dropoffs: TripId[] = [];
+		for (let t = 1; dropoffs.length < 2; t++) {
+			const decided = decideDriverShard(
+				state,
+				{ type: "clock.ticked", tick: tick(t) },
+				random,
+			);
+			state = decided.state;
+			for (const output of decided.outputs) {
+				if (output.type === "driver.arrived_at_pickup") {
+					const pickedUp = { ...output, type: "trip.picked_up" } as const;
+					state = decideDriverShard(state, pickedUp, random).state;
+				}
+				if (output.type === "driver.arrived_at_dropoff") {
+					dropoffs.push(output.tripId);
+					const completed = { ...output, type: "trip.completed" } as const;
+					state = decideDriverShard(state, completed, random).state;
+				}
+			}
+		}
+		expect(dropoffs).toEqual([t2, t1]);
+	});
+
+	// Pickup (100, 280) from (100, 260): 20 by Manhattan, 40 by road. No offer
+	// stream scripted, so a decline draw would throw.
+	test("a picky driver declines a pickup within its max pickup distance by Manhattan but beyond it by road", () => {
+		const random = shiftRandom([100, 260], { "preference:d-1": [30] });
+		const { state } = startDriverShard(
+			{
+				grid: roadGrid,
+				...shard(i1, 1),
+				tick: tick(0),
+				roads: river,
+				preferences: {
+					type: "picky",
+					maxPickupDistance: { min: 20, max: 80 },
+					declineShare: 0.1,
+				},
+			},
+			random,
+		);
+		const { outputs } = decideDriverShard(
+			state,
+			roadOffer(roadCell(100, 280), roadCell(100, 300)),
+			random,
+		);
+		expect(outputs).toEqual([
+			{
+				type: "offer_declined",
+				tripId: t1,
+				driverId: d1,
+				region: Region.parse(0),
+				idleAt: roadCell(100, 260),
 			},
 		]);
 	});
