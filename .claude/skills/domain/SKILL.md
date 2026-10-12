@@ -126,7 +126,7 @@ Decided; the rules are in `src/shared/rating.ts` (`driverQuality`, `starsOf`, `S
 
 ## Roads (0059)
 
-Decided; not in code yet (#336). Off by default (`--roads off|river|canals` for `bun run sim`, `bun run bench` and `bun run loadtest`, `ROADS` for `bun run dev` and `bun run ui`, `SimConfig.roads`); with roads off the grid is open and distance is Manhattan. `bun run sim -- --compare-roads`: the configured run with roads off and on, side by side.
+Decided; the network is in `src/shared/roads.ts` (`roadNetworkNamed`, `isRoadCell`, `isDrivable`, `roadDistance`, `exitCostsToward`, `roadDistanceTo`, `roadBoundToBox`, `roadStep`, #382); nothing uses it yet (#336). Off by default (`--roads off|river|canals` for `bun run sim`, `bun run bench` and `bun run loadtest`, `ROADS` for `bun run dev` and `bun run ui`, `SimConfig.roads`); with roads off the grid is open and distance is Manhattan. `bun run sim -- --compare-roads`: the configured run with roads off and on, side by side.
 
 - **Road network**: rivers and bridges laid on the grid, from a named preset (`river`: one river, 4 bridges; `canals`: 3 + 3 rivers, 48 bridges), a pure function of (name, grid) from a fixed seed, never the run's.
 - **River**: a whole row or column of cells no one enters or stops on, except at its bridges.
@@ -135,6 +135,8 @@ Decided; not in code yet (#336). Off by default (`--roads off|river|canals` for 
 - **District**: an open rectangle of cells bounded by rivers and the grid's edges; within one, road distance is Manhattan.
 - **Road cell**: a cell of a district (not a river, not a bridge). Pickups, dropoffs, driver starts, wander and chase targets are road cells, redrawn from the same stream when a draw lands off road.
 - **Road distance**: shortest path length over road cells and bridges: Manhattan within a district, else via exit and entry landings and the precomputed landing table. Never less than Manhattan distance. With roads on it is every distance a driver drives or a rider pays for (pickup distance, ETA, match cost, join ETA, detour limit, join reach, max pickup distance, fare, direct distance); regions, surge zones, zone distance, chase reach, hotspot radius and heatmap tiles stay geometric.
+- **Exit cost**: a landing's road distance to a cell, leaving across the landing's bridge. A cell's exit costs (one per landing, `ExitCosts`) are made once for a cell asked against many (a pickup against candidate drivers) and owned by that search, never by the network or a module.
+- **Bucket bound**: a lower bound on the road distance from any drivable cell of a search bucket to a cell (`roadBoundToBox`): Manhattan in the cell's district, else the gap to a landing plus its exit cost; bridges in the bucket exactly. Never more than the least road distance into the bucket.
 - **Waypoint**: the exit landing a driver heads for when its target is in another district, kept by the driver shard until the target changes or the driver enters a district; a driver arrives in exactly its road distance in ticks.
 - **Off road** (`driver_off_road`, `trip_off_road`): the violations of a driver reported on a river cell that is not a bridge, and of a requested trip whose pickup or dropoff is not a road cell.
 - **Off-road cell** (`off_road_cell`): a cell from another service that breaks the network (a pickup or dropoff not a road cell, a driver's cell not drivable), an expected failure: dispatch answers `request_trip_rejected` or `input_rejected`, a driver shard declines the offer; never a throw.
