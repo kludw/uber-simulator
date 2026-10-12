@@ -420,6 +420,7 @@ function partnerFor(
 				rideSoFar: rideSoFar(state, partner),
 			},
 			trip,
+			null,
 		);
 	});
 }
