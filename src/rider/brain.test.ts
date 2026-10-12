@@ -19,6 +19,7 @@ import {
 import { createRandom, type Random } from "../shared/random.ts";
 import { Stars } from "../shared/rating.ts";
 import { Region, RegionLayout } from "../shared/regions.ts";
+import { isRoadCell, roadNetworkNamed } from "../shared/roads.ts";
 import { Surge, Zone } from "../shared/surge.ts";
 import {
 	decideRiders,
@@ -1548,5 +1549,174 @@ describe("city demand preset", () => {
 				demand: cityDemand,
 			}),
 		).not.toThrow();
+	});
+});
+
+describe("decideRiders with roads on", () => {
+	// river: one river along row 263, bridges at x 90, 128, 316 and 444.
+	const roads = roadNetworkNamed("river", specGrid);
+	const spec = (x: number, y: number) =>
+		cellAt(x as Coordinate, y as Coordinate);
+
+	function requestsFrom(
+		config: Partial<Parameters<typeof startRiders>[0]>,
+		streams: Record<string, Script>,
+	) {
+		return decideRiders(
+			startRiders({
+				grid: specGrid,
+				requestsPerMinute: 10,
+				roads,
+				...config,
+			}),
+			{ type: "clock.ticked", tick: tick(1) },
+			scriptedRandom({ "patience:1": { ints: [150] }, ...streams }),
+		).outputs;
+	}
+
+	function request(pickup: Cell, dropoff: Cell): RequestTrip {
+		return {
+			type: "request_trip",
+			tick: tick(1),
+			tripId: TripId.parse("t-1"),
+			riderId: RiderId.parse("r-1"),
+			pickup,
+			dropoff,
+			region: Region.parse(0),
+		};
+	}
+
+	test("a pickup drawn on a river is redrawn from the demand stream", () => {
+		expect(
+			requestsFrom(
+				{},
+				{ "demand:1": { floats: [0.9, 0.5], ints: [7, 263, 7, 262, 9, 9] } },
+			),
+		).toEqual([request(spec(7, 262), spec(9, 9))]);
+	});
+
+	test("a dropoff drawn on a river is redrawn from the demand stream", () => {
+		expect(
+			requestsFrom(
+				{},
+				{ "demand:1": { floats: [0.9, 0.5], ints: [7, 262, 9, 263, 9, 264] } },
+			),
+		).toEqual([request(spec(7, 262), spec(9, 264))]);
+	});
+
+	// Hotspot stream: coin 0.1 < share 0.5 -> hotspot; choice 0; (7, 263)
+	// on the river, then (7, 262).
+	test("a hotspot pickup drawn on a river is redrawn from the hotspot stream", () => {
+		const demand = {
+			type: "hotspots",
+			hotspotShare: 0.5,
+			hotspots: [{ center: spec(7, 263), radius: 2, weight: 1 }],
+		} as const;
+		expect(
+			requestsFrom(
+				{ demand },
+				{
+					"demand:1": { floats: [0.9, 0.5], ints: [9, 9] },
+					"hotspot:1": { floats: [0.1, 0], ints: [7, 263, 7, 262] },
+				},
+			),
+		).toEqual([request(spec(7, 262), spec(9, 9))]);
+	});
+
+	// (326, 262) to (326, 264): Manhattan 2, by road 10 to the bridge at
+	// x 316, 2 across, 10 back: 22. A 22-tick ride is no detour: quality
+	// 4.25, wait 60, noise 0: 4 stars (by Manhattan it would be 1).
+	test("a ride across a river is rated against its direct road distance", () => {
+		const spawned = decideRiders(
+			startRiders({
+				grid: specGrid,
+				requestsPerMinute: 10,
+				ratings: true,
+				roads,
+			}),
+			{ type: "clock.ticked", tick: tick(1) },
+			scriptedRandom({
+				"demand:1": { floats: [0.9, 0.5], ints: [326, 262, 326, 264] },
+				"patience:1": { ints: [300] },
+			}),
+		).state;
+		const riding = pickedUp(spawned, 61).state;
+		expect(
+			decideRiders(
+				riding,
+				{ type: "trip.completed", tick: tick(83), tripId: t1, driverId: d1 },
+				scriptedRandom({
+					"quality:d-1": { floats: [0.5] },
+					"rating:t-1": { floats: [0.5] },
+				}),
+			).outputs,
+		).toEqual([
+			{
+				type: "rider.rated_driver",
+				tick: tick(83),
+				riderId: r1,
+				tripId: t1,
+				driverId: d1,
+				stars: Stars.parse(4),
+			},
+		]);
+	});
+
+	describe.each([
+		["uniform", { type: "uniform" } as const],
+		["city", cityDemand],
+	])("with %s demand", (_, demand) => {
+		test.each(["river", "canals"] as const)(
+			"no pickup or dropoff is off road on %s",
+			(name) => {
+				const network = roadNetworkNamed(name, specGrid);
+				const offRoad = requestsOverTicks(
+					{
+						grid: specGrid,
+						requestsPerMinute: 6000,
+						demand,
+						roads: network,
+					},
+					60,
+					42,
+				).filter(
+					({ pickup, dropoff }) =>
+						!isRoadCell(network, pickup.x, pickup.y) ||
+						!isRoadCell(network, dropoff.x, dropoff.y),
+				);
+				expect(offRoad).toEqual([]);
+			},
+		);
+
+		test("roads off draws the same requests as no roads config", () => {
+			const config = { grid: specGrid, requestsPerMinute: 600, demand };
+			expect(requestsOverTicks({ ...config, roads: null }, 100, 7)).toEqual(
+				requestsOverTicks(config, 100, 7),
+			);
+		});
+
+		test("same seed gives identical outputs", () => {
+			const config = {
+				grid: specGrid,
+				requestsPerMinute: 600,
+				demand,
+				roads,
+			};
+			expect(requestsOverTicks(config, 100, 7)).toEqual(
+				requestsOverTicks(config, 100, 7),
+			);
+		});
+	});
+
+	// Its pickups could never be drawn.
+	test("a hotspot holding no road cell is a bug", () => {
+		const demand = {
+			type: "hotspots",
+			hotspotShare: 0.5,
+			hotspots: [{ center: spec(7, 263), radius: 0, weight: 1 }],
+		} as const;
+		expect(() =>
+			startRiders({ grid: specGrid, requestsPerMinute: 10, demand, roads }),
+		).toThrow();
 	});
 });

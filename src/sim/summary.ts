@@ -132,7 +132,10 @@ function createSurgeSummary(): {
 					declined++;
 					break;
 				case "trip.requested":
-					fares.set(message.tripId, message.fare ?? fareOf(message, baseSurge));
+					fares.set(
+						message.tripId,
+						message.fare ?? fareOf(message, baseSurge, null),
+					);
 					break;
 				case "trip.completed":
 					revenue += fares.get(message.tripId) ?? 0;

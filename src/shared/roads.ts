@@ -9,10 +9,12 @@ import {
 	type Cell,
 	type Coordinate,
 	cellAt,
+	distance,
 	type Grid,
+	randomCell,
 	stepToward,
 } from "./grid.ts";
-import { createRandom } from "./random.ts";
+import { createRandom, type Random } from "./random.ts";
 
 export type RoadNetworkName = "river" | "canals";
 
@@ -212,6 +214,20 @@ export function isRoadCell(
 	return districtOf(network, x, y) >= 0;
 }
 
+// A uniform road cell, redrawn from the same stream while a draw lands off
+// road; roads off (null), any cell in exactly the draws it always took.
+export function randomRoadCell(
+	network: RoadNetwork | null,
+	grid: Grid,
+	random: Random,
+): Cell {
+	let cell = randomCell(grid, random);
+	while (network !== null && !isRoadCell(network, cell.x, cell.y)) {
+		cell = randomCell(grid, random);
+	}
+	return cell;
+}
+
 // A road cell or a bridge: where a driver may stand (on a bridge only
 // mid-crossing).
 export function isDrivable(
@@ -233,6 +249,16 @@ function bridgeAt(network: RoadNetwork, x: number, y: number): number {
 // a caller's bug and throws.
 export function roadDistance(network: RoadNetwork, a: Cell, b: Cell): number {
 	return distanceBetween(network, a.x, a.y, b.x, b.y);
+}
+
+// Distance as the simulation means it: road distance with roads on,
+// Manhattan (today's `distance`) with roads off (null).
+export function distanceOn(
+	network: RoadNetwork | null,
+	a: Cell,
+	b: Cell,
+): number {
+	return network === null ? distance(a, b) : roadDistance(network, a, b);
 }
 
 // One drivable cell's exit costs: for every landing, the road distance from
