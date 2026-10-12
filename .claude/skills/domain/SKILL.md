@@ -139,6 +139,16 @@ Decided; not in code yet (#336). Off by default (`--roads off|river|canals` for 
 - **Off road** (`driver_off_road`, `trip_off_road`): the violations of a driver reported on a river cell that is not a bridge, and of a requested trip whose pickup or dropoff is not a road cell.
 - **Off-road cell** (`off_road_cell`): a cell from another service that breaks the network (a pickup or dropoff not a road cell, a driver's cell not drivable), an expected failure: dispatch answers `request_trip_rejected` or `input_rejected`, a driver shard declines the offer; never a throw.
 
+## Earnings (0060)
+
+Decided; not in code yet (#340). Off by default (`--earnings on|off` for `bun run sim`, `bun run bench` and `bun run loadtest`, `EARNINGS` for `bun run dev`, dispatch and driver shards; `SimConfig.earnings`); with earnings off no message carries a fare on completion or `earned`, and drivers keep no earnings. `bun run sim -- --compare-earnings`: the configured run with earnings off and on, side by side.
+
+- **Driver share**: what a driver earns for a completed trip, `round(fare × 0.75)` cents (`driverShareOf`), of the trip's fare as fixed at request (surged, pooled, base fare with surge off; road distance with roads on). Cancelled and released trips earn nothing. With earnings on, dispatch puts the trip's `fare` on `trip.completed` and on `trip_status` `completed`.
+- **Earnings**: the sum of a driver's driver shares. Drivers keep only their current online period's (**earned**, by driver index in the shard); run totals and the **per-driver** distribution (over the fleet, $0 for a driver without a completed trip) are views from `trip.completed` fares.
+- **Earned**: a driver's earnings in its current online period; reported on `driver.went_offline` (`earned`, cents) with earnings on, then reset.
+- **Earnings target**: what a driver means to earn per online period, uniform in $15-30, drawn once from child stream `earnings:<driverId>`, only with shifts on. An idle driver whose earned reached it ends its online period on that tick (goes offline as at a scheduled end; a driver on a trip finishes it first). Without shifts no target.
+- **Fare mismatch** (`fare_mismatch`): the violation of a `trip.completed` whose `fare` differs from its trip's fare. **Earnings mismatch** (`earnings_mismatch`): of a `driver.went_offline` whose `earned` differs from the driver shares of that driver's completions since it last went online.
+
 ## Events
 
 1. Named `<entity>.<past-tense-verb>`:

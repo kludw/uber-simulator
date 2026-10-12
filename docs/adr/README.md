@@ -63,3 +63,4 @@ Format, triggers, lifecycle: `.claude/skills/docs/SKILL.md`.
 | 0057 | [Weigh driver ratings into matching](0057-weigh-driver-ratings-into-matching.md) | Accepted |
 | 0058 | [Join a pool only when it beats the nearest idle driver](0058-join-a-pool-only-when-it-beats-the-nearest-idle-driver.md) | Accepted |
 | 0059 | [Drive on a network of rivers and bridges laid on the grid](0059-drive-on-a-network-of-rivers-and-bridges.md) | Accepted |
+| 0060 | [Drivers earn a share of fares and end a shift at a target](0060-drivers-earn-a-share-of-fares-and-end-a-shift-at-a-target.md) | Accepted |
