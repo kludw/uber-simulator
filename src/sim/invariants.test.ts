@@ -12,7 +12,7 @@ import {
 } from "../shared/messages.ts";
 import { Stars } from "../shared/rating.ts";
 import { Region } from "../shared/regions.ts";
-import { Surge } from "../shared/surge.ts";
+import { Fare, Surge } from "../shared/surge.ts";
 import { checkInvariants, createInvariantChecker } from "./invariants.ts";
 
 const grid: Grid = { width: 10, height: 10 };
@@ -726,6 +726,127 @@ describe("checkInvariants ratings", () => {
 				driverId: d2,
 			},
 			{ type: "duplicate_rating", tick: tick(4), tripId: t1 },
+		]);
+	});
+});
+
+// ADR 0060: a completion's fare is its trip's; a driver going offline
+// reports the driver shares of its completions since it went online.
+describe("checkInvariants earnings", () => {
+	// cleanTrip's t1 rides 1 cell: base fare 250 + 2 × 1 cents.
+	const baseFare = Fare.parse(252);
+
+	function completed(
+		tripId: TripId,
+		driverId: DriverId,
+		at: number,
+		fare: Fare | undefined,
+	): Message {
+		return { type: "trip.completed", tick: tick(at), tripId, driverId, fare };
+	}
+
+	function tripWithFare(fare: Fare | undefined): Message[] {
+		return [...cleanTrip.slice(0, -1), completed(t1, d1, 3, fare)];
+	}
+
+	test("a completion with its trip's base fare is clean", () => {
+		expect(checkInvariants(tripWithFare(baseFare), grid)).toEqual([]);
+	});
+
+	test("a completion with another fare than its trip's is flagged", () => {
+		expect(checkInvariants(tripWithFare(Fare.parse(300)), grid)).toEqual([
+			{
+				type: "fare_mismatch",
+				tick: tick(3),
+				tripId: t1,
+				driverId: d1,
+				fare: Fare.parse(300),
+				expectedFare: Fare.parse(252),
+			},
+		]);
+	});
+
+	test("with earnings on a completion without a fare is flagged", () => {
+		expect(
+			checkInvariants(tripWithFare(undefined), grid, { earnings: true }),
+		).toEqual([
+			{
+				type: "fare_mismatch",
+				tick: tick(3),
+				tripId: t1,
+				driverId: d1,
+				fare: null,
+				expectedFare: baseFare,
+			},
+		]);
+	});
+
+	test("with earnings off a completion without a fare is clean", () => {
+		expect(checkInvariants(tripWithFare(undefined), grid)).toEqual([]);
+	});
+
+	// With surge on the trip's fare is trip.requested's, here 1.5 × 252.
+	function surgedTripWithFare(fare: Fare): Message[] {
+		return tripWithFare(fare).with(2, {
+			type: "trip.requested",
+			tick: tick(1),
+			tripId: t1,
+			riderId: r1,
+			pickup: cell(1, 0),
+			dropoff: cell(2, 0),
+			surge: Surge.parse(1.5),
+			fare: Fare.parse(378),
+		});
+	}
+
+	test("a completion with its trip's surged fare is clean", () => {
+		expect(checkInvariants(surgedTripWithFare(Fare.parse(378)), grid)).toEqual(
+			[],
+		);
+	});
+
+	test("a completion with the base fare of a surged trip is flagged", () => {
+		expect(checkInvariants(surgedTripWithFare(baseFare), grid)).toEqual([
+			{
+				type: "fare_mismatch",
+				tick: tick(3),
+				tripId: t1,
+				driverId: d1,
+				fare: Fare.parse(252),
+				expectedFare: Fare.parse(378),
+			},
+		]);
+	});
+
+	// Pooled 25% off the base fare: round(252 × 0.75) = 189.
+	function pooledTripWithFare(fare: Fare): Message[] {
+		return tripWithFare(fare).with(2, {
+			type: "trip.requested",
+			tick: tick(1),
+			tripId: t1,
+			riderId: r1,
+			pickup: cell(1, 0),
+			dropoff: cell(2, 0),
+			pooled: true,
+		});
+	}
+
+	test("a pooled completion with the pooled base fare is clean", () => {
+		expect(checkInvariants(pooledTripWithFare(Fare.parse(189)), grid)).toEqual(
+			[],
+		);
+	});
+
+	test("a pooled completion with the full base fare is flagged", () => {
+		expect(checkInvariants(pooledTripWithFare(baseFare), grid)).toEqual([
+			{
+				type: "fare_mismatch",
+				tick: tick(3),
+				tripId: t1,
+				driverId: d1,
+				fare: Fare.parse(252),
+				expectedFare: Fare.parse(189),
+			},
 		]);
 	});
 });

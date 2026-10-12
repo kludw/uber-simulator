@@ -11,15 +11,18 @@ import type {
 	TripPickedUp,
 } from "../shared/messages.ts";
 import { forEachMove, forEachWentOnline } from "../shared/messages.ts";
+import { baseSurge, type Fare, fareOf } from "../shared/surge.ts";
 
 // The checker's own trip model, rebuilt from trip.* events alone: importing
 // dispatch's Trip would make the check agree with the code it checks.
-// pooled: from trip.requested (ADR 0056).
+// pooled: from trip.requested (ADR 0056). fare: trip.requested's, else the
+// base fare (ADR 0060 rule 6).
 type TripView = {
 	riderId: RiderId;
 	pickup: Cell;
 	dropoff: Cell;
 	pooled: boolean;
+	fare: Fare;
 } & (
 	| { state: "requested"; offeredTo: DriverId | null }
 	| { state: "matched" | "picked_up"; driverId: DriverId }
@@ -111,7 +114,16 @@ export type Violation =
 			driverId: DriverId;
 	  }
 	// tick: the second rating's.
-	| { type: "duplicate_rating"; tick: Tick; tripId: TripId };
+	| { type: "duplicate_rating"; tick: Tick; tripId: TripId }
+	// ADR 0060: a completion's fare is its trip's. fare: null when missing.
+	| {
+			type: "fare_mismatch";
+			tick: Tick;
+			tripId: TripId;
+			driverId: DriverId;
+			fare: Fare | null;
+			expectedFare: Fare;
+	  };
 
 // What the log has shown so far, rebuilt only from events.
 type LogState = {
@@ -128,11 +140,18 @@ type LogState = {
 	decliningRiders: Set<RiderId>;
 };
 
+// What the run had switched on that the log alone can't tell.
+export type CheckedFeatures = {
+	// Every completion must carry a fare (ADR 0060); off when unset.
+	earnings?: boolean | undefined;
+};
+
 export function checkInvariants(
 	eventLog: readonly Message[],
 	grid: Grid,
+	features: CheckedFeatures = {},
 ): Violation[] {
-	const checker = createInvariantChecker(grid);
+	const checker = createInvariantChecker(grid, features);
 	for (const message of eventLog) checker.observe(message);
 	return checker.violations();
 }
@@ -145,7 +164,11 @@ export type InvariantChecker = {
 
 // Checks a run as it happens (ADR 0033): memory grows with trips and
 // drivers, not with messages.
-export function createInvariantChecker(grid: Grid): InvariantChecker {
+export function createInvariantChecker(
+	grid: Grid,
+	features: CheckedFeatures = {},
+): InvariantChecker {
+	const earnings = features.earnings === true;
 	const violations: Violation[] = [];
 	const log: LogState = {
 		trips: new Map(),
@@ -157,7 +180,7 @@ export function createInvariantChecker(grid: Grid): InvariantChecker {
 		decliningRiders: new Set(),
 	};
 	return {
-		observe: (message) => observe(log, grid, violations, message),
+		observe: (message) => observe(log, grid, earnings, violations, message),
 		violations: () => [...violations],
 	};
 }
@@ -166,6 +189,7 @@ export function createInvariantChecker(grid: Grid): InvariantChecker {
 function observe(
 	log: LogState,
 	grid: Grid,
+	earnings: boolean,
 	violations: Violation[],
 	message: Message,
 ): void {
@@ -215,7 +239,7 @@ function observe(
 				violations.push({ type: "declined_rider_requested", tick, riderId });
 			}
 			log.requestingRiders.add(riderId);
-			violations.push(...checkTripEvent(log, message));
+			violations.push(...checkTripEvent(log, earnings, message));
 			break;
 		}
 		case "trip.offered":
@@ -225,7 +249,7 @@ function observe(
 		case "trip.picked_up":
 		case "trip.completed":
 		case "trip.cancelled":
-			violations.push(...checkTripEvent(log, message));
+			violations.push(...checkTripEvent(log, earnings, message));
 			break;
 	}
 }
@@ -332,7 +356,11 @@ function driverToFree(trip: TripView): DriverId | null {
 	}
 }
 
-function checkTripEvent(log: LogState, event: TripEvent): Violation[] {
+function checkTripEvent(
+	log: LogState,
+	earnings: boolean,
+	event: TripEvent,
+): Violation[] {
 	const violations: Violation[] = [];
 	const trip = log.trips.get(event.tripId);
 	if (event.type === "trip.offered") {
@@ -355,6 +383,9 @@ function checkTripEvent(log: LogState, event: TripEvent): Violation[] {
 		return violations;
 	}
 	log.trips.set(event.tripId, next);
+	if (event.type === "trip.completed") {
+		violations.push(...checkFare(event, next.fare, earnings));
+	}
 	const arrival = arrivalTarget(event);
 	if (arrival !== null) {
 		const cell = log.driverPositions.get(arrival.driverId)?.cell ?? null;
@@ -386,6 +417,20 @@ function checkTripEvent(log: LogState, event: TripEvent): Violation[] {
 		endActiveTrip(log, trip.driverId, event.tripId);
 	}
 	return violations;
+}
+
+// Without earnings a completion carries no fare (ADR 0060).
+function checkFare(
+	completion: TripCompleted,
+	expectedFare: Fare,
+	earnings: boolean,
+): Violation[] {
+	const fare = completion.fare ?? null;
+	if (fare === expectedFare || (fare === null && !earnings)) return [];
+	const { tick, tripId, driverId } = completion;
+	return [
+		{ type: "fare_mismatch", tick, tripId, driverId, fare, expectedFare },
+	];
 }
 
 // At most two trips, two only when both are pooled (ADR 0056).
@@ -460,17 +505,19 @@ function transition(
 		if (trip !== undefined) return null;
 		const { riderId, pickup, dropoff } = event;
 		const pooled = event.pooled === true;
+		const fare = event.fare ?? fareOf(event, baseSurge, null);
 		return {
 			riderId,
 			pickup,
 			dropoff,
 			pooled,
+			fare,
 			state: "requested",
 			offeredTo: null,
 		};
 	}
 	if (trip === undefined) return null;
-	const { riderId, pickup, dropoff, pooled } = trip;
+	const { riderId, pickup, dropoff, pooled, fare } = trip;
 	switch (event.type) {
 		case "trip.offered":
 			if (trip.state !== "requested" || trip.offeredTo !== null) return null;
@@ -486,6 +533,7 @@ function transition(
 				pickup,
 				dropoff,
 				pooled,
+				fare,
 				state: "matched",
 				driverId: event.driverId,
 			};
@@ -503,13 +551,14 @@ function transition(
 				pickup,
 				dropoff,
 				pooled,
+				fare,
 				state: "completed",
 				driverId: event.driverId,
 				rated: false,
 			};
 		case "trip.cancelled":
 			if (trip.state !== "requested" && trip.state !== "matched") return null;
-			return { riderId, pickup, dropoff, pooled, state: "cancelled" };
+			return { riderId, pickup, dropoff, pooled, fare, state: "cancelled" };
 		default: {
 			const unhandled: never = event;
 			throw new Error(`unhandled trip event: ${unhandled}`);
