@@ -131,4 +131,27 @@ describe("benchReport", () => {
 			"ratings: on",
 		]);
 	});
+
+	// ADR 0060: earnings-off output stays as it was.
+	test("a run with earnings on says so after its regions, surge, pooling and ratings", () => {
+		const report = benchReport(
+			{ ...config, surge: true, pooling: true, ratings: true, earnings: true },
+			{
+				tickMs: [1],
+				messages: 1,
+				peakRssBytes: 2 ** 20,
+				heapBytes: 2 ** 20,
+				heapObjects: 1,
+				status: { type: "finished" },
+			},
+		);
+
+		expect(report.split("\n").slice(5, 10)).toEqual([
+			"regions: 2x1",
+			"surge: on",
+			"pooling: on",
+			"ratings: on",
+			"earnings: on",
+		]);
+	});
 });

@@ -244,6 +244,32 @@ const samples: Message[] = [
 		driverId,
 		stars: Stars.parse(4),
 	},
+	// Earnings (ADR 0060).
+	{ type: "trip.completed", tick, tripId, driverId, fare: Fare.parse(254) },
+	{
+		type: "trip_status",
+		tripId,
+		driverId,
+		stage: "dropoff",
+		status: "completed",
+		fare: Fare.parse(254),
+	},
+	{
+		type: "driver.went_offline",
+		tick,
+		driverId,
+		cell: pickup,
+		region: Region.parse(0),
+		earned: 0,
+	},
+	{
+		type: "driver.went_offline",
+		tick,
+		driverId,
+		cell: pickup,
+		region: Region.parse(0),
+		earned: 1905,
+	},
 ];
 
 test.each(samples.map((message) => [message.type, message]))(
@@ -293,6 +319,27 @@ const oneRating = {
 	tripId: "t-1",
 	driverId: "d-1",
 	stars: 4,
+};
+
+const oneCompleted = {
+	type: "trip.completed",
+	tick: 1,
+	tripId: "t-1",
+	driverId: "d-1",
+};
+const oneStatus = {
+	type: "trip_status",
+	tripId: "t-1",
+	driverId: "d-1",
+	stage: "dropoff",
+	status: "completed",
+};
+const oneWentOffline = {
+	type: "driver.went_offline",
+	tick: 1,
+	driverId: "d-1",
+	cell: { x: 0, y: 0 },
+	region: 0,
 };
 
 const invalidInputs: [string, unknown][] = [
@@ -492,6 +539,19 @@ const invalidInputs: [string, unknown][] = [
 	["rating of 0 stars", { ...oneRating, stars: 0 }],
 	["rating of 6 stars", { ...oneRating, stars: 6 }],
 	["rating of 2.5 stars", { ...oneRating, stars: 2.5 }],
+	// Earnings (ADR 0060): fares positive cents, earned nonnegative cents.
+	["trip completed with a zero fare", { ...oneCompleted, fare: 0 }],
+	["trip status completed with a zero fare", { ...oneStatus, fare: 0 }],
+	[
+		"trip status picked up with a fare",
+		{ ...oneStatus, stage: "pickup", status: "picked_up", fare: 254 },
+	],
+	[
+		"trip status released with a fare",
+		{ ...oneStatus, status: "released", fare: 254 },
+	],
+	["went offline having earned -1", { ...oneWentOffline, earned: -1 }],
+	["went offline having earned 2.5", { ...oneWentOffline, earned: 2.5 }],
 ];
 
 test.each(invalidInputs)("rejects %s as invalid_message", (_case, input) => {

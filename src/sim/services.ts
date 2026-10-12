@@ -53,6 +53,9 @@ export type SimConfig = {
 	// Riders rate drivers (ADR 0057); off when unset. Dispatch acts on the
 	// ratings it sees, so it needs no switch.
 	ratings?: boolean | undefined;
+	// Dispatch keeps each trip's fare and puts it on its completion (ADR
+	// 0060); off when unset.
+	earnings?: boolean | undefined;
 };
 
 export type Rejected = InputRejected<Message, string>;
@@ -192,6 +195,7 @@ export function dispatchService(config: SimConfig, region: Region): SimService {
 						regions: config.regions,
 						region,
 						surge: config.surge,
+						earnings: config.earnings,
 					}),
 					outputs: [],
 				},
