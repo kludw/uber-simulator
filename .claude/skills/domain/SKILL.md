@@ -12,11 +12,11 @@ Living document. New concept in code = add term here in same change. Meaning shi
 ## World
 
 - **World**: the simulated city. No single owner; each service owns its part, views built from events (0017).
-- **Grid**: synthetic square grid, `width × height` cells (v1: 500 × 500, 1 cell = 10 m). No real maps for now.
+- **Grid**: synthetic square grid, `width × height` cells (v1: 500 × 500, 1 cell = 10 m). No real maps; with roads on, a road network laid on it (Roads).
 - **Cell**: one grid square, integer `x`, `y`. Origin top-left, `0 ≤ x < width`, `0 ≤ y < height`. The `Cell` type guarantees well-formed non-negative integer coordinates only; grid bounds are checked by `cellIn` where a grid is known and by the invariant checker. Each coordinate is a **Coordinate** (branded non-negative integer); `cellAt(x, y)` makes a Cell from two.
 - **Position**: an entity's current cell.
-- **Distance**: Manhattan distance between cells, `|x1 - x2| + |y1 - y2|`.
-- **Move**: one step to a 4-neighbor cell (no diagonals). Max one move per tick per driver. Toward a target: larger remaining axis first.
+- **Distance**: Manhattan distance between cells, `|x1 - x2| + |y1 - y2|`; with roads on, road distance (Roads).
+- **Move**: one step to a 4-neighbor cell (no diagonals). Max one move per tick per driver. Toward a target: larger remaining axis first (with roads on, toward its waypoint first when the target is in another district).
 - **Tick**: one discrete simulation step, 1 s sim time, published by the clock. See `simulation` skill.
 
 ## Services
@@ -124,6 +124,21 @@ Decided; the rules are in `src/shared/rating.ts` (`driverQuality`, `starsOf`, `S
 - **Invalid rating** (`invalid_rating`): the violation of a `rider.rated_driver` whose trip is unknown or not yet completed, or that names another rider or driver than the trip's. **Duplicate rating** (`duplicate_rating`): a completed trip's second rating.
 - **Match cost**: pickup distance + rating penalty. With ratings on, greedy matching takes the idle driver of least match cost (ties to the lowest ID) and batched the least total match cost; with no rating it equals pickup distance.
 
+## Roads (0059)
+
+Decided; not in code yet (#336). Off by default (`--roads off|river|canals` for `bun run sim`, `bun run bench` and `bun run loadtest`, `ROADS` for `bun run dev` and `bun run ui`, `SimConfig.roads`); with roads off the grid is open and distance is Manhattan. `bun run sim -- --compare-roads`: the configured run with roads off and on, side by side.
+
+- **Road network**: rivers and bridges laid on the grid, from a named preset (`river`: one river, 4 bridges; `canals`: 3 + 3 rivers, 48 bridges), a pure function of (name, grid) from a fixed seed, never the run's.
+- **River**: a whole row or column of cells no one enters or stops on, except at its bridges.
+- **Bridge**: a river cell crossed straight across in 2 moves, landing to landing; drivers stand on one only mid-crossing. Bridges are at least 2 cells apart and clear of other rivers.
+- **Landing**: the road cell on either side of a bridge, the only way onto it.
+- **District**: an open rectangle of cells bounded by rivers and the grid's edges; within one, road distance is Manhattan.
+- **Road cell**: a cell of a district (not a river, not a bridge). Pickups, dropoffs, driver starts, wander and chase targets are road cells, redrawn from the same stream when a draw lands off road.
+- **Road distance**: shortest path length over road cells and bridges: Manhattan within a district, else via exit and entry landings and the precomputed landing table. Never less than Manhattan distance. With roads on it is every distance a driver drives or a rider pays for (pickup distance, ETA, match cost, join ETA, detour limit, join reach, max pickup distance, fare, direct distance); regions, surge zones, zone distance, chase reach, hotspot radius and heatmap tiles stay geometric.
+- **Waypoint**: the exit landing a driver heads for when its target is in another district, kept by the driver shard until the target changes or the driver enters a district; a driver arrives in exactly its road distance in ticks.
+- **Off road** (`driver_off_road`, `trip_off_road`): the violations of a driver reported on a river cell that is not a bridge, and of a requested trip whose pickup or dropoff is not a road cell.
+- **Off-road cell** (`off_road_cell`): a cell from another service that breaks the network (a pickup or dropoff not a road cell, a driver's cell not drivable), an expected failure: dispatch answers `request_trip_rejected` or `input_rejected`, a driver shard declines the offer; never a throw.
+
 ## Events
 
 1. Named `<entity>.<past-tense-verb>`:
@@ -141,4 +156,4 @@ Decided; the rules are in `src/shared/rating.ts` (`driverQuality`, `starsOf`, `S
 
 ## Not in scope yet
 
-Real roads/routing, more than two riders per driver, drivers rating riders, deactivating drivers by rating. Don't model until asked.
+Imported maps, one-way streets, road speeds and congestion, more than two riders per driver, drivers rating riders, deactivating drivers by rating. Don't model until asked.
