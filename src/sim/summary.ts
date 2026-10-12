@@ -51,7 +51,7 @@ export function createSummary(config: RunConfig): RunSummary {
 	const surgeSummary = createSurgeSummary();
 	const poolingSummary = createPoolingSummary();
 	const ratingSummary = createRatingSummary();
-	const checker = createInvariantChecker(config.grid);
+	const checker = createInvariantChecker(config.grid, config);
 	const { count, driversPerShard } = config.driverShards;
 	return {
 		observe: (message) => {

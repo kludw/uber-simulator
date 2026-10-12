@@ -167,6 +167,18 @@ describe("summarize", () => {
 			},
 		]);
 	});
+
+	// ADR 0060: with earnings on every completion carries its trip's fare.
+	test("with earnings on a completion without a fare is a violation", () => {
+		const summary = summarize(
+			{ ...config, earnings: true },
+			{ eventLog, rejected: [] },
+		);
+
+		expect(summary.violations.map(({ type }) => type)).toEqual([
+			"fare_mismatch",
+		]);
+	});
 });
 
 // ADR 0054: revenue is the fares of completed trips; a trip without one
