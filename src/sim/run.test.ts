@@ -3,7 +3,6 @@ import { connect } from "@nats-io/transport-node";
 import * as z from "zod";
 import type { Matching } from "../dispatch/brain.ts";
 import { cityDemand } from "../rider/demand.ts";
-import { driverShareOf } from "../shared/earnings.ts";
 import { driverIdAt } from "../shared/fleet.ts";
 import { Cell, cellAt, distance } from "../shared/grid.ts";
 import type { DriverId, Message, Tick, TripId } from "../shared/messages.ts";
@@ -119,6 +118,15 @@ function ratingsIn(eventLog: readonly Message[]): number {
 		.length;
 }
 
+// Cents the drivers reported earned on going offline (ADR 0060).
+function earnedIn(eventLog: readonly Message[]): number {
+	let earned = 0;
+	for (const message of eventLog) {
+		if (message.type === "driver.went_offline") earned += message.earned ?? 0;
+	}
+	return earned;
+}
+
 // Shared trips (completed with another trip on their driver while active),
 // and those whose ride, pickup to completion, exceeds the detour limit:
 // 1.5 × direct distance, plus 2 ticks per join for dispatch's view a tick
@@ -212,7 +220,9 @@ describe("runInProcess", () => {
 	});
 
 	// ADR 0060: with shifts, drivers report each online period's driver
-	// shares on going offline, some ending it early at their target.
+	// shares on going offline, some ending it early at their target. The
+	// checker holds each completion's fare to its trip's and each earned to
+	// the driver shares of the driver's completions since it went online.
 	describe("with earnings and shifts on", () => {
 		const earningsConfig = {
 			keepEventLog: true as const,
@@ -227,33 +237,78 @@ describe("runInProcess", () => {
 
 		test("each driver going offline reports the driver shares of its completions since it went online", () => {
 			const { eventLog } = runInProcess(earningsConfig);
-			const sinceOnline = new Map<DriverId, number>();
-			const mismatches: unknown[] = [];
-			let reported = 0;
-			for (const message of eventLog) {
-				if (message.type === "trip.completed" && message.fare !== undefined) {
-					const earned = sinceOnline.get(message.driverId) ?? 0;
-					sinceOnline.set(
-						message.driverId,
-						earned + driverShareOf(message.fare),
-					);
-				}
-				if (message.type !== "driver.went_offline") continue;
-				const expected = sinceOnline.get(message.driverId) ?? 0;
-				if (message.earned !== expected) mismatches.push(message);
-				if (expected > 0) reported++;
-				sinceOnline.delete(message.driverId);
-			}
-			expect({ reportedEarnings: reported > 0, mismatches }).toEqual({
-				reportedEarnings: true,
-				mismatches: [],
-			});
+
+			expect({
+				violations: checkInvariants(eventLog, earningsConfig.grid, {
+					earnings: true,
+				}),
+				reportsEarnings: earnedIn(eventLog) > 0,
+			}).toEqual({ violations: [], reportsEarnings: true });
 		}, 30_000);
+
+		// The README's heavy load (city, 30 requests/min, 50 drivers): zones
+		// surge and pooled riders join, so fares are surged and pooled.
+		test.each([
+			["greedy", {}],
+			["batched", { matching: { type: "batched", windowTicks: 5 } }],
+			["greedy at 2x2", { regions: { columns: 2, rows: 2 } }],
+			["surge", { surge: true }],
+			["pooling", { pooling: true }],
+		] as const)(
+			"a heavy %s run breaks no invariant and drivers report earnings",
+			(_, variant) => {
+				const { eventLog } = runInProcess({
+					...earningsConfig,
+					driverShards: { count: 2, driversPerShard: 25 },
+					requestsPerMinute: 30,
+					demand: cityDemand,
+					...variant,
+				});
+
+				expect({
+					violations: checkInvariants(eventLog, earningsConfig.grid, {
+						earnings: true,
+					}),
+					reportsEarnings: earnedIn(eventLog) > 0,
+				}).toEqual({ violations: [], reportsEarnings: true });
+			},
+			30_000,
+		);
 
 		test("same seed and config give an identical event log", () => {
 			expect(runInProcess(earningsConfig).eventLog).toEqual(
 				runInProcess(earningsConfig).eventLog,
 			);
+		}, 30_000);
+
+		// A driver that missed its trip.completed is paid from trip_status
+		// (ADR 0041), so lost messages break neither fares nor earned.
+		test("with 1% of messages lost, no invariant breaks", () => {
+			const { eventLog } = runInProcess({
+				...earningsConfig,
+				lossShare: 0.01,
+			});
+
+			expect({
+				violations: checkInvariants(eventLog, earningsConfig.grid, {
+					earnings: true,
+				}),
+				reportsEarnings: earnedIn(eventLog) > 0,
+			}).toEqual({ violations: [], reportsEarnings: true });
+		}, 30_000);
+
+		// Earnings off: every message as before earnings existed.
+		test("an earnings-off run puts no fare on completions and no earned on going offline", () => {
+			const { eventLog } = runInProcess({ ...earningsConfig, earnings: false });
+
+			expect(
+				eventLog.filter(
+					(message) =>
+						(message.type === "trip.completed" && message.fare !== undefined) ||
+						(message.type === "driver.went_offline" &&
+							message.earned !== undefined),
+				),
+			).toEqual([]);
 		}, 30_000);
 	});
 
@@ -1150,6 +1205,31 @@ describe.skipIf(!natsUrl)("runOverNats", () => {
 			violations: checkInvariants(eventLog, ratingsConfig.grid),
 			rates: ratingsIn(eventLog) > 0,
 		}).toEqual({ violations: [], rates: true });
+	}, 60_000);
+
+	// ADR 0060: dispatch's trip.completed and the shard's driver.went_offline
+	// come from different connections; the shard credits the fare before it
+	// can go offline, so the log still holds each earned to its completions.
+	// Online periods of 100-200 ticks, so they end within 600.
+	test("an earnings run with short shifts breaks no invariant and drivers report earnings", async () => {
+		const config = {
+			...ratingsConfig,
+			ratings: false,
+			ticks: 600,
+			shifts: {
+				type: "shifts",
+				onlineTicks: { min: 100, max: 200 },
+				offlineTicks: { min: 50, max: 100 },
+				startOnlineShare: 0.8,
+			},
+			earnings: true,
+		} as const;
+		const { eventLog } = await runOnServer(config);
+
+		expect({
+			violations: checkInvariants(eventLog, config.grid, { earnings: true }),
+			reportsEarnings: earnedIn(eventLog) > 0,
+		}).toEqual({ violations: [], reportsEarnings: true });
 	}, 60_000);
 
 	test("a scarce-supply run breaks no invariant, completes and cancels trips", async () => {

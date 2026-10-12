@@ -110,6 +110,19 @@ function print(runId: RunId, report: RunReport): void {
 		console.log(`ratings: ${report.ratings.count}`);
 		console.log(`mean stars: ${report.ratings.meanStars.toFixed(2)}`);
 	}
+	// Earnings runs only (ADR 0060): earnings-off runs print as before.
+	if (report.earnings) {
+		const { total, perDriver, periods } = report.earnings;
+		console.log(`driver earnings: ${dollars(total)}`);
+		console.log(
+			`per driver: p10 ${dollars(perDriver.p10)} / median ${dollars(perDriver.median)} / p90 ${dollars(perDriver.p90)}`,
+		);
+		if (periods) {
+			const median =
+				periods.medianEarned === null ? "n/a" : dollars(periods.medianEarned);
+			console.log(`online periods: ${periods.count}, median earned ${median}`);
+		}
+	}
 }
 
 function decimal(value: number | null): string {

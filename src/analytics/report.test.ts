@@ -7,7 +7,7 @@ import {
 } from "../persistence/clickhouse.ts";
 import { toRow } from "../persister/rows.ts";
 import { isSimEvent, RunId, Tick } from "../shared/messages.ts";
-import { parseClickHouseConfig } from "../sim/config.ts";
+import { parseClickHouseConfig, shiftsNamed } from "../sim/config.ts";
 import { runInProcess } from "../sim/run.ts";
 import { summarize } from "../sim/summary.ts";
 import { listRuns, reportExitCode, runReport } from "./report.ts";
@@ -331,6 +331,108 @@ describe.skipIf(!config)("run report", () => {
 		});
 	});
 
+	// ADR 0060: rule 1's rounding in SQL, half up: 254 -> 191, not the 190 a
+	// float round (half to even) gives.
+	test("runReport rounds a driver share with a half up, as driverShareOf does", async () => {
+		const run = "half-share";
+		await succeeded(
+			clickhouse.insertEvents([
+				row(run, "drivers.went_online", 0, 1, "", { fleetSize: 1 }),
+				row(run, "trip.completed", 9, 2, "t-1", { fare: 254 }, "d-0"),
+			]),
+		);
+
+		const report = await succeeded(runReport(clickhouse, RunId.parse(run)));
+
+		expect(report.earnings?.total).toBe(191);
+	});
+
+	// Fleet of 4: d-0 191 + 750, d-1 300, d-2 and d-3 none. Sorted 0 0 300
+	// 941: p10 at floor(0.1 x 4) = 0, median at 2, p90 at 3. Periods' earned
+	// sorted 500 2000: the median at 1.
+	test("runReport of an earnings run gives driver earnings, per driver over the fleet and online periods", async () => {
+		const run = "earnings";
+		await succeeded(
+			clickhouse.insertEvents([
+				row(run, "drivers.went_online", 0, 1, "", { fleetSize: 4 }),
+				row(run, "trip.completed", 9, 2, "t-1", { fare: 254 }, "d-0"),
+				row(run, "trip.completed", 19, 3, "t-2", { fare: 1000 }, "d-0"),
+				row(run, "trip.completed", 29, 4, "t-3", { fare: 400 }, "d-1"),
+				row(run, "driver.went_offline", 30, 5, "", { earned: 2000 }, "d-2"),
+				row(run, "driver.went_offline", 40, 6, "", { earned: 500 }, "d-0"),
+			]),
+		);
+
+		const report = await succeeded(runReport(clickhouse, RunId.parse(run)));
+
+		expect(report.earnings).toEqual({
+			total: 1241,
+			perDriver: { p10: 0, median: 300, p90: 941 },
+			periods: { count: 2, medianEarned: 2000 },
+		});
+	});
+
+	test("runReport of an earnings run without online periods has none", async () => {
+		const run = "earnings-no-periods";
+		await succeeded(
+			clickhouse.insertEvents([
+				row(run, "drivers.went_online", 0, 1, "", { fleetSize: 1 }),
+				row(run, "trip.completed", 9, 2, "t-1", { fare: 400 }, "d-0"),
+			]),
+		);
+
+		const report = await succeeded(runReport(clickhouse, RunId.parse(run)));
+
+		expect(report.earnings?.periods).toBeNull();
+	});
+
+	test("runReport of a run without fares on completions has no earnings", async () => {
+		const run = "no-earnings";
+		await succeeded(
+			clickhouse.insertEvents([
+				row(run, "trip.completed", 9, 1, "t-1", {}, "d-0"),
+			]),
+		);
+
+		const report = await succeeded(runReport(clickhouse, RunId.parse(run)));
+
+		expect(report.earnings).toBeNull();
+	});
+
+	// Oracle: summarize over the same earnings run's event log, with shifts so
+	// online periods end.
+	test("runReport of an earnings run agrees with the in-memory summary", async () => {
+		const runConfig = {
+			seed: 1,
+			ticks: 3600,
+			grid: { width: 100, height: 100 },
+			driverShards: { count: 2, driversPerShard: 5 },
+			requestsPerMinute: 10,
+			shifts: shiftsNamed("on"),
+			earnings: true,
+		};
+		const result = runInProcess({ ...runConfig, keepEventLog: true });
+		const runId = RunId.parse("earnings-cross-check");
+		const ingestedAt = new Date("2026-10-03T12:00:00Z");
+		await succeeded(
+			clickhouse.insertEvents(
+				result.eventLog
+					.filter(isSimEvent)
+					.map((event, index) =>
+						toRow(event, { runId, streamSeq: index + 1, ingestedAt }),
+					),
+			),
+		);
+		const summary = summarize(runConfig, result);
+
+		const report = await succeeded(runReport(clickhouse, runId));
+
+		expect({
+			earnings: report.earnings,
+			periodsEnded: (summary.earnings?.periods?.count ?? 0) > 0,
+		}).toEqual({ earnings: summary.earnings, periodsEnded: true });
+	});
+
 	test("runReport of a run with no events is an unknown run", async () => {
 		const runId = RunId.parse("no-such-run");
 
@@ -348,6 +450,7 @@ function row(
 	streamSeq: number,
 	tripId = "",
 	payload: Record<string, unknown> = {},
+	driverId = "",
 ): EventRow {
 	return {
 		runId: RunId.parse(runId),
@@ -355,7 +458,7 @@ function row(
 		tick: Tick.parse(tick),
 		streamSeq,
 		tripId,
-		driverId: "",
+		driverId,
 		riderId: "",
 		payload: JSON.stringify(payload),
 		ingestedAt: new Date("2026-10-03T12:00:00Z"),

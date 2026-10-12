@@ -4,6 +4,7 @@ import * as z from "zod";
 import type { ClickHouse, ClickHouseError } from "../persistence/clickhouse.ts";
 import { RunId, Tick } from "../shared/messages.ts";
 import type { Result } from "../shared/result.ts";
+import type { Earnings } from "../sim/summary.ts";
 
 const PersistedRun = z.object({
 	runId: RunId,
@@ -50,7 +51,20 @@ export type RunReport = {
 	// Ratings runs only (any rider.rated_driver, ADR 0057): ratings and
 	// their mean stars; null with ratings off.
 	ratings: { count: number; meanStars: number } | null;
+	// Earnings runs only (any trip.completed with a fare, ADR 0060), cents;
+	// periods null when no driver.went_offline carries earned (no shifts).
+	earnings: Earnings | null;
 };
+
+const EarningsRow = z.object({
+	earners: count,
+	total: count,
+	p10: count,
+	median: count,
+	p90: count,
+	periods: count,
+	medianEarned: count,
+});
 
 export type RunReportError =
 	| ClickHouseError
@@ -133,6 +147,8 @@ export async function runReport(
 	if (row.events === 0) {
 		return { ok: false, error: { type: "unknown_run", runId } };
 	}
+	const earnings = await earningsReport(clickhouse, runId);
+	if (!earnings.ok) return earnings;
 	// 1 tick = 1 simulated second.
 	const minutes = (row.lastTick - row.firstTick) / 60;
 	return {
@@ -155,6 +171,81 @@ export async function runReport(
 				row.ratings === 0
 					? null
 					: { count: row.ratings, meanStars: row.stars / row.ratings },
+			earnings: earnings.value,
+		},
+	};
+}
+
+// The summary's earnings (src/sim/summary.ts) to the cent: driver shares
+// with driverShareOf's integer rounding (never a float round, which rounds
+// halves to even), quantiles as the value at floor(q x n) of the sorted
+// fleet, drivers without a completion at 0 (fleetSize from
+// drivers.went_online).
+async function earningsReport(
+	clickhouse: Pick<ClickHouse, "query">,
+	runId: RunId,
+): Promise<Result<Earnings | null, ClickHouseError>> {
+	const rows = await clickhouse.query(
+		`WITH
+			(
+				SELECT max(JSONExtractUInt(payload, 'fleetSize'))
+				FROM events FINAL
+				WHERE run_id = {runId:String} AND type = 'drivers.went_online'
+			) AS fleetSize,
+			(
+				SELECT arraySort(groupArray(JSONExtractUInt(payload, 'earned')))
+				FROM events FINAL
+				WHERE run_id = {runId:String}
+					AND type = 'driver.went_offline'
+					AND JSONHas(payload, 'earned')
+			) AS periodsEarned
+		SELECT
+			earners,
+			total,
+			fleet[toUInt64(floor(0.1 * length(fleet))) + 1] AS p10,
+			fleet[toUInt64(floor(0.5 * length(fleet))) + 1] AS median,
+			fleet[toUInt64(floor(0.9 * length(fleet))) + 1] AS p90,
+			toUInt32(length(periodsEarned)) AS periods,
+			periodsEarned[toUInt64(floor(0.5 * length(periodsEarned))) + 1]
+				AS medianEarned
+		FROM (
+			SELECT
+				toUInt32(count()) AS earners,
+				toUInt64(sum(earned)) AS total,
+				arrayConcat(
+					arrayWithConstant(
+						toUInt64(
+							greatest(toInt64(ifNull(fleetSize, 0)) - toInt64(count()), 0)
+						),
+						toUInt64(0)
+					),
+					arraySort(groupArray(earned))
+				) AS fleet
+			FROM (
+				SELECT
+					sum(intDiv(JSONExtractUInt(payload, 'fare') * 3 + 2, 4)) AS earned
+				FROM events FINAL
+				WHERE run_id = {runId:String}
+					AND type = 'trip.completed'
+					AND JSONHas(payload, 'fare')
+				GROUP BY driver_id
+			)
+		)`,
+		{ runId },
+	);
+	if (!rows.ok) return rows;
+	// Aggregates without GROUP BY: one row, no earners without a fare.
+	const [row] = z.tuple([EarningsRow]).parse(rows.value);
+	if (row.earners === 0) return { ok: true, value: null };
+	return {
+		ok: true,
+		value: {
+			total: row.total,
+			perDriver: { p10: row.p10, median: row.median, p90: row.p90 },
+			periods:
+				row.periods === 0
+					? null
+					: { count: row.periods, medianEarned: row.medianEarned },
 		},
 	};
 }
