@@ -185,6 +185,131 @@ export function roadNetworkNamed(
 	};
 }
 
+// -1 off the grid or on a river (its bridges included).
+function districtOf(network: RoadNetwork, x: number, y: number): number {
+	const column = network.columnOf[x] ?? -1;
+	const row = network.rowOf[y] ?? -1;
+	if (column < 0 || row < 0) return -1;
+	return row * network.districtColumns + column;
+}
+
+// A cell of a district: where pickups, dropoffs and drivers' targets may be.
+export function isRoadCell(
+	network: RoadNetwork,
+	x: number,
+	y: number,
+): boolean {
+	return districtOf(network, x, y) >= 0;
+}
+
+// A road cell or a bridge: where a driver may stand (on a bridge only
+// mid-crossing).
+export function isDrivable(
+	network: RoadNetwork,
+	x: number,
+	y: number,
+): boolean {
+	return isRoadCell(network, x, y) || bridgeAt(network, x, y) >= 0;
+}
+
+// -1 when (x, y) is not a bridge.
+function bridgeAt(network: RoadNetwork, x: number, y: number): number {
+	if (x < 0 || x >= network.width) return -1;
+	return network.bridgeOf[y * network.width + x] ?? -1;
+}
+
+// Shortest path length over drivable cells. Both cells must be drivable
+// (callers check cells from other services at their edge); anything else is
+// a caller's bug and throws.
+export function roadDistance(network: RoadNetwork, a: Cell, b: Cell): number {
+	return distanceBetween(network, a.x, a.y, b.x, b.y);
+}
+
+function distanceBetween(
+	network: RoadNetwork,
+	ax: number,
+	ay: number,
+	bx: number,
+	by: number,
+): number {
+	if (ax === bx && ay === by) return 0;
+	const bridgeA = bridgeAt(network, ax, ay);
+	if (bridgeA >= 0) return 1 + viaBridgeEnds(network, bridgeA, bx, by);
+	const bridgeB = bridgeAt(network, bx, by);
+	if (bridgeB >= 0) return 1 + viaBridgeEnds(network, bridgeB, ax, ay);
+	const da = districtOf(network, ax, ay);
+	const db = districtOf(network, bx, by);
+	if (da < 0 || db < 0) {
+		throw new Error(`road distance off road: (${ax}, ${ay}) to (${bx}, ${by})`);
+	}
+	if (da === db) return Math.abs(ax - bx) + Math.abs(ay - by);
+	let least = Number.POSITIVE_INFINITY;
+	const exits = network.landingsOf[da] as Int32Array;
+	for (let i = 0; i < exits.length; i++) {
+		const p = exits[i] as number;
+		const cost =
+			Math.abs((network.landingX[p] as number) - ax) +
+			Math.abs((network.landingY[p] as number) - ay) +
+			exitCost(network, p, bx, by, db);
+		if (cost < least) least = cost;
+	}
+	return least;
+}
+
+// From a bridge cell: one move to either landing, then on.
+function viaBridgeEnds(
+	network: RoadNetwork,
+	bridge: number,
+	x: number,
+	y: number,
+): number {
+	return Math.min(
+		distanceBetween(
+			network,
+			network.landingX[2 * bridge] as number,
+			network.landingY[2 * bridge] as number,
+			x,
+			y,
+		),
+		distanceBetween(
+			network,
+			network.landingX[2 * bridge + 1] as number,
+			network.landingY[2 * bridge + 1] as number,
+			x,
+			y,
+		),
+	);
+}
+
+// Road distance from leaving through exit landing p (across its bridge to
+// p's other end) to road cell (x, y) of district d.
+function exitCost(
+	network: RoadNetwork,
+	p: number,
+	x: number,
+	y: number,
+	d: number,
+): number {
+	const entry = p ^ 1;
+	const ex = network.landingX[entry] as number;
+	const ey = network.landingY[entry] as number;
+	if (network.landingDistrict[entry] === d) {
+		return 2 + Math.abs(ex - x) + Math.abs(ey - y);
+	}
+	let least = Number.POSITIVE_INFINITY;
+	const row = entry * network.landings;
+	const entries = network.landingsOf[d] as Int32Array;
+	for (let i = 0; i < entries.length; i++) {
+		const q = entries[i] as number;
+		const cost =
+			(network.between[row + q] as number) +
+			Math.abs((network.landingX[q] as number) - x) +
+			Math.abs((network.landingY[q] as number) - y);
+		if (cost < least) least = cost;
+	}
+	return 2 + least;
+}
+
 // Floyd-Warshall over landings: two landings of one district are Manhattan
 // apart, a bridge's two ends 2.
 function landingTable(
