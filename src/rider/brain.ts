@@ -1,4 +1,4 @@
-import { distance, type Grid, randomCell } from "../shared/grid.ts";
+import { distance, type Grid } from "../shared/grid.ts";
 import type {
 	CancelTrip,
 	CancelTripRejected,
@@ -24,6 +24,11 @@ import {
 	type RegionLayout,
 	regionOf,
 } from "../shared/regions.ts";
+import {
+	distanceOn,
+	type RoadNetwork,
+	randomRoadCell,
+} from "../shared/roads.ts";
 import { baseSurge, type Surge, type Zone, zoneOf } from "../shared/surge.ts";
 import { assertValidDemand, type Demand, pickupsForTick } from "./demand.ts";
 
@@ -68,6 +73,9 @@ export type RidersState = {
 	// Ratings on: each rider's ride to rate, by trip ID, updated in place;
 	// null off, so riders keep nothing more and draw nothing (ADR 0057).
 	ratings: Map<TripId, RideToRate> | null;
+	// Roads on: pickups and dropoffs on road cells, distances by road; null
+	// off (ADR 0059).
+	roads: RoadNetwork | null;
 };
 
 export type RidersInput =
@@ -98,7 +106,7 @@ type Rejected = InputRejected<
 type Decision = { state: RidersState; outputs: RidersOutput[] };
 
 // Missing demand = uniform; missing regions = one region; missing surge or
-// pooling or ratings = off.
+// pooling or ratings or roads = off.
 export function startRiders(config: {
 	grid: Grid;
 	requestsPerMinute: number;
@@ -107,9 +115,10 @@ export function startRiders(config: {
 	surge?: boolean;
 	pooling?: boolean;
 	ratings?: boolean;
+	roads?: RoadNetwork | null;
 }): RidersState {
 	const demand = config.demand ?? { type: "uniform" };
-	assertValidDemand(demand, config.grid);
+	assertValidDemand(demand, config.grid, config.roads ?? null);
 	return {
 		grid: config.grid,
 		regions: config.regions ?? oneRegion,
@@ -121,6 +130,7 @@ export function startRiders(config: {
 		prices: new Map(),
 		pooling: config.pooling ?? false,
 		ratings: config.ratings ? new Map() : null,
+		roads: config.roads ?? null,
 	};
 }
 
@@ -289,10 +299,16 @@ function onTick(
 	// Pooling off draws nothing from it (ADR 0056).
 	const optIn = state.pooling ? random.child(`pool:${input.tick}`) : null;
 	const spawnCount = poisson(state.requestsPerMinute / 60, demand);
-	const nextPickup = pickupsForTick(state.demand, state.grid, input.tick, {
-		root: random,
-		demand,
-	});
+	const nextPickup = pickupsForTick(
+		state.demand,
+		state.grid,
+		state.roads,
+		input.tick,
+		{
+			root: random,
+			demand,
+		},
+	);
 	const outOfPatience: Extract<Rider, { state: "waiting" }>[] = [];
 	for (const rider of state.riders.values()) {
 		if (rider.state !== "waiting") continue;
@@ -316,9 +332,9 @@ function onTick(
 	for (let i = 0; i < spawnCount; i++) {
 		state.spawned++;
 		const pickup = nextPickup();
-		let dropoff = randomCell(state.grid, demand);
+		let dropoff = randomRoadCell(state.roads, state.grid, demand);
 		while (distance(pickup, dropoff) === 0) {
-			dropoff = randomCell(state.grid, demand);
+			dropoff = randomRoadCell(state.roads, state.grid, demand);
 		}
 		const rider: Rider = {
 			state: "waiting",
@@ -353,7 +369,7 @@ function onTick(
 		state.riders.set(rider.tripId, rider);
 		state.ratings?.set(rider.tripId, {
 			requestedAt: input.tick,
-			directDistance: distance(pickup, dropoff),
+			directDistance: distanceOn(state.roads, pickup, dropoff),
 			pickedUpAt: null,
 		});
 		outputs.push({

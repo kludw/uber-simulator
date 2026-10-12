@@ -4,11 +4,15 @@ import {
 	cellIn,
 	distance,
 	type Grid,
-	randomCell,
 	specGrid,
 } from "../shared/grid.ts";
 import type { Tick } from "../shared/messages.ts";
 import type { Random } from "../shared/random.ts";
+import {
+	isRoadCell,
+	type RoadNetwork,
+	randomRoadCell,
+} from "../shared/roads.ts";
 
 type Hotspot = { center: Cell; radius: number; weight: number };
 
@@ -42,14 +46,19 @@ function specCell(x: number, y: number): Cell {
 
 // Config is parsed at the edge (CLI, env), so an invalid one here is a bug.
 // Negated comparisons also reject NaN.
-export function assertValidDemand(demand: Demand, grid: Grid): void {
+export function assertValidDemand(
+	demand: Demand,
+	grid: Grid,
+	roads: RoadNetwork | null,
+): void {
 	if (demand.type === "uniform") return;
 	const { hotspotShare, hotspots } = demand;
 	if (!(hotspotShare >= 0 && hotspotShare <= 1)) {
 		throw new Error(`hotspot share ${hotspotShare} outside [0, 1]`);
 	}
 	if (hotspots.length === 0) throw new Error("hotspot demand without hotspots");
-	for (const { center, radius, weight } of hotspots) {
+	for (const hotspot of hotspots) {
+		const { center, radius, weight } = hotspot;
 		if (!(weight > 0)) throw new Error(`hotspot weight ${weight} not > 0`);
 		if (!Number.isInteger(radius) || radius < 0) {
 			throw new Error(`hotspot radius ${radius} not an integer >= 0`);
@@ -58,27 +67,54 @@ export function assertValidDemand(demand: Demand, grid: Grid): void {
 		if (center.x >= grid.width || center.y >= grid.height) {
 			throw new Error(`hotspot center (${center.x}, ${center.y}) outside grid`);
 		}
+		// With roads on, sampling relies on a road cell instead.
+		if (roads !== null && !holdsRoadCell(hotspot, grid, roads)) {
+			throw new Error(
+				`hotspot at (${center.x}, ${center.y}) holds no road cell`,
+			);
+		}
 	}
+}
+
+function holdsRoadCell(
+	{ center, radius }: Hotspot,
+	grid: Grid,
+	roads: RoadNetwork,
+): boolean {
+	const minY = Math.max(0, center.y - radius);
+	const maxY = Math.min(grid.height - 1, center.y + radius);
+	for (let y = minY; y <= maxY; y++) {
+		const reach = radius - Math.abs(y - center.y);
+		const maxX = Math.min(grid.width - 1, center.x + reach);
+		for (let x = Math.max(0, center.x - reach); x <= maxX; x++) {
+			if (isRoadCell(roads, x, y)) return true;
+		}
+	}
+	return false;
 }
 
 // Draws one tick's pickups. Uniform cells come from the tick's demand stream
 // (shared with dropoffs); every hotspot decision from `hotspot:<tick>`, taken
 // only in hotspot mode, so uniform runs draw exactly what they did before
-// hotspots existed.
+// hotspots existed. With roads on (ADR 0059), every pickup is a road cell,
+// redrawn from the stream that drew the off-road one.
 export function pickupsForTick(
 	demand: Demand,
 	grid: Grid,
+	roads: RoadNetwork | null,
 	tick: Tick,
 	streams: { root: Random; demand: Random },
 ): () => Cell {
-	if (demand.type === "uniform") return () => randomCell(grid, streams.demand);
+	if (demand.type === "uniform") {
+		return () => randomRoadCell(roads, grid, streams.demand);
+	}
 	const hotspotStream = streams.root.child(`hotspot:${tick}`);
 	return () => {
 		if (hotspotStream.float() >= demand.hotspotShare) {
-			return randomCell(grid, streams.demand);
+			return randomRoadCell(roads, grid, streams.demand);
 		}
 		const hotspot = chooseHotspot(demand.hotspots, hotspotStream);
-		return cellInHotspot(hotspot, grid, hotspotStream);
+		return cellInHotspot(hotspot, grid, roads, hotspotStream);
 	};
 }
 
@@ -93,9 +129,15 @@ function chooseHotspot(hotspots: readonly Hotspot[], random: Random): Hotspot {
 	return hotspots[hotspots.length - 1] as Hotspot;
 }
 
-// Uniform over the hotspot's cells clipped to the grid: rejection sampling
-// from its bounding box, also clipped. Terminates: the center is a candidate.
-function cellInHotspot(hotspot: Hotspot, grid: Grid, random: Random): Cell {
+// Uniform over the hotspot's road cells clipped to the grid: rejection
+// sampling from its bounding box, also clipped. Terminates: the center is a
+// candidate, or with roads on some road cell is (assertValidDemand).
+function cellInHotspot(
+	hotspot: Hotspot,
+	grid: Grid,
+	roads: RoadNetwork | null,
+	random: Random,
+): Cell {
 	const { center, radius } = hotspot;
 	const minX = Math.max(0, center.x - radius);
 	const maxX = Math.min(grid.width - 1, center.x + radius);
@@ -106,6 +148,10 @@ function cellInHotspot(hotspot: Hotspot, grid: Grid, random: Random): Cell {
 			x: random.int(minX, maxX),
 			y: random.int(minY, maxY),
 		} as Cell;
-		if (distance(candidate, center) <= radius) return candidate;
+		if (distance(candidate, center) > radius) continue;
+		if (roads !== null && !isRoadCell(roads, candidate.x, candidate.y)) {
+			continue;
+		}
+		return candidate;
 	}
 }

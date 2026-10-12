@@ -1,8 +1,9 @@
 // Surge pricing (ADR 0054): surge zones, the surge of a zone, and fares.
 // Pure, shared by dispatch (prices), riders (quotes), the summary, and the UI.
 import * as z from "zod";
-import { type Cell, Coordinate, cellAt, distance, type Grid } from "./grid.ts";
+import { type Cell, Coordinate, cellAt, type Grid } from "./grid.ts";
 import { type Region, type RegionLayout, regionBounds } from "./regions.ts";
+import { distanceOn, type RoadNetwork } from "./roads.ts";
 
 // Surge zones are zoneCells x zoneCells squares of the grid, numbered
 // row-major from 0. On the spec grid: 10 x 10 zones of 500 m.
@@ -81,14 +82,15 @@ export const Fare = z.int().positive().brand<"Fare">();
 export type Fare = z.infer<typeof Fare>;
 
 // Takes the trip's message (request_trip, trip.requested), so its pooled
-// flag comes with it.
+// flag comes with it. Distance by road with roads on (ADR 0059), null off.
 export function fareOf(
 	trip: { pickup: Cell; dropoff: Cell; pooled?: true },
 	surge: Surge,
+	roads: RoadNetwork | null,
 ): Fare {
 	const discount = trip.pooled ? 0.75 : 1;
 	return Math.round(
-		(250 + 2 * distance(trip.pickup, trip.dropoff)) * surge * discount,
+		(250 + 2 * distanceOn(roads, trip.pickup, trip.dropoff)) * surge * discount,
 	) as Fare;
 }
 

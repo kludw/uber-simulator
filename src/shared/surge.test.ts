@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { type Cell, cellIn, type Grid } from "./grid.ts";
 import { Region, RegionLayout } from "./regions.ts";
+import { roadNetworkNamed } from "./roads.ts";
 import {
 	baseSurge,
 	dollars,
@@ -106,19 +107,31 @@ describe("surgeOf", () => {
 describe("fareOf", () => {
 	test("is $2.50 plus 2 cents per cell at 1.0", () => {
 		expect(
-			fareOf({ pickup: cell(0, 0), dropoff: cell(100, 50) }, Surge.parse(1)),
+			fareOf(
+				{ pickup: cell(0, 0), dropoff: cell(100, 50) },
+				Surge.parse(1),
+				null,
+			),
 		).toBe(Fare.parse(550));
 	});
 
 	test("is multiplied by the surge", () => {
 		expect(
-			fareOf({ pickup: cell(0, 0), dropoff: cell(100, 50) }, Surge.parse(1.5)),
+			fareOf(
+				{ pickup: cell(0, 0), dropoff: cell(100, 50) },
+				Surge.parse(1.5),
+				null,
+			),
 		).toBe(Fare.parse(825));
 	});
 
 	test("rounds to whole cents", () => {
 		expect(
-			fareOf({ pickup: cell(0, 0), dropoff: cell(1, 0) }, Surge.parse(1.3)),
+			fareOf(
+				{ pickup: cell(0, 0), dropoff: cell(1, 0) },
+				Surge.parse(1.3),
+				null,
+			),
 		).toBe(Fare.parse(328));
 	});
 
@@ -128,6 +141,7 @@ describe("fareOf", () => {
 			fareOf(
 				{ pickup: cell(0, 0), dropoff: cell(3, 0), pooled: true },
 				baseSurge,
+				null,
 			),
 		).toBe(Fare.parse(192));
 	});
@@ -138,8 +152,22 @@ describe("fareOf", () => {
 			fareOf(
 				{ pickup: cell(0, 0), dropoff: cell(3, 0), pooled: true },
 				Surge.parse(1.1),
+				null,
 			),
 		).toBe(Fare.parse(211));
+	});
+
+	// river: row 263, bridges at x 90, 128, 316, 444. (326, 262) to
+	// (326, 264) is 22 by road (10 to the bridge at 316, 2 across, 10 back),
+	// 2 by Manhattan: $2.50 + 44 cents.
+	test("charges by road distance with roads on", () => {
+		expect(
+			fareOf(
+				{ pickup: cell(326, 262), dropoff: cell(326, 264) },
+				baseSurge,
+				roadNetworkNamed("river", grid),
+			),
+		).toBe(Fare.parse(294));
 	});
 });
 
@@ -156,8 +184,8 @@ describe("dollars", () => {
 describe("baseSurge", () => {
 	// $2.50 + 1 cell × 2 cents, unmultiplied.
 	test("prices a fare at base price", () => {
-		expect(fareOf({ pickup: cell(0, 0), dropoff: cell(1, 0) }, baseSurge)).toBe(
-			Fare.parse(252),
-		);
+		expect(
+			fareOf({ pickup: cell(0, 0), dropoff: cell(1, 0) }, baseSurge, null),
+		).toBe(Fare.parse(252));
 	});
 });
