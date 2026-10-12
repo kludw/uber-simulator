@@ -56,6 +56,7 @@ let pickups = 0;
 let waitTicks = 0;
 let revenue = 0;
 let faresOnCompleted = 0;
+let fareMismatches = 0;
 // Driver share by driver index, whole run; and since the driver went online.
 const earned = new Float64Array(fleetSize);
 const sinceOnline = new Float64Array(fleetSize);
@@ -118,6 +119,8 @@ const result = runInProcess(
 					requested.delete(message.tripId);
 					const fare = message.fare ?? trip?.fare ?? 0;
 					if (message.fare !== undefined) faresOnCompleted++;
+					if (message.fare !== undefined && message.fare !== trip?.fare)
+						fareMismatches++;
 					revenue += fare;
 					const i = driverIndexOf(message.driverId) ?? 0;
 					const cut = Math.round(fare * share);
@@ -165,6 +168,7 @@ console.log(
 		revenue: revenue / 100,
 		meanOnline: round(onlineTickSum / lastTick),
 		faresOnCompleted,
+		fareMismatches,
 		driverEarnings: Math.round(sorted.reduce((a, b) => a + b, 0)) / 100,
 		perDriver: {
 			p10: quantile(sorted, 0.1),
